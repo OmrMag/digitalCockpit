@@ -1,9 +1,11 @@
 # Sensitive config — never commit these
 config.json
+config_*.json
 users.json
 invite_log.json
 portal_requests.json
 forma_models_cache.json
+projects_registry.json
 
 # Token files
 forma_tokens.json
@@ -11,7 +13,7 @@ forma_tokens_3l.json
 revizto_tokens_dubai.json
 revizto_tokens_ireland.json
 
-# Exports folder — generated data, not source code
+# Exports folder
 exports/
 
 # Python
@@ -25,6 +27,9 @@ env/
 
 # VS Code
 .vscode/
+
+# Deployment
+deploy.zip
 
 # OS
 .DS_Store

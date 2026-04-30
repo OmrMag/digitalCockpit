@@ -1,0 +1,41 @@
+{
+  "rak-central": {
+    "name": "RAK Central",
+    "platforms": {
+      "morta": {
+        "hub_id": "406ed81a-5e01-47df-b8e4-f0ddbf474d8a"
+      },
+      "revizto": {
+        "project_uuid": "1cc01307-7d5a-4e97-a86e-ccd6f088c70c",
+        "region": "dubai"
+      },
+      "forma": {
+        "project_id": "6bf6b4f6-ccb9-4a04-b83e-ea26ff527631"
+      }
+    },
+    "admins": [
+      "oawad@alec.ae",
+      "srajendren@alec.ae"
+    ]
+  },
+  "sphere-abu-dhabi": {
+    "name": "Sphere Abu Dhabi",
+    "platforms": {
+      "morta": {
+        "hub_id": "25ea2b5d-5d9a-44db-8a42-d29d2f1eba9a"
+      },
+      "revizto": {
+        "project_uuid": "5eef3908-3162-40f2-88a9-4002c125ba35",
+        "region": "dubai"
+      },
+      "forma": {
+        "project_id": "c6e9d17c-bac2-409d-9604-c29591cd8a42"
+      }
+    },
+    "admins": [
+      "oawad@alec.ae",
+      "gelnazer@alec.ae",
+      "dlahrichi@alec.ae"
+    ]
+  }
+}

@@ -1,0 +1,243 @@
+{% extends "base.html" %}
+{% block title %}Project Registry — Digital Construction Cockpit{% endblock %}
+{% block page_title %}Project Registry{% endblock %}
+{% block page_subtitle %}Map ALEC projects to platform IDs and assign admins — owner access only{% endblock %}
+
+{% block head %}
+<style>
+    .reg-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(340px,1fr)); gap:12px; margin-bottom:20px; }
+    .reg-card { background:white; border:1px solid var(--border-cream); border-radius:var(--radius-lg); overflow:hidden; box-shadow:var(--shadow); transition:box-shadow var(--transition); }
+    .reg-card:hover { box-shadow:var(--shadow-lg); }
+    .reg-card-header { background:var(--navy); padding:12px 14px; display:flex; align-items:center; justify-content:space-between; }
+    .reg-card-name { font-size:var(--fs-md); font-weight:600; color:var(--text-light); letter-spacing:-0.2px; }
+    .reg-card-key { font-size:var(--fs-xs); color:var(--text-muted); margin-top:2px; }
+    .reg-card-actions { display:flex; gap:6px; }
+    .reg-card-body { padding:14px; }
+    .reg-platform-row { display:grid; grid-template-columns:70px 1fr; gap:6px; align-items:center; padding:5px 0; border-bottom:1px solid var(--border-cream); font-size:var(--fs-xs); }
+    .reg-platform-row:last-child { border-bottom:none; }
+    .reg-platform-val { font-family:var(--font); color:var(--navy); word-break:break-all; }
+    .reg-platform-val.empty { color:var(--text-dark-muted); font-style:italic; }
+    .reg-admins { margin-top:10px; padding-top:10px; border-top:1px solid var(--border-cream); }
+    .reg-admins-label { font-size:var(--fs-xs); font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:var(--text-dark-muted); margin-bottom:5px; }
+    .admin-pill { display:inline-flex; align-items:center; gap:4px; padding:2px 8px; background:rgba(74,158,255,0.08); border:1px solid rgba(74,158,255,0.15); border-radius:3px; font-size:var(--fs-xs); color:var(--navy); margin:2px; }
+    .admin-pill.owner { background:rgba(52,211,153,0.08); border-color:rgba(52,211,153,0.2); color:var(--success); }
+    .modal-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.4); z-index:200; align-items:center; justify-content:center; }
+    .modal-overlay.open { display:flex; }
+    .modal { background:white; border-radius:var(--radius-lg); width:100%; max-width:560px; max-height:90vh; overflow-y:auto; box-shadow:0 20px 60px rgba(0,0,0,0.3); }
+    .modal-head { background:var(--navy); padding:16px 20px; display:flex; align-items:center; justify-content:space-between; }
+    .modal-head h2 { font-size:var(--fs-md); font-weight:600; color:var(--text-light); }
+    .modal-close { background:none; border:none; cursor:pointer; color:var(--text-muted); font-size:18px; font-family:var(--font); }
+    .modal-body { padding:20px; }
+    .modal-foot { padding:12px 20px; border-top:1px solid var(--border-cream); display:flex; justify-content:flex-end; gap:8px; }
+    .platform-section-title { font-size:var(--fs-xs); font-weight:700; text-transform:uppercase; letter-spacing:1px; color:var(--text-dark-muted); margin:16px 0 8px; padding-bottom:6px; border-bottom:1px solid var(--border-cream); }
+    .owner-badge { display:inline-flex; align-items:center; gap:6px; padding:4px 10px; background:rgba(52,211,153,0.08); border:1px solid rgba(52,211,153,0.2); border-radius:var(--radius); font-size:var(--fs-xs); color:var(--success); margin-bottom:20px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="owner-badge">
+    <span style="width:6px;height:6px;border-radius:50%;background:var(--success);display:inline-block;"></span>
+    Owner access — {{ current_user }}
+</div>
+
+<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+    <div style="font-size:var(--fs-xs);color:var(--text-dark-muted);">{{ registry|length }} project(s) registered</div>
+    <button class="btn btn-primary" onclick="openCreate()">+ New Project</button>
+</div>
+
+{% if registry %}
+<div class="reg-grid">
+{% for key, proj in registry.items() %}
+    <div class="reg-card">
+        <div class="reg-card-header">
+            <div>
+                <div class="reg-card-name">{{ proj.name }}</div>
+                <div class="reg-card-key">{{ key }}</div>
+            </div>
+            <div class="reg-card-actions">
+                <button class="btn btn-sm" onclick="openEdit('{{ key }}')"
+                    style="background:rgba(255,255,255,0.1);color:var(--text-light);border:1px solid rgba(255,255,255,0.15);">Edit</button>
+                <button class="btn btn-sm" onclick="deleteProject('{{ key }}')"
+                    style="background:rgba(248,113,113,0.15);color:var(--error);border:1px solid rgba(248,113,113,0.2);">Delete</button>
+            </div>
+        </div>
+        <div class="reg-card-body">
+            <div class="reg-platform-row">
+                <span class="platform-tag morta" style="font-size:9px;">Morta</span>
+                <span class="reg-platform-val {% if not proj.platforms.morta.hub_id %}empty{% endif %}">
+                    {{ proj.platforms.morta.hub_id or '— not set —' }}</span>
+            </div>
+            <div class="reg-platform-row">
+                <span class="platform-tag revizto" style="font-size:9px;">Revizto</span>
+                <span class="reg-platform-val {% if not proj.platforms.revizto.project_uuid %}empty{% endif %}">
+                    {{ proj.platforms.revizto.project_uuid or '— not set —' }}
+                    {% if proj.platforms.revizto.project_uuid %}
+                    <span style="color:var(--text-dark-muted);"> · {{ proj.platforms.revizto.region }}</span>
+                    {% endif %}</span>
+            </div>
+            <div class="reg-platform-row">
+                <span class="platform-tag forma" style="font-size:9px;">Forma</span>
+                <span class="reg-platform-val {% if not proj.platforms.forma.project_id %}empty{% endif %}">
+                    {{ proj.platforms.forma.project_id or '— not set —' }}</span>
+            </div>
+            <div class="reg-admins">
+                <div class="reg-admins-label">Admins ({{ proj.admins|length }})</div>
+                {% for admin in proj.admins %}
+                    <span class="admin-pill {% if admin == 'oawad@alec.ae' %}owner{% endif %}">
+                        {% if admin == 'oawad@alec.ae' %}★ {% endif %}{{ admin }}
+                    </span>
+                {% else %}
+                    <span style="font-size:var(--fs-xs);color:var(--text-dark-muted);font-style:italic;">No admins assigned</span>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+{% endfor %}
+</div>
+{% else %}
+<div class="empty-state">
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/>
+    </svg>
+    <h3>No projects registered yet</h3>
+    <p>Click "+ New Project" to map your first ALEC project to its platform IDs.</p>
+</div>
+{% endif %}
+
+<!-- Modal -->
+<div id="projectModal" class="modal-overlay" onclick="if(event.target===this)closeModal()">
+<div class="modal">
+    <div class="modal-head">
+        <h2 id="modalTitle">New Project</h2>
+        <button class="modal-close" onclick="closeModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+        <input type="hidden" id="editKey">
+        <div class="form-row">
+            <div class="form-group">
+                <label>Project Name</label>
+                <input type="text" id="fName" placeholder="RAK Central-ALEC">
+            </div>
+            <div class="form-group">
+                <label>Project Key <span style="color:var(--text-dark-muted);font-weight:400;">(auto)</span></label>
+                <input type="text" id="fKey" placeholder="rak-central-alec">
+            </div>
+        </div>
+
+        <div class="platform-section-title">Platform IDs</div>
+        <div class="form-group">
+            <label><span class="platform-tag morta" style="font-size:9px;margin-right:4px;">Morta</span> Hub ID</label>
+            <input type="text" id="fMortaHub" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx">
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label><span class="platform-tag revizto" style="font-size:9px;margin-right:4px;">Revizto</span> Project UUID</label>
+                <input type="text" id="fReviztoUUID" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx">
+            </div>
+            <div class="form-group">
+                <label>Region</label>
+                <select id="fReviztoRegion" style="width:100%;padding:8px 10px;border:1px solid var(--border-cream);border-radius:var(--radius);font-family:var(--font);font-size:var(--fs-sm);background:white;">
+                    <option value="dubai">Dubai</option>
+                    <option value="ireland">Ireland</option>
+                </select>
+            </div>
+        </div>
+        <div class="form-group">
+            <label><span class="platform-tag forma" style="font-size:9px;margin-right:4px;">Forma</span> Project ID</label>
+            <input type="text" id="fFormaProject" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx">
+        </div>
+
+        <div class="platform-section-title">Admins</div>
+        <div class="form-group">
+            <label>Admin Emails <span style="color:var(--text-dark-muted);font-weight:400;">(comma-separated)</span></label>
+            <input type="text" id="fAdmins" placeholder="oawad@alec.ae, colleague@alec.ae">
+            <div style="font-size:var(--fs-xs);color:var(--text-dark-muted);margin-top:4px;">
+                These users will see portal submissions and invite logs for this project only.
+            </div>
+        </div>
+        <div id="formError" style="display:none;margin-top:12px;" class="result-banner error show"></div>
+    </div>
+    <div class="modal-foot">
+        <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="saveProject()">Save Project</button>
+    </div>
+</div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const registry = {{ registry | tojson }};
+
+document.getElementById('fName').addEventListener('input', function() {
+    if (!document.getElementById('editKey').value) {
+        document.getElementById('fKey').value = this.value
+            .toLowerCase().trim()
+            .replace(/[^a-z0-9\s-]/g, '')
+            .replace(/\s+/g, '-');
+    }
+});
+
+function openCreate() {
+    document.getElementById('modalTitle').textContent = 'New Project';
+    document.getElementById('editKey').value = '';
+    document.getElementById('fKey').readOnly = false;
+    ['fName','fKey','fMortaHub','fReviztoUUID','fFormaProject','fAdmins'].forEach(id => document.getElementById(id).value = '');
+    document.getElementById('fReviztoRegion').value = 'dubai';
+    document.getElementById('formError').style.display = 'none';
+    document.getElementById('projectModal').classList.add('open');
+}
+
+function openEdit(key) {
+    const p = registry[key];
+    document.getElementById('modalTitle').textContent = 'Edit Project';
+    document.getElementById('editKey').value        = key;
+    document.getElementById('fKey').value           = key;
+    document.getElementById('fKey').readOnly        = true;
+    document.getElementById('fName').value          = p.name || '';
+    document.getElementById('fMortaHub').value      = p.platforms?.morta?.hub_id || '';
+    document.getElementById('fReviztoUUID').value   = p.platforms?.revizto?.project_uuid || '';
+    document.getElementById('fReviztoRegion').value = p.platforms?.revizto?.region || 'dubai';
+    document.getElementById('fFormaProject').value  = p.platforms?.forma?.project_id || '';
+    document.getElementById('fAdmins').value        = (p.admins || []).join(', ');
+    document.getElementById('formError').style.display = 'none';
+    document.getElementById('projectModal').classList.add('open');
+}
+
+function closeModal() { document.getElementById('projectModal').classList.remove('open'); }
+
+async function saveProject() {
+    const editKey = document.getElementById('editKey').value;
+    const payload = {
+        key:              document.getElementById('fKey').value.trim(),
+        name:             document.getElementById('fName').value.trim(),
+        morta_hub_id:     document.getElementById('fMortaHub').value.trim(),
+        revizto_uuid:     document.getElementById('fReviztoUUID').value.trim(),
+        revizto_region:   document.getElementById('fReviztoRegion').value,
+        forma_project_id: document.getElementById('fFormaProject').value.trim(),
+        admins:           document.getElementById('fAdmins').value.trim(),
+    };
+    if (!payload.name) { showError('Project name is required.'); return; }
+    const res  = await fetch(editKey ? `/api/registry/project/${editKey}` : '/api/registry/project', {
+        method: editKey ? 'PUT' : 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (res.ok && data.status === 'ok') location.reload();
+    else showError(data.detail || 'Save failed.');
+}
+
+async function deleteProject(key) {
+    if (!confirm(`Delete "${registry[key].name}"?\n\nThis cannot be undone.`)) return;
+    const res = await fetch(`/api/registry/project/${key}`, { method: 'DELETE' });
+    if (res.ok) location.reload();
+    else alert('Delete failed.');
+}
+
+function showError(msg) {
+    const el = document.getElementById('formError');
+    el.textContent = msg; el.style.display = 'block';
+}
+</script>
+{% endblock %}

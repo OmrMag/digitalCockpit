@@ -65,51 +65,56 @@
                 System Info
             </a>
 
+            {% if current_user == 'oawad@alec.ae' %}
+            <a href="/registry" class="{% if active_page == 'registry' %}active{% endif %}" title="Project Registry">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
+                </svg>
+                Project Registry
+            </a>
+            {% else %}
+            <a href="#" onclick="return false;" title="Project Registry — restricted" style="opacity:0.3; cursor:not-allowed; pointer-events:none;">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
+                </svg>
+                Project Registry
+            </a>
+            {% endif %}
+
             <!-- ── Active Context ───────────────────────────────────── -->
             <div class="nav-section" style="margin-top:8px; display:flex; align-items:center; justify-content:space-between;">
-                <span>Active Context</span>
-                <div style="display:flex; align-items:center; gap:6px;">
-                    <button id="copyLinkBtn" onclick="copyPortalLink()" title="Copy portal link for active project" style="background:none; border:none; cursor:pointer; color:var(--text-muted); padding:0; line-height:1; transition:color 0.2s;">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/>
-                        </svg>
-                    </button>
-                    <button id="refreshProjectsBtn" onclick="fetchAllProjects()" title="Refresh projects from all platforms" style="background:none; border:none; cursor:pointer; color:var(--text-muted); padding:0; line-height:1; transition:color 0.2s;">
-                        <svg id="refreshIcon" xmlns="http://www.w3.org/2000/svg" width="11" height="11" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
-                        </svg>
-                    </button>
-                </div>
+                <span>Active Project</span>
+                <button id="copyLinkBtn" onclick="copyPortalLink()" title="Copy portal link for active project" style="background:none;border:none;cursor:pointer;color:var(--text-muted);padding:0;line-height:1;transition:color 0.2s;">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/>
+                    </svg>
+                </button>
             </div>
 
-            <!-- Revizto -->
+            <!-- Single project selector from registry -->
             <div class="ctx-block">
-                <div class="ctx-label">
-                    <span class="ctx-dot revizto"></span>Revizto
-                </div>
-                <select id="ctxRevizto" onchange="saveContext()" class="ctx-select">
-                    <option value="">— none —</option>
+                <select id="ctxProject" onchange="applyProject()" class="ctx-select">
+                    <option value="">— select project —</option>
                 </select>
             </div>
 
-            <!-- Morta -->
-            <div class="ctx-block">
-                <div class="ctx-label">
-                    <span class="ctx-dot morta"></span>Morta
+            <!-- Platform IDs — read-only reference display -->
+            <div id="ctxPlatforms" style="padding:4px 12px 8px; display:none;">
+                <div class="ctx-ref-row">
+                    <span class="ctx-dot revizto"></span>
+                    <span class="ctx-ref-label">Revizto</span>
+                    <span class="ctx-ref-val" id="refRevizto">—</span>
                 </div>
-                <select id="ctxMorta" onchange="saveContext()" class="ctx-select">
-                    <option value="">— none —</option>
-                </select>
-            </div>
-
-            <!-- Forma -->
-            <div class="ctx-block">
-                <div class="ctx-label">
-                    <span class="ctx-dot forma"></span>Forma / ACC
+                <div class="ctx-ref-row">
+                    <span class="ctx-dot morta"></span>
+                    <span class="ctx-ref-label">Morta</span>
+                    <span class="ctx-ref-val" id="refMorta">—</span>
                 </div>
-                <select id="ctxForma" onchange="saveContext()" class="ctx-select">
-                    <option value="">— none —</option>
-                </select>
+                <div class="ctx-ref-row">
+                    <span class="ctx-dot forma"></span>
+                    <span class="ctx-ref-label">Forma</span>
+                    <span class="ctx-ref-val" id="refForma">—</span>
+                </div>
             </div>
 
         </nav>
@@ -152,6 +157,27 @@
     </main>
 
     <style>
+    .ctx-ref-row {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        padding: 2px 0;
+        font-size: var(--fs-xs);
+    }
+    .ctx-ref-label {
+        color: var(--text-muted);
+        width: 42px;
+        flex-shrink: 0;
+    }
+    .ctx-ref-val {
+        color: rgba(242,244,248,0.5);
+        font-family: var(--font);
+        font-size: 9px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        flex: 1;
+    }
     .ctx-block {
         padding: 4px 12px;
         display: flex;
@@ -246,132 +272,98 @@
             main.style.transition = 'opacity 0.15s ease';
             main.style.opacity = '1';
         });
-        loadContext();
+        loadRegistryProjects();
     });
 
-    // ── Load saved projects + active context ──────────────────────
-    async function loadContext() {
+    let _registry = {};
+
+    // ── Load projects from registry ───────────────────────────────
+    async function loadRegistryProjects() {
         try {
-            const res  = await fetch('/api/projects');
-            const data = await res.json();
-            const ctx  = data.active_context || {};
+            // Load registry
+            const regRes = await fetch('/api/registry');
+            _registry = regRes.ok ? await regRes.json() : {};
 
-            populateSelect('ctxRevizto',
-                (data.projects.revizto || []).map(p => ({
-                    value: JSON.stringify({ uuid: p.uuid, name: p.title, region: p.region, platform: 'revizto' }),
-                    label: `${p.title} (${p.region})`
-                })),
-                ctx.revizto_project_uuid,
-                'uuid'
-            );
+            // Load saved active context
+            const ctxRes  = await fetch('/api/context');
+            const ctxData = ctxRes.ok ? await ctxRes.json() : {};
+            const activeKey = ctxData.active_project_key || '';
 
-            populateSelect('ctxMorta',
-                (data.projects.morta || []).map(p => ({
-                    value: JSON.stringify({ uuid: p.id, name: p.name, platform: 'morta' }),
-                    label: p.name
-                })),
-                ctx.morta_hub_id,
-                'uuid'
-            );
+            const sel = document.getElementById('ctxProject');
+            sel.innerHTML = '<option value="">— select project —</option>';
+            Object.entries(_registry).forEach(([key, proj]) => {
+                const opt = document.createElement('option');
+                opt.value = key;
+                opt.textContent = proj.name;
+                if (key === activeKey) opt.selected = true;
+                sel.appendChild(opt);
+            });
 
-            populateSelect('ctxForma',
-                (data.projects.forma || []).map(p => ({
-                    value: JSON.stringify({ uuid: p.id, name: p.name, platform: p.platform, platform_type: p.platform }),
-                    label: `${p.name} (${p.platform})`
-                })),
-                ctx.forma_project_id,
-                'uuid'
-            );
+            if (activeKey && _registry[activeKey]) {
+                showPlatformRefs(_registry[activeKey]);
+            }
+        } catch(e) { console.error('Failed to load registry', e); }
+    }
 
-        } catch (e) {
-            console.error('Failed to load context', e);
+    function showPlatformRefs(proj) {
+        const p = proj.platforms || {};
+        document.getElementById('refRevizto').textContent = p.revizto?.project_uuid ? p.revizto.project_uuid.substring(0,8)+'…' : '— not set —';
+        document.getElementById('refMorta').textContent   = p.morta?.hub_id         ? p.morta.hub_id.substring(0,8)+'…'         : '— not set —';
+        document.getElementById('refForma').textContent   = p.forma?.project_id     ? p.forma.project_id.substring(0,8)+'…'     : '— not set —';
+        document.getElementById('ctxPlatforms').style.display = 'block';
+    }
+
+    // ── Apply selected project — saves full context from registry ─
+    async function applyProject() {
+        const key  = document.getElementById('ctxProject').value;
+        const proj = _registry[key];
+
+        if (!key || !proj) {
+            document.getElementById('ctxPlatforms').style.display = 'none';
+            await fetch('/api/context', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    active_project_key:   '',
+                    active_project_name:  '',
+                    revizto_project_uuid: '', revizto_project_name: '', revizto_region: '',
+                    morta_hub_id:         '', morta_hub_name: '',
+                    forma_project_id:     '', forma_project_name: '', forma_platform: '',
+                })
+            });
+            return;
         }
-    }
 
-    function populateSelect(id, options, activeValue, matchKey) {
-        const sel = document.getElementById(id);
-        sel.innerHTML = '<option value="">— none —</option>';
-        options.forEach(opt => {
-            const el = document.createElement('option');
-            el.value = opt.value;
-            el.textContent = opt.label;
-            try {
-                const parsed = JSON.parse(opt.value);
-                if (parsed[matchKey] && parsed[matchKey] === activeValue) el.selected = true;
-            } catch {}
-            sel.appendChild(el);
-        });
-    }
-
-    // ── Save context when selection changes ───────────────────────
-    async function saveContext() {
-        const parse = id => {
-            try { return JSON.parse(document.getElementById(id).value); } catch { return {}; }
-        };
-        const rev   = parse('ctxRevizto');
-        const morta = parse('ctxMorta');
-        const forma = parse('ctxForma');
+        const p = proj.platforms || {};
+        showPlatformRefs(proj);
 
         await fetch('/api/context', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                revizto_project_uuid: rev.uuid   || '',
-                revizto_project_name: rev.name   || '',
-                revizto_region:       rev.region || '',
-                morta_hub_id:         morta.uuid || '',
-                morta_hub_name:       morta.name || '',
-                forma_project_id:     forma.uuid || '',
-                forma_project_name:   forma.name || '',
-                forma_platform:       forma.platform_type || '',
+                active_project_key:   key,
+                active_project_name:  proj.name,
+                revizto_project_uuid: p.revizto?.project_uuid || '',
+                revizto_project_name: proj.name,
+                revizto_region:       p.revizto?.region       || 'dubai',
+                morta_hub_id:         p.morta?.hub_id         || '',
+                morta_hub_name:       proj.name,
+                forma_project_id:     p.forma?.project_id     || '',
+                forma_project_name:   proj.name,
+                forma_platform:       'acc',
             })
         });
     }
 
-    // ── Fetch fresh projects from all platforms ───────────────────
-    async function fetchAllProjects() {
-        const icon = document.getElementById('refreshIcon');
-        icon.style.animation = 'spin 0.8s linear infinite';
-
-        try {
-            const res  = await fetch('/api/projects/fetch', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ platform: 'all' })
-            });
-            const data = await res.json();
-
-            // Surface any per-platform errors to the console and optionally to the UI
-            const results = data.results || {};
-            const errors  = [];
-            for (const [platform, result] of Object.entries(results)) {
-                if (result.error) {
-                    console.warn(`[${platform}] ${result.error}`);
-                    errors.push(`${platform}: ${result.error}`);
-                } else {
-                    console.log(`[${platform}] ${result.count} item(s) fetched`);
-                }
-            }
-
-            if (errors.length) {
-                // Show a subtle warning below the refresh button
-                let warn = document.getElementById('refreshWarning');
-                if (!warn) {
-                    warn = document.createElement('div');
-                    warn.id = 'refreshWarning';
-                    warn.style.cssText = 'font-size:9px; color:var(--error); padding:4px 12px; line-height:1.4;';
-                    document.getElementById('refreshProjectsBtn').parentElement.after(warn);
-                }
-                warn.textContent = errors.join(' · ');
-                setTimeout(() => { if (warn) warn.textContent = ''; }, 10000);
-            }
-
-            await loadContext();
-        } catch (e) {
-            console.error('Failed to fetch projects', e);
-        } finally {
-            icon.style.animation = '';
-        }
+    // ── Copy portal link ──────────────────────────────────────────
+    async function copyPortalLink() {
+        const key = document.getElementById('ctxProject').value;
+        if (!key) { alert('Select a project first.'); return; }
+        const link = `${window.location.origin}/portal/platformAccess?pid=${encodeURIComponent(key)}`;
+        await navigator.clipboard.writeText(link);
+        const btn = document.getElementById('copyLinkBtn');
+        btn.style.color = 'var(--success)';
+        setTimeout(() => { btn.style.color = ''; }, 2000);
     }
     </script>
 

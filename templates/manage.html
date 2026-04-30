@@ -59,9 +59,6 @@
     .target-info .target-row{display:flex;align-items:center;gap:8px;margin:4px 0}
     .target-info .target-label{font-weight:600;width:60px;text-transform:uppercase;letter-spacing:.3px;color:var(--text-dark-muted)}
     .target-info .target-value{color:var(--navy);font-weight:500}
-    .project-select{margin-top:12px;padding-top:12px;border-top:1px solid var(--border-cream)}
-    .project-select select{width:100%;padding:7px 10px;border:1px solid var(--border-cream);border-radius:var(--radius);font-family:var(--font);font-size:var(--fs-xs);background:#fff}
-    .project-select label{font-size:var(--fs-xs);color:var(--text-dark-muted);font-weight:600;text-transform:uppercase;letter-spacing:.3px;display:block;margin-bottom:4px}
 </style>
 {% endblock %}
 
@@ -393,9 +390,7 @@
                 <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" style="display:none" onchange="handleFile(this)">
                 <p style="font-size:var(--fs-xs);color:var(--text-dark-muted);margin-top:8px">Columns: Email, First Name, Last Name, Company, Department, Morta Access, Revizto Access, ACC Access</p>
             </div>
-            <div class="project-select" id="projectSelect">
-                <div class="form-row"><div class="form-group"><label>Revizto Project</label><select id="selRevizto"><option value="">Loading...</option></select></div><div class="form-group"><label>Forma/ACC Project</label><select id="selForma"><option value="">Loading...</option></select></div></div>
-            </div>
+<!-- project context from active sidebar selection -->
         </div>
         <div id="step2" style="display:none"><div class="target-info" id="targetInfo"></div><div class="preview-table" id="previewTable"></div></div>
         <div id="step3" style="display:none"><div id="resultsContent"></div></div>
@@ -414,23 +409,26 @@
 
 {% block scripts %}
 <script>
-let currentMode='single',currentStep=1,previewUsers=[],projectData={};
+let currentMode='single',currentStep=1,previewUsers=[];
 
-// Load projects with caching
-smartFetch('/api/projects','projects',{
-    onCached:(data)=>populateProjectDropdowns(data),
-    onFresh:(data)=>populateProjectDropdowns(data),
-});
-
-function populateProjectDropdowns(data){
-    projectData=data;
-    const selR=document.getElementById('selRevizto');
-    const selF=document.getElementById('selForma');
-    selR.innerHTML='<option value="">— None —</option>';
-    (data.revizto||[]).forEach(p=>{selR.innerHTML+=`<option value="${p.uuid}" data-name="${p.title}">${p.title}</option>`});
-    selF.innerHTML='<option value="">— None —</option>';
-    (data.forma||[]).forEach(p=>{selF.innerHTML+=`<option value="${p.id}" data-name="${p.name}">${p.name} (${p.platform})</option>`});
+// Load active context from sidebar
+let projectData = {};
+async function loadActiveContext() {
+    try {
+        const res = await fetch('/api/context');
+        const ctx = await res.json();
+        projectData = {
+            revizto_project_uuid: ctx.revizto_project_uuid || '',
+            revizto_project_name: ctx.revizto_project_name || '',
+            morta_hub_id:         ctx.morta_hub_id         || '',
+            morta_hub_name:       ctx.morta_hub_name        || '',
+            forma_project_id:     ctx.forma_project_id      || '',
+            forma_project_name:   ctx.forma_project_name    || '',
+            active_project_name:  ctx.active_project_name   || '',
+        };
+    } catch(e) { console.error('Failed to load context', e); }
 }
+loadActiveContext();
 
 function setMode(mode){
     currentMode=mode;
@@ -484,9 +482,10 @@ async function goNext(){
     }else if(currentStep===2){
         const btn=document.getElementById('btnNext');
         btn.innerHTML='<span class="spinner"></span> Sending...';btn.disabled=true;
-        const selR=document.getElementById('selRevizto'),selF=document.getElementById('selForma');
-        const rUuid=selR.value,rName=selR.selectedOptions[0]?.dataset.name||'';
-        const fId=selF.value,fName=selF.selectedOptions[0]?.dataset.name||'';
+        const rUuid=projectData.revizto_project_uuid||'';
+        const rName=projectData.revizto_project_name||'';
+        const fId=projectData.forma_project_id||'';
+        const fName=projectData.forma_project_name||'';
         const activeUsers=previewUsers.filter(u=>!u._skip);
         if(currentMode==='single'){
             const u=activeUsers[0];u.revizto_project_uuid=rUuid;u.revizto_project_name=rName;u.forma_project_id=fId;u.forma_project_name=fName;
@@ -504,10 +503,9 @@ async function goNext(){
 }
 
 function renderPreview(){
-    const selR=document.getElementById('selRevizto'),selF=document.getElementById('selForma');
-    const mortaHub=projectData.morta?.name||'Not configured';
-    const rProj=selR.selectedOptions[0]?.dataset.name||'None selected';
-    const fProj=selF.selectedOptions[0]?.dataset.name||'None selected';
+    const mortaHub=projectData.morta_hub_name||'Not configured';
+    const rProj=projectData.revizto_project_name||'Not configured';
+    const fProj=projectData.forma_project_name||'Not configured';
     document.getElementById('targetInfo').innerHTML=`
         <div style="font-weight:600;margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px;font-size:var(--fs-xs)">Sending invites to:</div>
         <div class="target-row"><span class="platform-tag morta target-label">Morta</span><span class="target-value">${mortaHub}</span></div>
@@ -546,39 +544,52 @@ async function searchUser(){
     const email=document.getElementById('searchEmail').value.trim();
     if(!email)return;
     const detail=document.getElementById('userDetail');
-    detail.classList.remove('visible');
     const btn=document.getElementById('btnSearch');
     btn.innerHTML='<span class="spinner"></span>';btn.disabled=true;
+    detail.classList.remove('visible');
 
-    const cacheKey='user_'+email.toLowerCase();
+    // Start continuous hacker text on name/email fields while searching
+    const nameEl  = document.getElementById('userName');
+    const emailEl = document.getElementById('userEmail');
+    nameEl.textContent  = email;
+    emailEl.textContent = 'searching...';
+    detail.classList.add('visible');
 
-    await smartFetch('/api/user/search?email='+encodeURIComponent(email),cacheKey,{
-        onCached:(data,age)=>{
-            if(data.found){
-                renderUserDetail(data);
-                document.getElementById('cacheAge').textContent='cached '+timeAgo(age);
-                detail.classList.add('visible');
-            }
-        },
-        onSyncing:()=>showSyncIndicator('Searching platforms'),
-        onFresh:(data)=>{
-            hideSyncIndicator();
-            if(data.found){
-                renderUserDetail(data);
-                document.getElementById('cacheAge').textContent='just now';
-                detail.classList.add('visible');
-                // Animate values
+    let hackInterval = null;
+    const CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789@#$%&*!?';
+    function scramble(el) {
+        el.textContent = Array.from({length: Math.max(el.textContent.length, 8)},
+            () => CHARS[Math.floor(Math.random() * CHARS.length)]).join('');
+    }
+    hackInterval = setInterval(() => { scramble(nameEl); scramble(emailEl); }, 60);
+
+    try {
+        // Always force a fresh fetch — no cache
+        const res  = await fetch('/api/user/search?email='+encodeURIComponent(email));
+        const data = await res.json();
+
+        clearInterval(hackInterval);
+
+        if(data.found){
+            renderUserDetail(data);
+            document.getElementById('cacheAge').textContent = 'just now';
+            // Slow settle animation on all values
+            hackerText(nameEl, data.name||data.email, {duration:900});
+            hackerText(emailEl, data.email, {duration:700, startDelay:100});
+            setTimeout(()=>{
                 document.querySelectorAll('.hacker-animate').forEach(el=>{
-                    hackerText(el,el.textContent,{duration:800});
+                    hackerText(el, el.textContent, {duration:600});
                 });
-            }else{
-                detail.classList.remove('visible');
-                showBanner('User not found on any platform. Click "+ Invite" to add them.','warning');
-            }
-        },
-        onError:(err)=>{hideSyncIndicator();showBanner('Search error: '+err.message,'error')},
-        forceRefresh:false,
-    });
+            }, 150);
+        } else {
+            detail.classList.remove('visible');
+            showBanner('User not found on any platform. Click "+ Invite" to add them.','warning');
+        }
+    } catch(err) {
+        clearInterval(hackInterval);
+        detail.classList.remove('visible');
+        showBanner('Search error: '+err.message,'error');
+    }
 
     btn.textContent='Search';btn.disabled=false;
 }
@@ -600,15 +611,26 @@ function showBanner(msg,type){const b=document.getElementById('resultBanner');b.
 function renderMorta(m){
     const c=document.getElementById('mortaContent'),t=document.getElementById('mortaTitle');
     if(!m){t.textContent='';c.innerHTML='<div class="not-found">Not found in Morta</div>';return}
-    t.textContent=m.role;
-    let tags=m.tags&&m.tags.length?'<div style="margin-top:6px">'+m.tags.map(t=>`<span class="tag-pill">${t.name}</span>`).join('')+'</div>':'<div class="value">None</div>';
-    const hubName=m.hub_name||m.hub_id||'—';
-    c.innerHTML=`<div class="detail-grid">
-        <div class="detail-item"><label>Hub</label><div class="value hacker-animate">${hubName}</div></div>
-        <div class="detail-item"><label>Role</label><div class="value hacker-animate">${m.role}</div></div>
-        <div class="detail-item"><label>Method</label><div class="value hacker-animate">${m.role_method||'—'}</div></div>
-        <div class="detail-item"><label>Joined</label><div class="value hacker-animate">${m.joined?m.joined.split('T')[0]:'—'}</div></div>
-    </div><div class="detail-item"><label>Permission Tags</label>${tags}</div>`;
+    const hubs = m.hubs || [m]; // support both old single and new multi-hub format
+    t.textContent = hubs.length > 1 ? `${hubs.length} hubs` : hubs[0].role;
+
+    const hubsHtml = hubs.map((h, i) => {
+        const tags = h.tags&&h.tags.length
+            ? '<div style="margin-top:4px">'+h.tags.map(tag=>`<span class="tag-pill">${tag.name}</span>`).join('')+'</div>'
+            : '<span style="color:var(--text-dark-muted);font-size:var(--fs-xs)">None</span>';
+        return `
+        <div style="${i>0?'margin-top:12px;padding-top:12px;border-top:1px solid var(--border-cream);':''}">
+            <div class="detail-grid">
+                <div class="detail-item"><label>Hub</label><div class="value hacker-animate">${h.hub_name||h.hub_id||'—'}</div></div>
+                <div class="detail-item"><label>Role</label><div class="value hacker-animate">${h.role}</div></div>
+                <div class="detail-item"><label>Method</label><div class="value hacker-animate">${h.role_method||'—'}</div></div>
+                <div class="detail-item"><label>Joined</label><div class="value hacker-animate">${h.joined?h.joined.split('T')[0]:'—'}</div></div>
+            </div>
+            <div class="detail-item"><label>Permission Tags</label>${tags}</div>
+        </div>`;
+    }).join('');
+
+    c.innerHTML = hubsHtml;
 }
 
 function renderRevizto(r){

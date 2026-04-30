@@ -6,3 +6,5 @@ requests
 bcrypt
 openpyxl
 pandas
+azure-storage-blob
+httpx

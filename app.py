@@ -6,6 +6,7 @@ import json
 import csv
 import asyncio
 import hashlib
+import os
 import requests as http_requests
 import io
 from pathlib import Path
@@ -32,29 +33,120 @@ SCRIPT_DIRS = {
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
 
-CONFIG_FILE      = BASE_DIR / "config.json"
-LOG_FILE         = BASE_DIR / "invite_log.json"
-AUTH_FILE        = BASE_DIR / "users.json"
+CONFIG_FILE       = BASE_DIR / "config.json"
+LOG_FILE          = BASE_DIR / "invite_log.json"
+AUTH_FILE         = BASE_DIR / "users.json"
 MODELS_CACHE_FILE = BASE_DIR / "forma_models_cache.json"
 
 SECRET_KEY  = "change-this-to-a-long-random-string"   # ← change this!
 signer      = URLSafeSerializer(SECRET_KEY)
 
 ALLOWED_DOMAINS = {"@alec.ae"}   # add more domains here if needed
+OWNER_EMAIL     = "oawad@alec.ae"  # only this user can access the Project Registry
+
+# ── Azure Blob Storage ─────────────────────────────────────────────────────
+AZURE_STORAGE_CONNECTION_STRING = os.environ.get(
+    "AZURE_STORAGE_CONNECTION_STRING", ""
+)
+BLOB_CONTAINER = "cockpit-data"
+_blob_client = None
+
+def get_blob_service():
+    global _blob_client
+    if _blob_client is None and AZURE_STORAGE_CONNECTION_STRING:
+        try:
+            from azure.storage.blob import BlobServiceClient
+            _blob_client = BlobServiceClient.from_connection_string(
+                AZURE_STORAGE_CONNECTION_STRING
+            )
+        except Exception as e:
+            print(f"[Blob] Could not connect: {e}")
+    return _blob_client
+
+def blob_read(name: str) -> dict | list | None:
+    """Read a JSON blob. Returns None if not found or blob storage unavailable."""
+    svc = get_blob_service()
+    if not svc:
+        return None
+    try:
+        blob = svc.get_blob_client(container=BLOB_CONTAINER, blob=name)
+        data = blob.download_blob().readall()
+        return json.loads(data)
+    except Exception:
+        return None
+
+def blob_write(name: str, data: dict | list):
+    """Write a JSON blob. Silently falls back to disk if unavailable."""
+    svc = get_blob_service()
+    if not svc:
+        return
+    try:
+        blob = svc.get_blob_client(container=BLOB_CONTAINER, blob=name)
+        blob.upload_blob(
+            json.dumps(data, indent=2).encode(),
+            overwrite=True
+        )
+    except Exception as e:
+        print(f"[Blob] Write failed for {name}: {e}")
+
+def blob_delete(name: str):
+    svc = get_blob_service()
+    if not svc:
+        return
+    try:
+        svc.get_blob_client(container=BLOB_CONTAINER, blob=name).delete_blob()
+    except Exception:
+        pass
+
+USE_BLOB = bool(AZURE_STORAGE_CONNECTION_STRING)
+
+# ── Project Registry helpers ───────────────────────────────────────────────
+def load_registry() -> dict:
+    if USE_BLOB:
+        data = blob_read("projects_registry.json")
+        if data is not None:
+            return data
+    p = BASE_DIR / "projects_registry.json"
+    if p.exists():
+        with open(p) as f:
+            return json.load(f)
+    return {}
+
+def save_registry(data: dict):
+    if USE_BLOB:
+        blob_write("projects_registry.json", data)
+    else:
+        with open(BASE_DIR / "projects_registry.json", "w") as f:
+            json.dump(data, f, indent=2)
+
+def get_user_projects(email: str) -> list[str]:
+    """Return list of project keys the user is admin of."""
+    registry = load_registry()
+    return [k for k, v in registry.items() if email in v.get("admins", [])]
+
+def is_owner(user: str) -> bool:
+    return user == OWNER_EMAIL
 
 # ---------------------------------------------------------------------------
 # Auth Helpers
 # ---------------------------------------------------------------------------
 
 def load_users():
+    if USE_BLOB:
+        data = blob_read("users.json")
+        if data is not None:
+            return data
     if AUTH_FILE.exists():
         with open(AUTH_FILE) as f:
             return json.load(f)
     return {}
 
 def save_users(users):
-    with open(AUTH_FILE, "w") as f:
-        json.dump(users, f, indent=2)
+    if USE_BLOB:
+        blob_write("users.json", users)
+    else:
+        with open(AUTH_FILE, "w") as f:
+            json.dump(users, f, indent=2)
 
 def hash_password(pw: str) -> str:
     return hashlib.sha256(pw.encode()).hexdigest()
@@ -75,6 +167,11 @@ def require_user(user: str = Depends(get_current_user)):
         raise HTTPException(status_code=303, headers={"Location": "/login"})
     return user
 
+def require_owner(user: str = Depends(require_user)):
+    if user != OWNER_EMAIL:
+        raise HTTPException(status_code=403, detail="Access restricted to system owner.")
+    return user
+
 # ---------------------------------------------------------------------------
 # Config & Log
 # ---------------------------------------------------------------------------
@@ -87,6 +184,7 @@ def get_default_config():
         "forma":   {"client_id": "", "client_secret": "", "client_id_3l": "", "client_secret_3l": "", "account_id": "", "project_id": "", "admin_user_id": ""},
         "projects": {"morta": [], "revizto": [], "forma": []},
         "active_context": {
+            "active_project_key":   "", "active_project_name":  "",
             "morta_hub_id": "", "morta_hub_name": "",
             "revizto_project_uuid": "", "revizto_project_name": "", "revizto_region": "",
             "forma_project_id": "", "forma_project_name": "", "forma_platform": ""
@@ -94,58 +192,90 @@ def get_default_config():
     }
 
 def get_user_config_file(email: str = None) -> Path:
-    """Return per-user config file path. Falls back to global config.json."""
+    """Return per-user config file path for local fallback."""
     if email:
         safe = email.lower().replace("@", "_at_").replace(".", "_")
         return BASE_DIR / f"config_{safe}.json"
     return CONFIG_FILE
 
+def _config_blob_name(email: str = None) -> str:
+    if email:
+        safe = email.lower().replace("@", "_at_").replace(".", "_")
+        return f"config_{safe}.json"
+    return "config.json"
+
 def load_config(email: str = None):
+    default = get_default_config()
+    # Try blob first
+    if USE_BLOB:
+        saved = blob_read(_config_blob_name(email))
+        if saved:
+            for p in default:
+                if p not in saved: saved[p] = default[p]
+                else:
+                    for k in default[p]:
+                        if k not in saved[p]: saved[p][k] = default[p][k]
+            return saved
+    # Fall back to local file
     path = get_user_config_file(email)
-    # Fall back to global config if user config doesn't exist yet
-    if not path.exists() and email:
-        path = CONFIG_FILE
     if path.exists():
         with open(path, "r") as f:
             saved = json.load(f)
-        default = get_default_config()
         for p in default:
             if p not in saved: saved[p] = default[p]
             else:
                 for k in default[p]:
                     if k not in saved[p]: saved[p][k] = default[p][k]
         return saved
-    return get_default_config()
+    return default
 
 def save_config(config, email: str = None):
-    path = get_user_config_file(email)
-    with open(path, "w") as f:
-        json.dump(config, f, indent=2)
+    if USE_BLOB:
+        blob_write(_config_blob_name(email), config)
+    else:
+        path = get_user_config_file(email)
+        with open(path, "w") as f:
+            json.dump(config, f, indent=2)
 
 def load_invite_log():
+    if USE_BLOB:
+        data = blob_read("invite_log.json")
+        if data is not None:
+            return data
     if LOG_FILE.exists():
         with open(LOG_FILE, "r") as f:
             return json.load(f)
     return []
 
+def save_invite_log(log):
+    if USE_BLOB:
+        blob_write("invite_log.json", log)
+    else:
+        with open(LOG_FILE, "w") as f:
+            json.dump(log, f, indent=2)
 
 def load_models_cache() -> dict:
-    """Load per-project model cache. Structure: {project_id: [{"id":..., "name":...}]}"""
+    """Load per-project model cache."""
+    if USE_BLOB:
+        data = blob_read("forma_models_cache.json")
+        if data is not None:
+            return data
     if MODELS_CACHE_FILE.exists():
         with open(MODELS_CACHE_FILE, "r") as f:
             return json.load(f)
     return {}
 
-
 def save_models_cache(cache: dict):
-    with open(MODELS_CACHE_FILE, "w") as f:
-        json.dump(cache, f, indent=2)
+    if USE_BLOB:
+        blob_write("forma_models_cache.json", cache)
+    else:
+        with open(MODELS_CACHE_FILE, "w") as f:
+            json.dump(cache, f, indent=2)
 
 def append_invite_log(entries):
     log = load_invite_log()
     log.extend(entries)
-    with open(LOG_FILE, "w") as f:
-        json.dump(log, f, indent=2)
+    save_invite_log(log)
 
 # ---------------------------------------------------------------------------
 # Platform Helpers — Names / Fetch
@@ -662,64 +792,98 @@ def forma_invite(email, config, project_id=None):
 # Platform Helpers — Search
 # ---------------------------------------------------------------------------
 
-def morta_search_user(email, config):
-    api_key  = config["morta"]["api_key"]
-    hub_id   = config.get("active_context", {}).get("morta_hub_id") or config["morta"].get("hub_id", "")
-    if not api_key or not hub_id: return None
-    hub_name = hub_id
-    hub_resp = http_requests.get(f"https://api.morta.io/v1/hub/{hub_id}", headers={"Authorization": f"Bearer {api_key}"}, timeout=10)
-    if hub_resp.status_code == 200:
-        hub_name = hub_resp.json().get("data", {}).get("name", hub_id)
-    response = http_requests.get(f"https://api.morta.io/v1/hub/{hub_id}/members", headers={"Authorization": f"Bearer {api_key}"}, timeout=15)
-    if response.status_code != 200: return None
-    for m in response.json().get("data", []):
-        user = m.get("user", {})
-        if user.get("email", "").lower() == email.lower():
-            tags = [{"name": t.get("value", ""), "publicId": t.get("publicId", "")} for t in user.get("tags", []) if isinstance(t, dict)]
-            return {"found": True, "hub_id": hub_id, "hub_name": hub_name, "name": user.get("name", ""), "email": user.get("email", ""),
-                    "role": m.get("projectRole", ""), "role_method": m.get("roleAssignedMethod", ""),
-                    "tags": tags, "joined": m.get("createdAt", ""), "public_id": user.get("publicId", "")}
-    return None
+def morta_search_user(email, config, allowed_hub_ids: list = None):
+    api_key = config["morta"]["api_key"]
+    if not api_key: return None
 
-def revizto_search_user(email, config):
+    # Determine which hubs to search
+    hub_ids = allowed_hub_ids if allowed_hub_ids else []
+    if not hub_ids:
+        hub_id = config.get("active_context", {}).get("morta_hub_id") or config["morta"].get("hub_id", "")
+        if hub_id: hub_ids = [hub_id]
+    if not hub_ids: return None
+
+    headers  = {"Authorization": f"Bearer {api_key}"}
+    matches  = []
+
+    for hub_id in hub_ids:
+        hub_name = hub_id
+        hub_resp = http_requests.get(f"https://api.morta.io/v1/hub/{hub_id}", headers=headers, timeout=10)
+        if hub_resp.status_code == 200:
+            hub_name = hub_resp.json().get("data", {}).get("name", hub_id)
+        response = http_requests.get(f"https://api.morta.io/v1/hub/{hub_id}/members", headers=headers, timeout=15)
+        if response.status_code != 200: continue
+        for m in response.json().get("data", []):
+            u = m.get("user", {})
+            if u.get("email", "").lower() == email.lower():
+                tags = [{"name": t.get("value", ""), "publicId": t.get("publicId", "")} for t in u.get("tags", []) if isinstance(t, dict)]
+                matches.append({
+                    "hub_id": hub_id, "hub_name": hub_name,
+                    "name": u.get("name", ""), "email": u.get("email", ""),
+                    "role": m.get("projectRole", ""), "role_method": m.get("roleAssignedMethod", ""),
+                    "tags": tags, "joined": m.get("createdAt", ""), "public_id": u.get("publicId", ""),
+                })
+                break  # found in this hub, move to next hub
+
+    if not matches: return None
+    # Return primary result with all hub memberships listed
+    primary = matches[0]
+    return {
+        "found":    True,
+        "name":     primary["name"],
+        "email":    primary["email"],
+        "public_id": primary["public_id"],
+        "hub_id":   primary["hub_id"],
+        "hub_name": primary["hub_name"],
+        "role":     primary["role"],
+        "role_method": primary["role_method"],
+        "tags":     primary["tags"],
+        "joined":   primary["joined"],
+        "hubs":     matches,   # all hub memberships
+    }
+
+def revizto_search_user(email, config, allowed_project_uuids: list = None):
     region = config.get("active_context", {}).get("revizto_region", "")
     if not region:
         for r in ["dubai", "ireland"]:
             if config.get(f"revizto_{r}", {}).get("access_code") or (BASE_DIR / f"revizto_tokens_{r}.json").exists():
-                region = r
-                break
-    if not region:
-        return None
+                region = r; break
+    if not region: return None
 
     license_uuid, _ = revizto_resolve_license(config, region)
-    if not license_uuid:
-        return None
+    if not license_uuid: return None
 
     token = revizto_get_token_for_region(config, region)
     if not token: return None
-    base_url  = f"https://api.{region}.revizto.com/v5"
-    headers   = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    base_url = f"https://api.{region}.revizto.com/v5"
+    headers  = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+
     response  = http_requests.get(f"{base_url}/license/{license_uuid}/member/list", headers=headers, timeout=15)
     if response.status_code != 200: return None
     data      = response.json().get("data", {})
     user_info = None
     if isinstance(data, dict):
         for mid, member in data.items():
-            user = member.get("user", {})
-            if user.get("email", "").lower() == email.lower():
+            u = member.get("user", {})
+            if u.get("email", "").lower() == email.lower():
                 role_map  = {0: "Owner", 1: "License Admin", 2: "Collaborator", 3: "Content Creator", 4: "Guest"}
                 user_info = {"found": True, "region": region, "license_uuid": license_uuid,
-                    "name": user.get("fullname", ""), "email": user.get("email", ""),
+                    "name": u.get("fullname", ""), "email": u.get("email", ""),
                     "license_role": role_map.get(member.get("role"), str(member.get("role", ""))),
                     "status": "active" if member.get("activated") else "deactivated" if member.get("deactivated") else "pending",
                     "company": member.get("company", ""), "department": member.get("department", ""),
-                    "invited_at": member.get("invitedAt", ""), "last_active": user.get("lastActive", ""),
-                    "user_uuid": user.get("uuid", ""), "projects": []}
+                    "invited_at": member.get("invitedAt", ""), "last_active": u.get("lastActive", ""),
+                    "user_uuid": u.get("uuid", ""), "projects": []}
                 break
     if not user_info: return None
+
     response = http_requests.get(f"{base_url}/project/list/{license_uuid}/paged", headers=headers, timeout=15)
     if response.status_code == 200:
-        projects = response.json().get("data", {}).get("data", [])
+        all_projects = response.json().get("data", {}).get("data", [])
+        if allowed_project_uuids:
+            projects = [p for p in all_projects if p.get("uuid") in allowed_project_uuids]
+        else:
+            projects = all_projects
         def check_project(project):
             pr = http_requests.get(f"{base_url}/project/{project['uuid']}/role/member/list", headers=headers, timeout=10)
             if pr.status_code == 200:
@@ -735,7 +899,7 @@ def revizto_search_user(email, config):
         user_info["projects"] = [r for r in results if r is not None]
     return user_info
 
-def forma_search_user(email, config):
+def forma_search_user(email, config, allowed_project_ids: list = None):
     fc = config["forma"]
     if not fc["account_id"]: return None
     token = forma_get_token(config)
@@ -761,7 +925,14 @@ def forma_search_user(email, config):
         offset += len(batch)
         if len(batch) < 100: break
     if not hub_info: return None
+
     all_projects = get_forma_project_names(config)
+    # Filter to allowed projects if specified
+    if allowed_project_ids:
+        projects = [p for p in all_projects if p.get("id") in allowed_project_ids]
+    else:
+        projects = all_projects
+
     def check_forma_project(project):
         po = 0
         while True:
@@ -780,11 +951,11 @@ def forma_search_user(email, config):
             po += len(batch)
             if len(batch) < 200: break
         return None
+
     with ThreadPoolExecutor(max_workers=8) as pool:
-        results = list(pool.map(check_forma_project, all_projects))
+        results = list(pool.map(check_forma_project, projects))
     hub_info["projects"] = [r for r in results if r is not None]
     return hub_info
-
 # ---------------------------------------------------------------------------
 # Auth Routes
 # ---------------------------------------------------------------------------
@@ -851,10 +1022,12 @@ async def logout():
 async def home(request: Request, user: str = Depends(require_user)):
     config         = load_config(user)
     log            = load_invite_log()
+    ctx            = config.get("active_context", {})
     recent_invites = log[-10:][::-1] if log else []
     return templates.TemplateResponse(request=request, name="home.html", context={
         "active_page": "home", "config": config,
         "morta_count": None, "revizto_count": None, "forma_count": None,
+        "active_project": ctx.get("active_project_name", ""),
         "morta_hub":      config["morta"]["hub_id"][:12]      + "..." if config["morta"]["hub_id"]      else None,
         "revizto_region": config["revizto_dubai"]["region"].title() if config["revizto_dubai"].get("region") else None,
         "forma_account":  config["forma"]["account_id"][:12]  + "..." if config["forma"]["account_id"] else None,
@@ -875,11 +1048,16 @@ async def portal_submit(
     request: Request,
     submitter_name:  str = Form(""),
     submitter_email: str = Form(""),
-    project_id:      str = Form(""),
+    project_id:      str = Form(""),   # this is the registry key (e.g. "rak-central")
     project_name:    str = Form(""),
     file: UploadFile = File(...),
 ):
     user = None  # public endpoint
+    # Look up platform IDs from registry using the project key
+    registry    = load_registry()
+    reg_project = registry.get(project_id, {})
+    platforms   = reg_project.get("platforms", {})
+    reg_name    = reg_project.get("name", project_name)
     import pandas as pd
 
     contents = await file.read()
@@ -910,7 +1088,7 @@ async def portal_submit(
             "revizto":             clean(row.get("Revizto Access", "")).upper() == "YES",
             "forma":               clean(row.get("ACC Access",     "")).upper() == "YES",
             "project_id":          project_id,
-            "project_name":        project_name,
+            "project_name":        reg_name,
             "submitted_by_name":   submitter_name,
             "submitted_by_email":  submitter_email,
             "submitted_at":        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -949,54 +1127,66 @@ async def portal_submit(
 
 @app.get("/api/portal/link")
 async def api_portal_link(request: Request, user: str = Depends(require_user)):
-    """Generate a portal link for the active project."""
-    config       = load_config(user)
-    ctx          = config.get("active_context", {})
-    project_id   = ctx.get("forma_project_id") or ctx.get("morta_hub_id") or ctx.get("revizto_project_uuid") or ""
-    project_name = ctx.get("forma_project_name") or ctx.get("morta_hub_name") or ctx.get("revizto_project_name") or ""
-    base_url     = str(request.base_url).rstrip("/")
-    if not project_id:
-        return JSONResponse({"status": "error", "detail": "No active project selected in sidebar."})
-    from urllib.parse import quote
-    link = f"{base_url}/portal/platformAccess?pid={project_id}&project={quote(project_name)}"
-    return JSONResponse({"status": "ok", "link": link, "project_id": project_id, "project_name": project_name})
+    """Generate a portal link using the registry project key."""
+    config   = load_config(user)
+    ctx      = config.get("active_context", {})
+    key      = ctx.get("active_project_key", "")
+    name     = ctx.get("active_project_name", "")
+    base_url = str(request.base_url).rstrip("/")
+    if not key:
+        return JSONResponse({"status": "error", "detail": "No active project selected."})
+    link = f"{base_url}/portal/platformAccess?pid={key}"
+    return JSONResponse({"status": "ok", "link": link, "project_key": key, "project_name": name})
 
 
 # ── Pending submissions API ───────────────────────────────────────────────
 
 def _load_portal_requests() -> dict:
+    if USE_BLOB:
+        data = blob_read("portal_requests.json")
+        if data is not None:
+            return data if isinstance(data, dict) else {}
     p = BASE_DIR / "portal_requests.json"
-    if not p.exists():
-        return {}
-    with open(p) as f:
-        return json.load(f)
+    if p.exists():
+        with open(p) as f:
+            loaded = json.load(f)
+        return loaded if isinstance(loaded, dict) else {}
+    return {}
 
 def _save_portal_requests(data: dict):
-    with open(BASE_DIR / "portal_requests.json", "w") as f:
-        json.dump(data, f, indent=2)
+    if USE_BLOB:
+        blob_write("portal_requests.json", data)
+    else:
+        with open(BASE_DIR / "portal_requests.json", "w") as f:
+            json.dump(data, f, indent=2)
 
 
 @app.get("/api/pending")
 async def api_pending_list(user: str = Depends(require_user)):
-    """Return flat list of all submissions across all projects."""
-    data = _load_portal_requests()
+    """Return submissions only for projects the user is admin of."""
+    data          = _load_portal_requests()
+    user_projects = get_user_projects(user)
+    # Owner sees all
+    if is_owner(user):
+        user_projects = list(data.keys())
+
     submissions = []
     for key, project in data.items():
+        if key not in user_projects:
+            continue
         for idx, sub in enumerate(project.get("submissions", [])):
             users = sub.get("users", [])
-            pending_users = [u for u in users if u.get("status") == "pending"]
             submissions.append({
-                "_key":           key,
-                "_idx":           idx,
-                "project_id":     project.get("project_id", key),
-                "project_name":   project.get("project_name", ""),
+                "_key":            key,
+                "_idx":            idx,
+                "project_id":      project.get("project_id", key),
+                "project_name":    project.get("project_name", ""),
                 "submitter_name":  sub.get("submitted_by_name", ""),
                 "submitter_email": sub.get("submitted_by_email", ""),
                 "submitted_at":    sub.get("submitted_at", ""),
                 "total":           len(users),
                 "status":          "pending" if any(u.get("status","pending") == "pending" for u in users) else "processed",
             })
-    # Sort by submitted_at descending
     submissions.sort(key=lambda s: s.get("submitted_at",""), reverse=True)
     return JSONResponse({"submissions": submissions})
 
@@ -1035,7 +1225,8 @@ async def api_pending_process(project_key: str, sub_idx: int, request: Request, 
     users = body.get("users", [])
 
     success = 0; errors = 0; rejected = 0
-    config = load_config(user)
+    config   = load_config(user)
+    registry = load_registry()
 
     for u in users:
         if not u.get("approved", True):
@@ -1053,8 +1244,9 @@ async def api_pending_process(project_key: str, sub_idx: int, request: Request, 
                 "morta":      u.get("morta", False),
                 "revizto":    u.get("revizto", False),
                 "forma":      u.get("forma", False),
-                "revizto_project_uuid": u.get("project_id",""),
-                "forma_project_id":     u.get("project_id",""),
+                # Look up platform IDs from registry using project key
+                "revizto_project_uuid": registry.get(project_key, {}).get("platforms", {}).get("revizto", {}).get("project_uuid", ""),
+                "forma_project_id":     registry.get(project_key, {}).get("platforms", {}).get("forma", {}).get("project_id", ""),
             }
             import httpx
             async with httpx.AsyncClient() as client:
@@ -1096,6 +1288,103 @@ async def api_pending_delete(project_key: str, sub_idx: int, user: str = Depends
     return JSONResponse({"status": "ok"})
 
 
+@app.get("/registry", response_class=HTMLResponse)
+async def registry_page(request: Request, user: str = Depends(require_owner)):
+    registry = load_registry()
+    return templates.TemplateResponse(request=request, name="registry.html", context={
+        "active_page": "registry", "current_user": user, "registry": registry,
+    })
+
+@app.get("/api/registry")
+async def api_registry_get(user: str = Depends(require_user)):
+    if not is_owner(user):
+        raise HTTPException(status_code=403)
+    return JSONResponse(load_registry())
+
+@app.post("/api/registry")
+async def api_registry_save(request: Request, user: str = Depends(require_user)):
+    if not is_owner(user):
+        raise HTTPException(status_code=403)
+    body = await request.json()
+    registry = load_registry()
+    key = body.get("key", "").strip().lower().replace(" ", "-")
+    if not key:
+        return JSONResponse({"status": "error", "detail": "Project key required."}, status_code=400)
+    registry[key] = {
+        "name":      body.get("name", "").strip(),
+        "platforms": {
+            "morta":   {"hub_id": body.get("morta_hub_id", "").strip()},
+            "revizto": {"project_uuid": body.get("revizto_uuid", "").strip(),
+                        "region": body.get("revizto_region", "dubai").strip()},
+            "forma":   {"project_id": body.get("forma_project_id", "").strip()},
+        },
+        "admins": [e.strip().lower() for e in body.get("admins", "").split(",") if e.strip()],
+    }
+    save_registry(registry)
+    return JSONResponse({"status": "ok", "key": key})
+
+@app.delete("/api/registry/{key}")
+async def api_registry_delete(key: str, user: str = Depends(require_user)):
+    if not is_owner(user):
+        raise HTTPException(status_code=403)
+    registry = load_registry()
+    registry.pop(key, None)
+    save_registry(registry)
+    return JSONResponse({"status": "ok"})
+
+
+@app.get("/api/registry")
+async def api_registry_get(user: str = Depends(require_owner)):
+    return JSONResponse(load_registry())
+
+@app.post("/api/registry/project")
+async def api_registry_create(request: Request, user: str = Depends(require_owner)):
+    body = await request.json()
+    registry = load_registry()
+    key = body.get("key", "").strip().lower().replace(" ", "-")
+    if not key:
+        return JSONResponse({"status": "error", "detail": "Project key is required."}, status_code=400)
+    registry[key] = {
+        "name":      body.get("name", key),
+        "platforms": {
+            "morta":   {"hub_id":       body.get("morta_hub_id", "")},
+            "revizto": {"project_uuid": body.get("revizto_uuid", ""),
+                        "region":       body.get("revizto_region", "dubai")},
+            "forma":   {"project_id":   body.get("forma_project_id", "")},
+        },
+        "admins": [a.strip().lower() for a in body.get("admins", "").split(",") if a.strip()],
+    }
+    save_registry(registry)
+    return JSONResponse({"status": "ok", "key": key})
+
+@app.put("/api/registry/project/{key}")
+async def api_registry_update(key: str, request: Request, user: str = Depends(require_owner)):
+    body = await request.json()
+    registry = load_registry()
+    if key not in registry:
+        raise HTTPException(status_code=404, detail="Project not found.")
+    registry[key].update({
+        "name":      body.get("name", registry[key]["name"]),
+        "platforms": {
+            "morta":   {"hub_id":       body.get("morta_hub_id", "")},
+            "revizto": {"project_uuid": body.get("revizto_uuid", ""),
+                        "region":       body.get("revizto_region", "dubai")},
+            "forma":   {"project_id":   body.get("forma_project_id", "")},
+        },
+        "admins": [a.strip().lower() for a in body.get("admins", "").split(",") if a.strip()],
+    })
+    save_registry(registry)
+    return JSONResponse({"status": "ok"})
+
+@app.delete("/api/registry/project/{key}")
+async def api_registry_delete(key: str, user: str = Depends(require_owner)):
+    registry = load_registry()
+    if key in registry:
+        del registry[key]
+        save_registry(registry)
+    return JSONResponse({"status": "ok"})
+
+
 @app.get("/info", response_class=HTMLResponse)
 async def info_page(request: Request, user: str = Depends(require_user)):
     return templates.TemplateResponse(request=request, name="info.html", context={
@@ -1111,7 +1400,13 @@ async def invite_page(request: Request, user: str = Depends(require_user)):
 
 @app.get("/manage", response_class=HTMLResponse)
 async def manage_page(request: Request, user: str = Depends(require_user)):
-    log            = load_invite_log()
+    log           = load_invite_log()
+    user_projects = get_user_projects(user)
+    # Filter log to only entries for projects the user is admin of
+    # Owner sees all. If no registry set up yet, show all.
+    if not is_owner(user) and user_projects:
+        log = [e for e in log if e.get("project_key") in user_projects
+               or e.get("project_id") in user_projects]  # backwards compat
     recent_invites = log[-20:][::-1] if log else []
     return templates.TemplateResponse(request=request, name="manage.html", context={
         "active_page": "manage", "recent_invites": recent_invites, "current_user": user,
@@ -1313,24 +1608,24 @@ async def api_set_context(request: Request, user: str = Depends(require_user)):
     body   = await request.json()
     config = load_config(user)
     config["active_context"] = {
+        "active_project_key":     body.get("active_project_key", ""),
+        "active_project_name":    body.get("active_project_name", ""),
         "morta_hub_id":           body.get("morta_hub_id", ""),
         "morta_hub_name":         body.get("morta_hub_name", ""),
         "revizto_project_uuid":   body.get("revizto_project_uuid", ""),
         "revizto_project_name":   body.get("revizto_project_name", ""),
-        "revizto_region":         body.get("revizto_region", ""),
+        "revizto_region":         body.get("revizto_region", "dubai"),
         "forma_project_id":       body.get("forma_project_id", ""),
         "forma_project_name":     body.get("forma_project_name", ""),
-        "forma_platform":         body.get("forma_platform", ""),
+        "forma_platform":         body.get("forma_platform", "acc"),
     }
 
-    # ── Write back to platform configs so scripts pick them up ──
+    # Write platform IDs back so scripts pick them up
     if body.get("morta_hub_id"):
         config.setdefault("morta", {})["hub_id"] = body["morta_hub_id"]
-
     if body.get("revizto_project_uuid"):
         config.setdefault("revizto", {})["project_uuid"] = body["revizto_project_uuid"]
         config.setdefault("revizto", {})["region"]       = body.get("revizto_region", "")
-
     if body.get("forma_project_id"):
         config.setdefault("forma", {})["project_id"] = body["forma_project_id"]
 
@@ -1394,6 +1689,7 @@ async def api_invite_single(request: Request, user: str = Depends(require_user))
         "morta_status": "skipped", "revizto_status": "skipped", "forma_status": "skipped",
         "revizto_project": data.get("revizto_project_name", ""),
         "forma_project":   data.get("forma_project_name", ""),
+        "project_key":     config.get("active_context", {}).get("active_project_key", ""),
     }
     if data.get("morta"):
         r = morta_invite(email, config)
@@ -1441,13 +1737,18 @@ async def api_invite_preview(file: UploadFile = File(...), user: str = Depends(r
 
 @app.post("/api/invite/bulk")
 async def api_invite_bulk(request: Request, user: str = Depends(require_user)):
-    data                 = await request.json()
-    config               = load_config(user)
-    users                = data.get("users", [])
-    revizto_project_uuid = data.get("revizto_project_uuid")
-    revizto_project_name = data.get("revizto_project_name", "")
-    forma_project_id     = data.get("forma_project_id")
-    forma_project_name   = data.get("forma_project_name", "")
+    data   = await request.json()
+    config = load_config(user)
+    users  = data.get("users", [])
+    ctx    = config.get("active_context", {})
+
+    # Use active context from sidebar (no longer passed from dropdown)
+    revizto_project_uuid = ctx.get("revizto_project_uuid", "") or data.get("revizto_project_uuid")
+    revizto_project_name = ctx.get("revizto_project_name", "") or data.get("revizto_project_name", "")
+    forma_project_id     = ctx.get("forma_project_id", "")     or data.get("forma_project_id")
+    forma_project_name   = ctx.get("forma_project_name", "")   or data.get("forma_project_name", "")
+    project_key          = ctx.get("active_project_key", "")
+
     results = []
     for u in users:
         result = {
@@ -1456,6 +1757,7 @@ async def api_invite_bulk(request: Request, user: str = Depends(require_user)):
             "company": u.get("company", ""), "department": u.get("department", ""),
             "morta_status": "skipped", "revizto_status": "skipped", "forma_status": "skipped",
             "revizto_project": revizto_project_name, "forma_project": forma_project_name,
+            "project_key": project_key,
         }
         if u.get("morta"):
             r = morta_invite(u["email"], config)
@@ -1479,15 +1781,30 @@ async def api_invite_bulk(request: Request, user: str = Depends(require_user)):
 
 @app.get("/api/user/search")
 async def api_user_search(email: str, user: str = Depends(require_user)):
-    config = load_config(user)
-    email  = email.strip().lower()
+    config   = load_config(user)
+    email    = email.strip().lower()
     if not email: return JSONResponse({"found": False})
-    loop   = asyncio.get_event_loop()
+
+    # Get projects this admin has access to from registry
+    registry      = load_registry()
+    admin_projects = {k: v for k, v in registry.items() if user in v.get("admins", [])}
+
+    # If owner, they see everything (use all registry projects)
+    if user == OWNER_EMAIL:
+        admin_projects = registry
+
+    # Extract per-platform allowed IDs
+    allowed_morta_hubs    = [v["platforms"]["morta"]["hub_id"]         for v in admin_projects.values() if v.get("platforms", {}).get("morta", {}).get("hub_id")]
+    allowed_revizto_uuids = [v["platforms"]["revizto"]["project_uuid"] for v in admin_projects.values() if v.get("platforms", {}).get("revizto", {}).get("project_uuid")]
+    allowed_forma_ids     = [v["platforms"]["forma"]["project_id"]      for v in admin_projects.values() if v.get("platforms", {}).get("forma", {}).get("project_id")]
+
+    loop = asyncio.get_event_loop()
     with ThreadPoolExecutor() as pool:
-        morta_fut   = loop.run_in_executor(pool, morta_search_user,   email, config)
-        revizto_fut = loop.run_in_executor(pool, revizto_search_user, email, config)
-        forma_fut   = loop.run_in_executor(pool, forma_search_user,   email, config)
+        morta_fut   = loop.run_in_executor(pool, morta_search_user,   email, config, allowed_morta_hubs)
+        revizto_fut = loop.run_in_executor(pool, revizto_search_user, email, config, allowed_revizto_uuids)
+        forma_fut   = loop.run_in_executor(pool, forma_search_user,   email, config, allowed_forma_ids)
         morta_result, revizto_result, forma_result = await asyncio.gather(morta_fut, revizto_fut, forma_fut)
+
     found = any(r is not None for r in [morta_result, revizto_result, forma_result])
     name  = ""
     for r in [morta_result, forma_result, revizto_result]:
