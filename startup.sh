@@ -1,4 +1,4 @@
-#!/bin/bash
+﻿#!/bin/bash
 # Create required folders and placeholder files if they don't exist
 mkdir -p exports
 
