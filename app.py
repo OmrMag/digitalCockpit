@@ -93,9 +93,20 @@ def get_default_config():
         },
     }
 
-def load_config():
-    if CONFIG_FILE.exists():
-        with open(CONFIG_FILE, "r") as f:
+def get_user_config_file(email: str = None) -> Path:
+    """Return per-user config file path. Falls back to global config.json."""
+    if email:
+        safe = email.lower().replace("@", "_at_").replace(".", "_")
+        return BASE_DIR / f"config_{safe}.json"
+    return CONFIG_FILE
+
+def load_config(email: str = None):
+    path = get_user_config_file(email)
+    # Fall back to global config if user config doesn't exist yet
+    if not path.exists() and email:
+        path = CONFIG_FILE
+    if path.exists():
+        with open(path, "r") as f:
             saved = json.load(f)
         default = get_default_config()
         for p in default:
@@ -106,8 +117,9 @@ def load_config():
         return saved
     return get_default_config()
 
-def save_config(config):
-    with open(CONFIG_FILE, "w") as f:
+def save_config(config, email: str = None):
+    path = get_user_config_file(email)
+    with open(path, "w") as f:
         json.dump(config, f, indent=2)
 
 def load_invite_log():
@@ -376,7 +388,7 @@ def get_forma_project_names(config):
 
 @app.get("/api/debug/revizto")
 async def debug_revizto(user: str = Depends(require_user)):
-    config = load_config()
+    config = load_config(user)
     results = {}
     for region in ["dubai", "ireland"]:
         rc    = config.get(f"revizto_{region}", {})
@@ -391,7 +403,7 @@ async def debug_revizto(user: str = Depends(require_user)):
 
 @app.get("/api/debug/revizto/projects")
 async def debug_revizto_projects(user: str = Depends(require_user)):
-    config = load_config()
+    config = load_config(user)
     token  = revizto_get_token_for_region(config, "dubai")
     rc     = config.get("revizto_dubai", {})
     r = http_requests.get(
@@ -425,7 +437,7 @@ async def api_forma_models(request: Request, user: str = Depends(require_user)):
             print(f"[Forma] Returning cached models for project {project_id} ({len(cache[project_id])} models)")
             return JSONResponse({"models": cache[project_id], "cached": True})
 
-    config     = load_config()
+    config     = load_config(user)
     token      = forma_get_token(config)
     if not token:
         return JSONResponse({"models": [], "error": "Forma auth failed."})
@@ -533,7 +545,7 @@ async def api_set_model_context(request: Request, user: str = Depends(require_us
     """Save selected model for the active project into the models cache."""
     body       = await request.json()
     project_id = body.get("project_id", "")
-    config     = load_config()
+    config     = load_config(user)
     # Also accept project_id from active_context if not provided
     if not project_id:
         project_id = config.get("active_context", {}).get("forma_project_id", "")
@@ -552,7 +564,7 @@ async def api_set_model_context(request: Request, user: str = Depends(require_us
     # Also write to config so the Python scripts can pick it up via Forma_Config
     config.setdefault("forma", {})["model_item_id"] = body.get("model_item_id", "")
     config.setdefault("forma", {})["model_name"]    = body.get("model_name", "")
-    save_config(config)
+    save_config(config, user)
 
     return JSONResponse({"status": "ok"})
 
@@ -837,7 +849,7 @@ async def logout():
 
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request, user: str = Depends(require_user)):
-    config         = load_config()
+    config         = load_config(user)
     log            = load_invite_log()
     recent_invites = log[-10:][::-1] if log else []
     return templates.TemplateResponse(request=request, name="home.html", context={
@@ -867,6 +879,7 @@ async def portal_submit(
     project_name:    str = Form(""),
     file: UploadFile = File(...),
 ):
+    user = None  # public endpoint
     import pandas as pd
 
     contents = await file.read()
@@ -937,7 +950,7 @@ async def portal_submit(
 @app.get("/api/portal/link")
 async def api_portal_link(request: Request, user: str = Depends(require_user)):
     """Generate a portal link for the active project."""
-    config       = load_config()
+    config       = load_config(user)
     ctx          = config.get("active_context", {})
     project_id   = ctx.get("forma_project_id") or ctx.get("morta_hub_id") or ctx.get("revizto_project_uuid") or ""
     project_name = ctx.get("forma_project_name") or ctx.get("morta_hub_name") or ctx.get("revizto_project_name") or ""
@@ -1022,7 +1035,7 @@ async def api_pending_process(project_key: str, sub_idx: int, request: Request, 
     users = body.get("users", [])
 
     success = 0; errors = 0; rejected = 0
-    config = load_config()
+    config = load_config(user)
 
     for u in users:
         if not u.get("approved", True):
@@ -1112,7 +1125,7 @@ async def scheduler_page(request: Request, user: str = Depends(require_user)):
 
 @app.get("/settings", response_class=HTMLResponse)
 async def settings_page(request: Request, user: str = Depends(require_user)):
-    config = load_config()
+    config = load_config(user)
     return templates.TemplateResponse(request=request, name="settings.html", context={
         "active_page": "settings", "config": config,
         "message": None, "message_type": None, "current_user": user,
@@ -1126,7 +1139,7 @@ async def settings_save(request: Request, user: str = Depends(require_user),
     forma_client_id: str = Form(""), forma_client_secret: str = Form(""),
     forma_client_id_3l: str = Form(""), forma_client_secret_3l: str = Form(""),
     forma_account_id: str = Form(""), forma_project_id: str = Form(""), forma_admin_user_id: str = Form("")):
-    existing = load_config()
+    existing = load_config(user)
     config = {
         "morta": {"api_key": morta_api_key, "hub_id": existing["morta"].get("hub_id", "")},
         "revizto_dubai": {
@@ -1145,7 +1158,7 @@ async def settings_save(request: Request, user: str = Depends(require_user),
         "projects":       existing.get("projects", {"morta": [], "revizto": [], "forma": []}),
         "active_context": existing.get("active_context", get_default_config()["active_context"]),
     }
-    save_config(config)
+    save_config(config, user)
     return templates.TemplateResponse(request=request, name="settings.html", context={
         "active_page": "settings", "config": config,
         "message": "Settings saved successfully.", "message_type": "success", "current_user": user,
@@ -1176,12 +1189,12 @@ async def api_extract(request: Request, user: str = Depends(require_user)):
         return JSONResponse({"status": "error", "message": f"Script not found: {script_name}.py"}, status_code=404)
 
     if project_uuid:
-        config = load_config()
+        config = load_config(user)
         if platform_key == "revizto":
             config.setdefault("revizto", {})["project_uuid"] = project_uuid
         elif platform_key == "forma":
             config.setdefault("forma", {})["project_id"] = project_uuid
-        save_config(config)
+        save_config(config, user)
 
     try:
         loop = asyncio.get_event_loop()
@@ -1225,7 +1238,7 @@ async def debug_paths():
 @app.get("/api/projects")
 async def api_projects(user: str = Depends(require_user)):
     """Return saved projects from config (no live API calls)."""
-    config = load_config()
+    config = load_config(user)
     projects = config.get("projects", {"morta": [], "revizto": [], "forma": []})
     context  = config.get("active_context", {})
     return JSONResponse({"projects": projects, "active_context": context})
@@ -1239,7 +1252,7 @@ async def api_fetch_projects(request: Request, user: str = Depends(require_user)
     """Fetch projects from all platforms and save to config.json."""
     body     = await request.json()
     platform = body.get("platform")
-    config   = load_config()
+    config   = load_config(user)
     results  = {}
 
     if platform in ("morta", "all"):
@@ -1283,7 +1296,7 @@ async def api_fetch_projects(request: Request, user: str = Depends(require_user)
         except Exception as e:
             results["forma"] = {"count": 0, "items": [], "error": str(e)}
 
-    save_config(config)
+    save_config(config, user)
     return JSONResponse({"status": "ok", "results": results})
 
 # ---------------------------------------------------------------------------
@@ -1292,13 +1305,13 @@ async def api_fetch_projects(request: Request, user: str = Depends(require_user)
 
 @app.get("/api/context")
 async def api_get_context(user: str = Depends(require_user)):
-    config = load_config()
+    config = load_config(user)
     return JSONResponse(config.get("active_context", {}))
 
 @app.post("/api/context")
 async def api_set_context(request: Request, user: str = Depends(require_user)):
     body   = await request.json()
-    config = load_config()
+    config = load_config(user)
     config["active_context"] = {
         "morta_hub_id":           body.get("morta_hub_id", ""),
         "morta_hub_name":         body.get("morta_hub_name", ""),
@@ -1321,7 +1334,7 @@ async def api_set_context(request: Request, user: str = Depends(require_user)):
     if body.get("forma_project_id"):
         config.setdefault("forma", {})["project_id"] = body["forma_project_id"]
 
-    save_config(config)
+    save_config(config, user)
     return JSONResponse({"status": "ok", "active_context": config["active_context"]})
 # ---------------------------------------------------------------------------
 # API — Exports (widget builder data source)
@@ -1371,7 +1384,7 @@ async def api_exports_read(filename: str, user: str = Depends(require_user)):
 @app.post("/api/invite/single")
 async def api_invite_single(request: Request, user: str = Depends(require_user)):
     data   = await request.json()
-    config = load_config()
+    config = load_config(user)
     email  = data.get("email", "").strip()
     if not email: return JSONResponse({"status": "error", "detail": "Email is required"}, status_code=400)
     result = {
@@ -1429,7 +1442,7 @@ async def api_invite_preview(file: UploadFile = File(...), user: str = Depends(r
 @app.post("/api/invite/bulk")
 async def api_invite_bulk(request: Request, user: str = Depends(require_user)):
     data                 = await request.json()
-    config               = load_config()
+    config               = load_config(user)
     users                = data.get("users", [])
     revizto_project_uuid = data.get("revizto_project_uuid")
     revizto_project_name = data.get("revizto_project_name", "")
@@ -1466,7 +1479,7 @@ async def api_invite_bulk(request: Request, user: str = Depends(require_user)):
 
 @app.get("/api/user/search")
 async def api_user_search(email: str, user: str = Depends(require_user)):
-    config = load_config()
+    config = load_config(user)
     email  = email.strip().lower()
     if not email: return JSONResponse({"found": False})
     loop   = asyncio.get_event_loop()
