@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sign in — Digital Construction Cockpit</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+  <style>
+    /* ── Login-page scoped styles ─────────────────────────────────────── */
+    /* Override base body if style.css sets sidebar layout */
+    html, body {
+      margin: 0; padding: 0;
+      background: var(--bg, #e8edf2);
+      color: var(--navy, #0b2545);
+      font: 13px/1.55 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-feature-settings: "zero","ss01";
+      -webkit-font-smoothing: antialiased;
+      min-height: 100vh;
+    }
+
+    .login-wrap {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      min-height: 100vh;
+    }
+
+    /* ── Left rail ── */
+    .login-left {
+      background: var(--navy, #0b2545);
+      color: #f2f4f8;
+      padding: 48px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+    .login-brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    .login-brand-logo {
+      height: 34px;
+      width: auto;
+      display: block;
+      filter: brightness(0) invert(1);
+    }
+    .login-brand-divider {
+      width: 1px;
+      height: 26px;
+      background: rgba(242,244,248,0.15);
+    }
+    .login-brand-label {
+      font-size: 10.5px;
+      line-height: 1.2;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: #f2f4f8;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .login-brand-label small {
+      display: block;
+      color: rgba(242,244,248,0.55);
+      font-weight: 500;
+      font-size: 9.5px;
+      letter-spacing: 0.18em;
+      margin-top: 4px;
+    }
+    .login-pitch {
+      font-size: 30px;
+      line-height: 1.15;
+      letter-spacing: -0.01em;
+      max-width: 22ch;
+      font-weight: 500;
+    }
+    .login-pitch em {
+      font-style: normal;
+      color: #ffffff;
+      font-weight: 700;
+    }
+    .login-blurb {
+      color: rgba(242,244,248,0.55);
+      font-size: 12px;
+      max-width: 38ch;
+      margin-top: 18px;
+      line-height: 1.6;
+    }
+    .login-foot {
+      font-size: 11px;
+      color: rgba(242,244,248,0.4);
+      letter-spacing: 0.04em;
+    }
+
+    /* ── Right panel ── */
+    .login-right {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 48px;
+      background: var(--bg, #e8edf2);
+    }
+    .login-card {
+      width: 100%;
+      max-width: 380px;
+    }
+    .login-card h1 {
+      font-weight: 600;
+      font-size: 22px;
+      margin: 0 0 8px;
+      letter-spacing: -0.01em;
+      color: var(--navy, #0b2545);
+    }
+    .login-card .sub {
+      color: var(--text-dark-muted, #5b6473);
+      font-size: 12px;
+      margin: 0 0 28px;
+      line-height: 1.6;
+    }
+    .login-label {
+      display: block;
+      font-size: 10.5px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--text-dark-muted, #5b6473);
+      margin-bottom: 8px;
+      font-weight: 600;
+    }
+    .login-input {
+      appearance: none;
+      width: 100%;
+      height: 42px;
+      padding: 0 14px;
+      border: 1px solid rgba(11,37,69,0.12);
+      border-radius: 9px;
+      background: #ffffff;
+      color: var(--navy, #0b2545);
+      font: inherit;
+      font-size: 13px;
+      outline: none;
+      transition: border-color .12s, box-shadow .12s;
+      box-sizing: border-box;
+    }
+    .login-input:focus {
+      border-color: var(--navy, #0b2545);
+      box-shadow: 0 0 0 3px rgba(11,37,69,0.10);
+    }
+    .login-field { margin-bottom: 18px; }
+
+    .login-btn {
+      appearance: none;
+      border: 0;
+      height: 42px;
+      padding: 0 18px;
+      border-radius: 9px;
+      background: var(--navy, #0b2545);
+      color: #ffffff;
+      font: inherit;
+      font-weight: 600;
+      font-size: 12.5px;
+      letter-spacing: 0.04em;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      width: 100%;
+      transition: background .12s, opacity .12s;
+    }
+    .login-btn:hover { opacity: 0.88; }
+    .login-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .login-err {
+      color: #b91c1c;
+      font-size: 11.5px;
+      margin-top: 14px;
+      padding: 9px 12px;
+      background: #fdecec;
+      border-radius: 7px;
+    }
+
+    /* Flash messages from Flask */
+    .login-flash {
+      margin-bottom: 18px;
+    }
+    .login-flash .flash-msg {
+      font-size: 11.5px;
+      padding: 9px 12px;
+      border-radius: 7px;
+      margin-bottom: 8px;
+    }
+    .flash-msg.error   { color: #b91c1c; background: #fdecec; }
+    .flash-msg.success { color: #166534; background: #dcfce7; }
+    .flash-msg.info    { color: var(--navy, #0b2545); background: rgba(11,37,69,0.06); }
+
+    .email-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 5px 10px;
+      background: rgba(11,37,69,0.06);
+      border-radius: 7px;
+      font-size: 12px;
+      margin-bottom: 16px;
+      color: var(--navy, #0b2545);
+    }
+    .email-pill .change-link {
+      color: var(--navy, #0b2545);
+      cursor: pointer;
+      font-size: 11px;
+      text-decoration: underline;
+      background: none;
+      border: none;
+      font: inherit;
+      padding: 0;
+    }
+
+    @media (max-width: 780px) {
+      .login-wrap { grid-template-columns: 1fr; }
+      .login-left { display: none; }
+      .login-right { padding: 32px 24px; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="login-wrap">
+
+  <!-- Left rail -->
+  <aside class="login-left">
+    <div class="login-brand">
+      <div class="login-brand-label">ALEC Holdings</div>
+    <div class="login-brand-divider"></div>
+    <div class="login-brand-label">
+        Digital Cockpit
+        <small>v0.2</small>
+    </div>
+    </div>
+    <div>
+      <div class="login-pitch">A single console for every <em>project</em>, every <em>tool</em>.</div>
+      <div class="login-blurb">ACC, BIM360, Forma, Revizto, Morta — unified. Sign in with the email registered to your hub.</div>
+    </div>
+    <div class="login-foot">v0.2 · Digital Construction Cockpit</div>
+  </aside>
+
+  <!-- Right panel -->
+  <main class="login-right">
+    <div class="login-card" id="login-card">
+
+
+      <!-- Stage: email (default) -->
+      <div id="view-email" {% if stage == 'password' or stage == 'register' %}style="display:none"{% endif %}>
+        <h1>Sign in</h1>
+        <p class="sub">Enter your work email to continue.</p>
+        <form id="form-email" novalidate>
+          <div class="login-field">
+            <label class="login-label">Email address</label>
+            <input class="login-input" type="email" id="inp-email" name="email"
+              required autofocus placeholder="yourname@alec.ae"
+              value="{{ prefill_email or '' }}">
+          </div>
+          <button class="login-btn" type="submit" id="btn-email">Continue →</button>
+          <div class="login-err" id="err-email" style="display:none"></div>
+        </form>
+      </div>
+
+      <!-- Stage: password -->
+      <div id="view-password" style="display:none">
+        <h1>Welcome back</h1>
+        <div class="email-pill">
+          <span id="pill-email"></span>
+          <button class="change-link" id="btn-change">change</button>
+        </div>
+        <form id="form-password" novalidate>
+          <div class="login-field">
+            <label class="login-label">Password</label>
+            <input class="login-input" type="password" id="inp-password" name="password" required>
+          </div>
+          <button class="login-btn" type="submit" id="btn-password">Sign in →</button>
+          <div class="login-err" id="err-password" style="display:none"></div>
+        </form>
+      </div>
+
+      <!-- Stage: register -->
+      <div id="view-register" style="display:none">
+        <h1>Create account</h1>
+        <div class="email-pill">
+          <span id="pill-email-reg"></span>
+          <button class="change-link" id="btn-change-reg">change</button>
+        </div>
+        <p class="sub">First time signing in. Choose a password (min 6 chars).</p>
+        <form id="form-register" novalidate>
+          <div class="login-field">
+            <label class="login-label">Password</label>
+            <input class="login-input" type="password" id="inp-p1" name="p1" required>
+          </div>
+          <div class="login-field">
+            <label class="login-label">Confirm password</label>
+            <input class="login-input" type="password" id="inp-p2" name="p2" required>
+          </div>
+          <button class="login-btn" type="submit" id="btn-register">Create account →</button>
+          <div class="login-err" id="err-register" style="display:none"></div>
+        </form>
+      </div>
+
+    </div>
+  </main>
+</div>
+
+<script>
+(function () {
+  let currentEmail = '';
+
+  // ── Helpers ──────────────────────────────────────────────────────────
+  function show(viewId) {
+    ['view-email','view-password','view-register'].forEach(id => {
+      document.getElementById(id).style.display = id === viewId ? 'block' : 'none';
+    });
+  }
+
+  function setErr(id, msg) {
+    const el = document.getElementById(id);
+    if (msg) { el.textContent = msg; el.style.display = 'block'; }
+    else      { el.textContent = '';  el.style.display = 'none';  }
+  }
+
+  function setBusy(btnId, busy, label, busyLabel) {
+    const btn = document.getElementById(btnId);
+    btn.disabled = busy;
+    btn.textContent = busy ? busyLabel : label;
+  }
+
+  async function api(path, body) {
+    const r = await fetch(path, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    let data;
+    try { data = await r.json(); } catch { data = {}; }
+    if (!r.ok) throw new Error(data.detail || data.message || r.statusText);
+    return data;
+  }
+
+  // ── Email form ────────────────────────────────────────────────────────
+  document.getElementById('form-email').addEventListener('submit', async function (e) {
+    e.preventDefault();
+    const email = document.getElementById('inp-email').value.trim().toLowerCase();
+    if (!email) { setErr('err-email', 'Please enter your email.'); return; }
+    setErr('err-email', null);
+    setBusy('btn-email', true, 'Continue →', 'Checking…');
+    try {
+      const r = await api('/api/auth/check-email', { email });
+      currentEmail = email;
+      if (r.stage === 'password') {
+        document.getElementById('pill-email').textContent = email;
+        show('view-password');
+        document.getElementById('inp-password').focus();
+      } else if (r.stage === 'register') {
+        document.getElementById('pill-email-reg').textContent = email;
+        show('view-register');
+        document.getElementById('inp-p1').focus();
+      } else {
+        setErr('err-email', r.message || 'Unexpected response.');
+      }
+    } catch (err) {
+      setErr('err-email', err.message);
+    } finally {
+      setBusy('btn-email', false, 'Continue →', 'Checking…');
+    }
+  });
+
+  // ── Change email ──────────────────────────────────────────────────────
+  document.getElementById('btn-change').addEventListener('click', function () {
+    setErr('err-password', null);
+    show('view-email');
+    document.getElementById('inp-email').focus();
+  });
+  document.getElementById('btn-change-reg').addEventListener('click', function () {
+    setErr('err-register', null);
+    show('view-email');
+    document.getElementById('inp-email').focus();
+  });
+
+  // ── Password form ─────────────────────────────────────────────────────
+  document.getElementById('form-password').addEventListener('submit', async function (e) {
+    e.preventDefault();
+    const password = document.getElementById('inp-password').value;
+    if (!password) { setErr('err-password', 'Please enter your password.'); return; }
+    setErr('err-password', null);
+    setBusy('btn-password', true, 'Sign in →', 'Signing in…');
+    try {
+      await api('/api/auth/login', { email: currentEmail, password });
+      window.location.href = '/';
+    } catch (err) {
+      setErr('err-password', err.message);
+      setBusy('btn-password', false, 'Sign in →', 'Signing in…');
+    }
+  });
+
+  // ── Register form ─────────────────────────────────────────────────────
+  document.getElementById('form-register').addEventListener('submit', async function (e) {
+    e.preventDefault();
+    const p1 = document.getElementById('inp-p1').value;
+    const p2 = document.getElementById('inp-p2').value;
+    if (p1.length < 6) { setErr('err-register', 'Password must be at least 6 characters.'); return; }
+    if (p1 !== p2)     { setErr('err-register', 'Passwords do not match.'); return; }
+    setErr('err-register', null);
+    setBusy('btn-register', true, 'Create account →', 'Creating…');
+    try {
+      await api('/api/auth/register', { email: currentEmail, password: p1, confirm: p2 });
+      window.location.href = '/';
+    } catch (err) {
+      setErr('err-register', err.message);
+      setBusy('btn-register', false, 'Create account →', 'Creating…');
+    }
+  });
+
+})();
+</script>
+
+</body>
+</html>

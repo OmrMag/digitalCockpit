@@ -1,0 +1,769 @@
+{% extends "base.html" %}
+{% block title %}Manage Users — Digital Construction Cockpit{% endblock %}
+{% block page_title %}Manage Users{% endblock %}
+{% block page_subtitle %}Search, invite, and manage user permissions across platforms{% endblock %}
+
+{% block head %}
+<style>
+    .search-bar{display:flex;gap:8px;margin-bottom:20px}
+    .search-bar input{flex:1;padding:8px 12px;border:1px solid var(--border-cream);border-radius:var(--radius);font-family:var(--font);font-size:var(--fs-sm);background:#fff}
+    .search-bar input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(74,158,255,.1)}
+    .modal-overlay{display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.4);z-index:200;align-items:center;justify-content:center}
+    .modal-overlay.open{display:flex}
+    .modal{background:#fff;border-radius:var(--radius-lg);width:calc(100% - 300px - 80px);max-width:1100px;max-height:90vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.3)}
+    .modal-header{padding:16px 20px;border-bottom:1px solid var(--border-cream);display:flex;align-items:center;justify-content:space-between}
+    .modal-header h2{font-size:var(--fs-md);font-weight:600;color:var(--navy)}
+    .modal-close{background:none;border:none;cursor:pointer;color:var(--text-dark-muted);font-size:18px;font-family:var(--font)}
+    .modal-body{padding:20px}
+    .modal-footer{padding:14px 20px;border-top:1px solid var(--border-cream);display:flex;justify-content:space-between;align-items:center;gap:8px}
+    .mode-toggle{display:flex;background:var(--cream-mid);border-radius:var(--radius);padding:3px;margin-bottom:16px}
+    .mode-toggle button{flex:1;padding:6px 12px;border:none;border-radius:4px;font-family:var(--font);font-size:var(--fs-xs);font-weight:600;cursor:pointer;background:transparent;color:var(--text-dark-muted)}
+    .mode-toggle button.active{background:#fff;color:var(--navy);box-shadow:var(--shadow)}
+    .platform-checks{display:flex;gap:12px;margin-bottom:16px}
+    .platform-check{display:flex;align-items:center;gap:6px;cursor:pointer;font-size:var(--fs-sm)}
+    .platform-check input[type="checkbox"]{width:14px;height:14px;accent-color:var(--navy)}
+    .drop-zone{border:2px dashed var(--border-cream);border-radius:var(--radius-lg);padding:32px;text-align:center;color:var(--text-dark-muted);font-size:var(--fs-sm);cursor:pointer}
+    .drop-zone:hover{border-color:var(--accent);background:rgba(74,158,255,.03)}
+    .drop-zone svg{width:28px;height:28px;margin-bottom:8px;opacity:.4}
+    .drop-zone .file-name{margin-top:8px;font-weight:600;color:var(--navy)}
+    .user-detail{display:none;margin-bottom:20px}.user-detail.visible{display:block}
+    .user-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--border-cream)}
+    .user-header .user-name{font-size:14px;font-weight:700;color:var(--navy)}
+    .user-header .user-email{font-size:var(--fs-sm);color:var(--text-dark-muted)}
+    .user-header .cache-age{font-size:var(--fs-xs);color:var(--text-dark-muted);font-style:italic}
+    .platform-section{margin-bottom:16px}
+    .platform-section-header{display:flex;align-items:center;gap:8px;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid var(--border-cream)}
+    .platform-section-header .section-title{font-size:var(--fs-xs);font-weight:600;text-transform:uppercase;letter-spacing:.5px}
+    .detail-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px;margin-bottom:10px}
+    .detail-item label{font-size:var(--fs-xs);color:var(--text-dark-muted);text-transform:uppercase;letter-spacing:.3px}
+    .detail-item .value{font-size:var(--fs-sm);color:var(--text-dark);font-weight:500;margin-top:1px}
+    .detail-item .value.hacker{font-family:var(--font);letter-spacing:1px}
+    .project-list{margin-top:8px}
+    .project-row{display:grid;grid-template-columns:1fr auto auto;gap:12px;align-items:center;padding:6px 10px;border-radius:4px;font-size:var(--fs-xs)}
+    .project-row:nth-child(even){background:var(--cream-mid)}
+    .project-row .proj-name{font-weight:500;color:var(--navy)}
+    .project-row .proj-meta{color:var(--text-dark-muted)}
+    .tag-pill{display:inline-block;padding:2px 8px;border-radius:3px;font-size:var(--fs-xs);background:rgba(74,158,255,.1);color:var(--accent);font-weight:500;margin:2px}
+    .not-found{color:var(--text-dark-muted);font-size:var(--fs-sm);font-style:italic;padding:8px 0}
+    .result-banner{display:none;padding:10px 14px;border-radius:var(--radius);font-size:var(--fs-sm);margin-bottom:14px;align-items:center;gap:8px}
+    .result-banner.show{display:flex}
+    .result-banner.success{background:rgba(52,211,153,.1);color:#065f46;border:1px solid rgba(52,211,153,.2)}
+    .result-banner.error{background:rgba(248,113,113,.1);color:#991b1b;border:1px solid rgba(248,113,113,.2)}
+    .result-banner.warning{background:rgba(251,191,36,.1);color:#92400e;border:1px solid rgba(251,191,36,.2)}
+    .spinner{display:inline-block;width:14px;height:14px;border:2px solid var(--cream-dark);border-top-color:var(--navy);border-radius:50%;animation:spin .6s linear infinite}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    .preview-table{margin:12px 0;max-height:400px;overflow-y:auto}
+    .preview-table table{font-size:var(--fs-xs)}
+    .preview-table td,.preview-table th{padding:6px 10px}
+    .target-info{background:var(--cream-mid);border-radius:var(--radius);padding:10px 14px;margin-bottom:16px;font-size:var(--fs-xs)}
+    .target-info .target-row{display:flex;align-items:center;gap:8px;margin:4px 0}
+    .target-info .target-label{font-weight:600;width:60px;text-transform:uppercase;letter-spacing:.3px;color:var(--text-dark-muted)}
+    .target-info .target-value{color:var(--navy);font-weight:500}
+    .project-select{margin-top:12px;padding-top:12px;border-top:1px solid var(--border-cream)}
+    .project-select select{width:100%;padding:7px 10px;border:1px solid var(--border-cream);border-radius:var(--radius);font-family:var(--font);font-size:var(--fs-xs);background:#fff}
+    .project-select label{font-size:var(--fs-xs);color:var(--text-dark-muted);font-weight:600;text-transform:uppercase;letter-spacing:.3px;display:block;margin-bottom:4px}
+</style>
+{% endblock %}
+
+{% block content %}
+<div id="resultBanner" class="result-banner"></div>
+
+<div style="display:flex;gap:10px;margin-bottom:20px;align-items:center">
+    <div class="search-bar" style="flex:1;margin-bottom:0">
+        <input type="text" id="searchEmail" placeholder="Search by email address..." onkeydown="if(event.key==='Enter')searchUser()">
+    </div>
+    <button class="btn btn-primary" id="btnSearch" onclick="searchUser()">Search</button>
+    <button class="btn btn-accent" onclick="openInviteModal()">+ Invite</button>
+</div>
+
+<div id="userDetail" class="user-detail">
+    <div class="card" style="margin-bottom:20px">
+        <div class="user-header">
+            <div>
+                <div class="user-name" id="userName"></div>
+                <div class="user-email" id="userEmail"></div>
+            </div>
+            <div class="cache-age" id="cacheAge"></div>
+        </div>
+        <div class="platform-section" id="mortaSection"><div class="platform-section-header"><span class="platform-tag morta">Morta</span><span class="section-title" id="mortaTitle"></span></div><div id="mortaContent"></div></div>
+        <div class="platform-section" id="reviztoSection"><div class="platform-section-header"><span class="platform-tag revizto">Revizto</span><span class="section-title" id="reviztoTitle"></span></div><div id="reviztoContent"></div></div>
+        <div class="platform-section" id="formaSection"><div class="platform-section-header"><span class="platform-tag forma">Forma / ACC</span><span class="section-title" id="formaTitle"></span></div><div id="formaContent"></div></div>
+    </div>
+</div>
+<!-- ============================================================
+     PASTE THIS BLOCK into manage.html
+     Add it at the TOP of the page content area, before the
+     existing invite log / user search sections.
+     ============================================================ -->
+
+<!-- ── Pending Submissions ──────────────────────────────────────────────── -->
+<div style="margin-bottom: 24px;">
+
+    <!-- Section header — matches cockpit .card-header pattern -->
+    <div style="display:flex; align-items:center; gap:10px; margin-bottom:14px;">
+        <div style="font-size:var(--fs-xs); font-weight:600; text-transform:uppercase; letter-spacing:1px; color:var(--navy);">
+            Pending Submissions
+        </div>
+        <span id="pendingBadge" style="display:none; background:var(--error); color:white; font-size:var(--fs-xs); font-weight:600; padding:1px 7px; border-radius:3px;"></span>
+        <div style="margin-left:auto; font-size:var(--fs-xs); color:var(--text-dark-muted);" id="pendingRefreshLabel"></div>
+    </div>
+
+    <!-- Empty state -->
+    <div class="empty-state" id="pendingEmpty" style="display:none;">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+        <h3>No pending submissions</h3>
+        <p>Contractor uploads via <code style="background:var(--cream-mid); padding:1px 5px; border-radius:3px;">/portal/platformAccess</code> appear here.</p>
+    </div>
+
+    <!-- Submission cards list -->
+    <div id="pendingList"></div>
+
+</div>
+
+
+<!-- ── Review Modal ──────────────────────────────────────────────────────── -->
+<div id="submissionModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:200; align-items:center; justify-content:center; padding:20px;">
+    <div style="background:white; border-radius:var(--radius-lg); width:100%; max-width:960px; max-height:90vh; display:flex; flex-direction:column; overflow:hidden; box-shadow:0 20px 60px rgba(0,0,0,0.3);">
+
+        <!-- Modal header — navy strip like page-header -->
+        <div style="background:var(--navy); padding:16px 20px; display:flex; align-items:flex-start; justify-content:space-between; flex-shrink:0;">
+            <div>
+                <div style="font-size:var(--fs-title); font-weight:600; color:var(--text-light); letter-spacing:-0.3px;" id="modalTitle">Review Submission</div>
+                <div style="font-size:var(--fs-sm); color:var(--text-muted); margin-top:2px;" id="modalSub"></div>
+            </div>
+            <button id="modalClose" style="width:26px; height:26px; border:none; background:rgba(255,255,255,0.08); border-radius:var(--radius); cursor:pointer; color:var(--text-muted); font-size:12px; display:flex; align-items:center; justify-content:center; transition:background var(--transition);"
+                onmouseover="this.style.background='rgba(248,113,113,0.2)'; this.style.color='var(--error)'"
+                onmouseout="this.style.background='rgba(255,255,255,0.08)'; this.style.color='var(--text-muted)'">✕</button>
+        </div>
+
+        <!-- Submitter meta strip -->
+        <div id="modalMeta" style="background:var(--cream); border-bottom:1px solid var(--border-cream); padding:10px 20px; display:flex; gap:20px; flex-shrink:0; flex-wrap:wrap; font-size:var(--fs-xs); color:var(--text-dark-muted);"></div>
+
+        <!-- Row controls bar -->
+        <div style="padding:10px 20px; border-bottom:1px solid var(--border-cream); display:flex; align-items:center; gap:8px; flex-shrink:0; background:white;">
+            <button class="btn btn-sm btn-secondary" id="approveAllBtn">✓ Approve All</button>
+            <button class="btn btn-sm btn-danger"    id="rejectAllBtn"  style="background:white; color:var(--error); border:1px solid var(--border-cream);"
+                onmouseover="this.style.background='rgba(248,113,113,0.08)'"
+                onmouseout="this.style.background='white'">✕ Reject All</button>
+            <div style="margin-left:auto; font-size:var(--fs-xs); color:var(--text-dark-muted);" id="rowCount"></div>
+        </div>
+
+        <!-- Table -->
+        <div style="overflow-y:auto; flex:1;">
+            <table style="width:100%; border-collapse:collapse;">
+                <thead>
+                    <tr style="background:var(--cream);">
+                        <th style="width:32px; padding:8px 12px; text-align:center;">
+                            <input type="checkbox" id="selectAll" title="Toggle all" style="cursor:pointer;">
+                        </th>
+                        <th style="padding:8px 12px; text-align:left; font-size:var(--fs-xs); text-transform:uppercase; letter-spacing:0.5px; color:var(--text-dark-muted); font-weight:600; border-bottom:2px solid var(--border-cream);">Email</th>
+                        <th style="padding:8px 12px; text-align:left; font-size:var(--fs-xs); text-transform:uppercase; letter-spacing:0.5px; color:var(--text-dark-muted); font-weight:600; border-bottom:2px solid var(--border-cream);">Name</th>
+                        <th style="padding:8px 12px; text-align:left; font-size:var(--fs-xs); text-transform:uppercase; letter-spacing:0.5px; color:var(--text-dark-muted); font-weight:600; border-bottom:2px solid var(--border-cream);">Company</th>
+                        <th style="padding:8px 12px; text-align:left; font-size:var(--fs-xs); text-transform:uppercase; letter-spacing:0.5px; color:var(--text-dark-muted); font-weight:600; border-bottom:2px solid var(--border-cream);">Dept</th>
+                        <th style="padding:8px 12px; text-align:center; font-size:var(--fs-xs); text-transform:uppercase; letter-spacing:0.5px; color:var(--text-dark-muted); font-weight:600; border-bottom:2px solid var(--border-cream); width:32px;" title="Morta">M</th>
+                        <th style="padding:8px 12px; text-align:center; font-size:var(--fs-xs); text-transform:uppercase; letter-spacing:0.5px; color:var(--text-dark-muted); font-weight:600; border-bottom:2px solid var(--border-cream); width:32px;" title="Revizto">R</th>
+                        <th style="padding:8px 12px; text-align:center; font-size:var(--fs-xs); text-transform:uppercase; letter-spacing:0.5px; color:var(--text-dark-muted); font-weight:600; border-bottom:2px solid var(--border-cream); width:32px;" title="Forma/ACC">F</th>
+                        <th style="padding:8px 12px; text-align:left; font-size:var(--fs-xs); text-transform:uppercase; letter-spacing:0.5px; color:var(--text-dark-muted); font-weight:600; border-bottom:2px solid var(--border-cream); width:80px;">Status</th>
+                    </tr>
+                </thead>
+                <tbody id="reviewBody"></tbody>
+            </table>
+        </div>
+
+        <!-- Modal footer -->
+        <div style="padding:12px 20px; border-top:1px solid var(--border-cream); display:flex; align-items:center; justify-content:flex-end; gap:8px; flex-shrink:0; background:white;">
+            <button class="btn btn-secondary" id="discardBtn">🗑 Discard</button>
+            <button class="btn btn-primary"   id="processBtn">⚡ Process Approved Rows</button>
+        </div>
+
+    </div>
+</div>
+
+
+<style>
+/* ── Submission card — reuses .card base pattern ── */
+.submission-card {
+    background: white;
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border-cream);
+    padding: 14px 16px;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    box-shadow: var(--shadow);
+    cursor: pointer;
+    transition: box-shadow var(--transition), border-color var(--transition);
+}
+.submission-card:hover         { box-shadow: var(--shadow-lg); border-color: var(--accent); }
+.submission-card.processed     { opacity: 0.55; cursor: default; }
+.submission-card.processed:hover { box-shadow: var(--shadow); border-color: var(--border-cream); }
+
+.sub-icon {
+    width: 34px; height: 34px;
+    background: var(--cream); border-radius: var(--radius);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px; flex-shrink: 0;
+}
+.sub-name  { font-size: var(--fs-sm); font-weight: 600; color: var(--navy); }
+.sub-meta  { font-size: var(--fs-xs); color: var(--text-dark-muted); margin-top: 2px; }
+.sub-count { font-size: 18px; font-weight: 700; color: var(--navy); line-height: 1; text-align: right; }
+.sub-count-label { font-size: var(--fs-xs); color: var(--text-dark-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+
+/* ── Status badges — matches .card-badge ── */
+.status-badge {
+    font-size: var(--fs-xs); font-weight: 500; padding: 2px 7px;
+    border-radius: 3px; flex-shrink: 0;
+}
+.status-badge.pending   { background: rgba(251,191,36,0.1); color: var(--warning); }
+.status-badge.processed { background: rgba(52,211,153,0.1); color: var(--success); }
+
+/* ── Table rows ── */
+.review-row td {
+    padding: 9px 12px;
+    font-size: var(--fs-sm);
+    border-bottom: 1px solid var(--border-cream);
+    color: var(--text-dark);
+    transition: background var(--transition);
+}
+.review-row:hover td           { background: var(--cream-mid); }
+.review-row.rejected td        { background: rgba(248,113,113,0.04); color: #aaa; }
+.review-row.rejected td:not(:first-child) { text-decoration: line-through; }
+
+/* ── Platform dots — matches .status-dot ── */
+.plt-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    display: inline-block; margin: 0 auto;
+}
+.plt-dot.morta   { background: var(--accent); }
+.plt-dot.revizto { background: var(--success); }
+.plt-dot.forma   { background: var(--warning); }
+.plt-dot.off     { background: var(--cream-dark); }
+
+/* ── Row status — matches .platform-tag ── */
+.row-badge {
+    display: inline-flex; align-items: center; gap: 3px;
+    padding: 2px 7px; border-radius: 3px;
+    font-size: var(--fs-xs); font-weight: 500;
+}
+.row-badge.approved { background: rgba(52,211,153,0.1);  color: var(--success); }
+.row-badge.rejected { background: rgba(248,113,113,0.1); color: var(--error); }
+</style>
+
+
+<script>
+(function () {
+    let allSubs  = [];
+    let activeSub = null;
+
+    /* ── Load list ── */
+    async function loadPending() {
+        try {
+            const res  = await fetch('/api/pending');
+            const data = await res.json();
+            allSubs = data.submissions || [];
+            renderList();
+            document.getElementById('pendingRefreshLabel').textContent =
+                'updated ' + new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+        } catch (e) { console.error('pending load error', e); }
+    }
+
+    function renderList() {
+        const list  = document.getElementById('pendingList');
+        const empty = document.getElementById('pendingEmpty');
+        const badge = document.getElementById('pendingBadge');
+        list.innerHTML = '';
+
+        const pendingCount = allSubs.filter(s => s.status === 'pending').length;
+        if (pendingCount) {
+            badge.textContent = pendingCount;
+            badge.style.display = 'inline-block';
+        } else {
+            badge.style.display = 'none';
+        }
+
+        if (!allSubs.length) { empty.style.display = 'block'; return; }
+        empty.style.display = 'none';
+
+        allSubs.forEach(s => {
+            const card = document.createElement('div');
+            card.className = `submission-card ${s.status}`;
+            card.innerHTML = `
+                <div class="sub-icon">📋</div>
+                <div style="flex:1; min-width:0;">
+                    <div class="sub-name">${esc(s.submitter_name)}</div>
+                    <div class="sub-meta">${esc(s.submitter_email)} &nbsp;·&nbsp; ${esc(s.submitted_at)} &nbsp;·&nbsp; ${esc(s.filename)}</div>
+                </div>
+                <div>
+                    <div class="sub-count">${s.total}</div>
+                    <div class="sub-count-label">users</div>
+                </div>
+                <span class="status-badge ${s.status}">${s.status}</span>
+            `;
+            if (s.status === 'pending') card.addEventListener('click', () => openModal(s.id));
+            list.appendChild(card);
+        });
+    }
+
+    /* ── Open modal ── */
+    async function openModal(id) {
+        try {
+            const res = await fetch(`/api/pending/${id}`);
+            activeSub = await res.json();
+        } catch { alert('Could not load submission.'); return; }
+
+        document.getElementById('modalTitle').textContent = `Review: ${activeSub.submitter_name}`;
+        document.getElementById('modalSub').textContent   = `${activeSub.filename} — submitted ${activeSub.submitted_at}`;
+        document.getElementById('modalMeta').innerHTML    = `
+            <span>👤 <strong style="color:var(--navy)">${esc(activeSub.submitter_name)}</strong></span>
+            <span>✉ <strong style="color:var(--navy)">${esc(activeSub.submitter_email)}</strong></span>
+            <span>📄 <strong style="color:var(--navy)">${esc(activeSub.filename)}</strong></span>
+            <span>👥 <strong style="color:var(--navy)">${activeSub.total}</strong> users</span>
+        `;
+        renderTable();
+        const modal = document.getElementById('submissionModal');
+        modal.style.display = 'flex';
+    }
+
+    /* ── Render table ── */
+    function renderTable() {
+        const tbody = document.getElementById('reviewBody');
+        tbody.innerHTML = '';
+        (activeSub.users || []).forEach((u, idx) => {
+            const approved = u.approved !== false;
+            const tr = document.createElement('tr');
+            tr.className = `review-row ${approved ? '' : 'rejected'}`;
+            tr.dataset.idx = idx;
+            tr.innerHTML = `
+                <td style="text-align:center; padding:9px 12px; border-bottom:1px solid var(--border-cream);">
+                    <input type="checkbox" class="row-check" data-idx="${idx}" ${approved ? 'checked' : ''} style="cursor:pointer;">
+                </td>
+                <td>${esc(u.email)}</td>
+                <td>${esc((u.first_name + ' ' + u.last_name).trim())}</td>
+                <td>${esc(u.company)}</td>
+                <td>${esc(u.department)}</td>
+                <td style="text-align:center; padding:9px 12px; border-bottom:1px solid var(--border-cream);">
+                    <span class="plt-dot ${u.morta   ? 'morta'   : 'off'}" title="${u.morta   ? 'Yes' : 'No'}"></span>
+                </td>
+                <td style="text-align:center; padding:9px 12px; border-bottom:1px solid var(--border-cream);">
+                    <span class="plt-dot ${u.revizto ? 'revizto' : 'off'}" title="${u.revizto ? 'Yes' : 'No'}"></span>
+                </td>
+                <td style="text-align:center; padding:9px 12px; border-bottom:1px solid var(--border-cream);">
+                    <span class="plt-dot ${u.forma   ? 'forma'   : 'off'}" title="${u.forma   ? 'Yes' : 'No'}"></span>
+                </td>
+                <td style="padding:9px 12px; border-bottom:1px solid var(--border-cream);">
+                    <span class="row-badge ${approved ? 'approved' : 'rejected'}">${approved ? 'Approved' : 'Rejected'}</span>
+                </td>
+            `;
+            tbody.appendChild(tr);
+        });
+        updateCount();
+        bindChecks();
+    }
+
+    function bindChecks() {
+        document.querySelectorAll('.row-check').forEach(cb => {
+            cb.addEventListener('change', () => {
+                setRow(parseInt(cb.dataset.idx), cb.checked);
+            });
+        });
+        const all = document.getElementById('selectAll');
+        all.checked = true;
+        all.addEventListener('change', e => {
+            document.querySelectorAll('.row-check').forEach(cb => {
+                cb.checked = e.target.checked;
+                activeSub.users[parseInt(cb.dataset.idx)].approved = e.target.checked;
+            });
+            renderTable();
+        });
+    }
+
+    function setRow(idx, approved) {
+        activeSub.users[idx].approved = approved;
+        const tr = document.querySelector(`.review-row[data-idx="${idx}"]`);
+        if (tr) {
+            tr.className = `review-row ${approved ? '' : 'rejected'}`;
+            tr.querySelector('.row-badge').className = `row-badge ${approved ? 'approved' : 'rejected'}`;
+            tr.querySelector('.row-badge').textContent = approved ? 'Approved' : 'Rejected';
+        }
+        updateCount();
+    }
+
+    function updateCount() {
+        const total    = (activeSub.users || []).length;
+        const approved = (activeSub.users || []).filter(u => u.approved !== false).length;
+        document.getElementById('rowCount').textContent = `${approved} / ${total} approved`;
+        document.getElementById('processBtn').disabled  = approved === 0;
+    }
+
+    /* ── Approve / Reject all ── */
+    document.getElementById('approveAllBtn').addEventListener('click', () => {
+        (activeSub.users || []).forEach(u => u.approved = true); renderTable();
+    });
+    document.getElementById('rejectAllBtn').addEventListener('click', () => {
+        (activeSub.users || []).forEach(u => u.approved = false); renderTable();
+    });
+
+    /* ── Process ── */
+    document.getElementById('processBtn').addEventListener('click', async () => {
+        if (!activeSub) return;
+
+        // Sync row states first
+        const rows = (activeSub.users || []).map((u, idx) => ({ index: idx, approved: u.approved !== false }));
+        await fetch(`/api/pending/${activeSub.id}/rows`, {
+            method: 'PATCH',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ rows }),
+        });
+
+        const btn = document.getElementById('processBtn');
+        btn.textContent = '⏳ Processing…';
+        btn.disabled = true;
+
+        try {
+            const res  = await fetch(`/api/pending/${activeSub.id}/process`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({}),
+            });
+            const data = await res.json();
+            if (res.ok) {
+                closeModal();
+                await loadPending();
+                alert(`✓ Done — ${data.success} invited · ${data.errors} errors · ${data.rejected} skipped`);
+            } else {
+                alert('Error: ' + (data.detail || 'Processing failed.'));
+                btn.textContent = '⚡ Process Approved Rows';
+                btn.disabled = false;
+            }
+        } catch {
+            alert('Network error.');
+            btn.textContent = '⚡ Process Approved Rows';
+            btn.disabled = false;
+        }
+    });
+
+    /* ── Discard ── */
+    document.getElementById('discardBtn').addEventListener('click', async () => {
+        if (!activeSub) return;
+        if (!confirm(`Discard submission from ${activeSub.submitter_name}? This cannot be undone.`)) return;
+        await fetch(`/api/pending/${activeSub.id}`, { method: 'DELETE' });
+        closeModal();
+        await loadPending();
+    });
+
+    /* ── Close ── */
+    function closeModal() {
+        document.getElementById('submissionModal').style.display = 'none';
+        activeSub = null;
+        document.getElementById('processBtn').textContent = '⚡ Process Approved Rows';
+    }
+    document.getElementById('modalClose').addEventListener('click', closeModal);
+    document.getElementById('submissionModal').addEventListener('click', e => {
+        if (e.target === document.getElementById('submissionModal')) closeModal();
+    });
+
+    function esc(s) {
+        return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    loadPending();
+    setInterval(loadPending, 60_000);
+})();
+</script>
+<div class="card">
+    <div class="card-header"><span class="card-title">Invite Log</span><span style="font-size:var(--fs-xs);color:var(--text-dark-muted)">{{recent_invites|length}} record(s)</span></div>
+    {% if recent_invites %}
+    <div class="table-wrapper"><table><thead><tr><th>Date</th><th>Mode</th><th>Email</th><th>Name</th><th>Company</th><th>Morta</th><th>Revizto</th><th>Forma</th></tr></thead><tbody>
+    {% for inv in recent_invites %}<tr>
+        <td style="font-size:var(--fs-xs);color:var(--text-dark-muted);white-space:nowrap">{{inv.date}}</td>
+        <td><span class="card-badge {{'warning' if inv.mode=='bulk' else 'success'}}">{{inv.mode}}</span></td>
+        <td>{{inv.email}}</td><td>{{inv.first_name}} {{inv.last_name}}</td><td style="color:var(--text-dark-muted)">{{inv.company}}</td>
+        <td>{%if inv.morta_status=='success'%}<span class="status"><span class="status-dot success"></span>ok</span>{%elif inv.morta_status=='skipped'%}<span style="color:var(--text-dark-muted)">—</span>{%else%}<span class="status"><span class="status-dot error"></span>fail</span>{%endif%}</td>
+        <td>{%if inv.revizto_status=='success'%}<span class="status"><span class="status-dot success"></span>ok</span>{%elif inv.revizto_status=='skipped'%}<span style="color:var(--text-dark-muted)">—</span>{%else%}<span class="status"><span class="status-dot error"></span>fail</span>{%endif%}</td>
+        <td>{%if inv.forma_status=='success'%}<span class="status"><span class="status-dot success"></span>ok</span>{%elif inv.forma_status=='skipped'%}<span style="color:var(--text-dark-muted)">—</span>{%else%}<span class="status"><span class="status-dot error"></span>fail</span>{%endif%}</td>
+    </tr>{%endfor%}</tbody></table></div>
+    {% else %}
+    <div class="empty-state"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197"/></svg><h3>No activity yet</h3><p>Click "+ Invite" to add your first user.</p></div>
+    {% endif %}
+</div>
+
+<!-- Invite Modal -->
+<div id="inviteModal" class="modal-overlay" onclick="if(event.target===this)closeInviteModal()">
+<div class="modal">
+    <div class="modal-header"><h2 id="modalTitle">Invite Users</h2><button class="modal-close" onclick="closeInviteModal()">&times;</button></div>
+    <div class="modal-body">
+        <div id="step1">
+            <div class="mode-toggle">
+                <button id="btnSingle" class="active" onclick="setMode('single')">Single</button>
+                <button id="btnBulk" onclick="setMode('bulk')">Bulk Upload</button>
+            </div>
+            <div id="singleForm">
+                <div class="form-group"><label>Email</label><input type="email" id="invEmail" placeholder="user@company.com"></div>
+                <div class="form-row"><div class="form-group"><label>First Name</label><input type="text" id="invFirstName" placeholder="John"></div><div class="form-group"><label>Last Name</label><input type="text" id="invLastName" placeholder="Smith"></div></div>
+                <div class="form-row"><div class="form-group"><label>Company</label><input type="text" id="invCompany" placeholder="ALEC"></div><div class="form-group"><label>Department</label><input type="text" id="invDepartment" placeholder="Digital Construction"></div></div>
+                <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border-cream)">
+                    <label style="font-size:var(--fs-xs);text-transform:uppercase;letter-spacing:.5px;color:var(--text-dark-muted);font-weight:600;display:block;margin-bottom:8px">Platforms</label>
+                    <div class="platform-checks">
+                        <label class="platform-check"><input type="checkbox" id="chkMorta" checked>Morta</label>
+                        <label class="platform-check"><input type="checkbox" id="chkRevizto" checked>Revizto</label>
+                        <label class="platform-check"><input type="checkbox" id="chkForma" checked>Forma/ACC</label>
+                    </div>
+                </div>
+            </div>
+            <div id="bulkForm" style="display:none">
+                <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
+                    <div>Drop Excel/CSV here or click to browse</div>
+                    <div class="file-name" id="fileName"></div>
+                </div>
+                <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" style="display:none" onchange="handleFile(this)">
+                <p style="font-size:var(--fs-xs);color:var(--text-dark-muted);margin-top:8px">Columns: Email, First Name, Last Name, Company, Department, Morta Access, Revizto Access, ACC Access</p>
+            </div>
+            <div class="project-select" id="projectSelect">
+                <div class="form-row"><div class="form-group"><label>Revizto Project</label><select id="selRevizto"><option value="">Loading...</option></select></div><div class="form-group"><label>Forma/ACC Project</label><select id="selForma"><option value="">Loading...</option></select></div></div>
+            </div>
+        </div>
+        <div id="step2" style="display:none"><div class="target-info" id="targetInfo"></div><div class="preview-table" id="previewTable"></div></div>
+        <div id="step3" style="display:none"><div id="resultsContent"></div></div>
+    </div>
+    <div class="modal-footer">
+        <div id="footerLeft" style="font-size:var(--fs-xs);color:var(--text-dark-muted)"></div>
+        <div style="display:flex;gap:8px">
+            <button class="btn btn-secondary" id="btnBack" style="display:none" onclick="goBack()">Back</button>
+            <button class="btn btn-secondary" id="btnCancel" onclick="closeInviteModal()">Cancel</button>
+            <button class="btn btn-primary" id="btnNext" onclick="goNext()">Preview</button>
+        </div>
+    </div>
+</div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let currentMode='single',currentStep=1,previewUsers=[],projectData={};
+
+// Load projects with caching
+smartFetch('/api/projects','projects',{
+    onCached:(data)=>populateProjectDropdowns(data),
+    onFresh:(data)=>populateProjectDropdowns(data),
+});
+
+function populateProjectDropdowns(data){
+    projectData=data;
+    const selR=document.getElementById('selRevizto');
+    const selF=document.getElementById('selForma');
+    selR.innerHTML='<option value="">— None —</option>';
+    (data.revizto||[]).forEach(p=>{selR.innerHTML+=`<option value="${p.uuid}" data-name="${p.title}">${p.title}</option>`});
+    selF.innerHTML='<option value="">— None —</option>';
+    (data.forma||[]).forEach(p=>{selF.innerHTML+=`<option value="${p.id}" data-name="${p.name}">${p.name} (${p.platform})</option>`});
+}
+
+function setMode(mode){
+    currentMode=mode;
+    document.getElementById('singleForm').style.display=mode==='single'?'block':'none';
+    document.getElementById('bulkForm').style.display=mode==='bulk'?'block':'none';
+    document.getElementById('btnSingle').classList.toggle('active',mode==='single');
+    document.getElementById('btnBulk').classList.toggle('active',mode==='bulk');
+}
+function openInviteModal(){document.getElementById('inviteModal').classList.add('open');showStep(1)}
+function closeInviteModal(){document.getElementById('inviteModal').classList.remove('open');showStep(1)}
+function handleFile(input){if(input.files.length>0)document.getElementById('fileName').textContent=input.files[0].name}
+
+const dz=document.getElementById('dropZone');
+if(dz){dz.addEventListener('dragover',e=>{e.preventDefault();dz.style.borderColor='var(--accent)'});
+dz.addEventListener('dragleave',()=>{dz.style.borderColor=''});
+dz.addEventListener('drop',e=>{e.preventDefault();dz.style.borderColor='';document.getElementById('fileInput').files=e.dataTransfer.files;handleFile(document.getElementById('fileInput'))})}
+
+function showStep(step){
+    currentStep=step;
+    document.getElementById('step1').style.display=step===1?'block':'none';
+    document.getElementById('step2').style.display=step===2?'block':'none';
+    document.getElementById('step3').style.display=step===3?'block':'none';
+    document.getElementById('btnBack').style.display=step>1?'inline-flex':'none';
+    document.getElementById('btnNext').style.display=step<3?'inline-flex':'none';
+    document.getElementById('btnCancel').style.display=step===3?'none':'inline-flex';
+    document.getElementById('btnNext').textContent=step===1?'Preview':'Confirm & Send';
+    document.getElementById('modalTitle').textContent=step===1?'Invite Users':step===2?'Review & Confirm':'Results';
+    document.getElementById('footerLeft').textContent=step===2?`${previewUsers.filter(u=>!u._skip).length} user(s) ready`:'';
+}
+function goBack(){showStep(currentStep-1)}
+
+async function goNext(){
+    if(currentStep===1){
+        const btn=document.getElementById('btnNext');
+        btn.innerHTML='<span class="spinner"></span>';btn.disabled=true;
+        if(currentMode==='single'){
+            const email=document.getElementById('invEmail').value.trim();
+            if(!email){alert('Email is required');btn.textContent='Preview';btn.disabled=false;return}
+            previewUsers=[{email,first_name:document.getElementById('invFirstName').value,last_name:document.getElementById('invLastName').value,
+                company:document.getElementById('invCompany').value,department:document.getElementById('invDepartment').value,
+                morta:document.getElementById('chkMorta').checked,revizto:document.getElementById('chkRevizto').checked,forma:document.getElementById('chkForma').checked}];
+        }else{
+            const fi=document.getElementById('fileInput');
+            if(!fi.files.length){alert('Please select a file');btn.textContent='Preview';btn.disabled=false;return}
+            const fd=new FormData();fd.append('file',fi.files[0]);
+            const resp=await fetch('/api/invite/preview',{method:'POST',body:fd});
+            const data=await resp.json();
+            previewUsers=data.users;
+        }
+        renderPreview();btn.textContent='Preview';btn.disabled=false;showStep(2);
+    }else if(currentStep===2){
+        const btn=document.getElementById('btnNext');
+        btn.innerHTML='<span class="spinner"></span> Sending...';btn.disabled=true;
+        const selR=document.getElementById('selRevizto'),selF=document.getElementById('selForma');
+        const rUuid=selR.value,rName=selR.selectedOptions[0]?.dataset.name||'';
+        const fId=selF.value,fName=selF.selectedOptions[0]?.dataset.name||'';
+        const activeUsers=previewUsers.filter(u=>!u._skip);
+        if(currentMode==='single'){
+            const u=activeUsers[0];u.revizto_project_uuid=rUuid;u.revizto_project_name=rName;u.forma_project_id=fId;u.forma_project_name=fName;
+            const resp=await fetch('/api/invite/single',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(u)});
+            const result=await resp.json();renderResults([result.result]);
+        }else{
+            const resp=await fetch('/api/invite/bulk',{method:'POST',headers:{'Content-Type':'application/json'},
+                body:JSON.stringify({users:activeUsers,revizto_project_uuid:rUuid,revizto_project_name:rName,forma_project_id:fId,forma_project_name:fName})});
+            const result=await resp.json();renderResults(null,result);
+        }
+        // Clear cache for searched users
+        activeUsers.forEach(u=>cacheClear('user_'+u.email.toLowerCase()));
+        btn.textContent='Confirm & Send';btn.disabled=false;showStep(3);
+    }
+}
+
+function renderPreview(){
+    const selR=document.getElementById('selRevizto'),selF=document.getElementById('selForma');
+    const mortaHub=projectData.morta?.name||'Not configured';
+    const rProj=selR.selectedOptions[0]?.dataset.name||'None selected';
+    const fProj=selF.selectedOptions[0]?.dataset.name||'None selected';
+    document.getElementById('targetInfo').innerHTML=`
+        <div style="font-weight:600;margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px;font-size:var(--fs-xs)">Sending invites to:</div>
+        <div class="target-row"><span class="platform-tag morta target-label">Morta</span><span class="target-value">${mortaHub}</span></div>
+        <div class="target-row"><span class="platform-tag revizto target-label">Revizto</span><span class="target-value">${rProj}</span></div>
+        <div class="target-row"><span class="platform-tag forma target-label">Forma</span><span class="target-value">${fProj}</span></div>`;
+    let html='<table><thead><tr><th></th><th>Email</th><th>Name</th><th>Company</th><th>Morta</th><th>Revizto</th><th>Forma</th></tr></thead><tbody>';
+    previewUsers.forEach((u,i)=>{
+        html+=`<tr><td><input type="checkbox" class="preview-check" checked data-index="${i}"></td>
+            <td>${u.email}</td><td>${u.first_name} ${u.last_name}</td><td>${u.company}</td>
+            <td>${u.morta?'<span class="status-dot success" style="display:inline-block"></span>':'—'}</td>
+            <td>${u.revizto?'<span class="status-dot success" style="display:inline-block"></span>':'—'}</td>
+            <td>${u.forma?'<span class="status-dot success" style="display:inline-block"></span>':'—'}</td></tr>`;
+    });
+    html+='</tbody></table>';
+    document.getElementById('previewTable').innerHTML=html;
+    document.querySelectorAll('.preview-check').forEach(cb=>{cb.addEventListener('change',function(){
+        previewUsers[parseInt(this.dataset.index)]._skip=!this.checked;
+        document.getElementById('footerLeft').textContent=`${previewUsers.filter(u=>!u._skip).length} user(s) ready`;
+    })});
+}
+
+function renderResults(single,bulk){
+    const el=document.getElementById('resultsContent');
+    if(single){const r=single[0];
+        el.innerHTML=`<div class="alert alert-${r.morta_status?.startsWith('error')||r.revizto_status?.startsWith('error')||r.forma_status?.startsWith('error')?'warning':'success'}">Invite processed for ${r.email}</div>
+        <div class="detail-grid"><div class="detail-item"><label>Morta</label><div class="value">${r.morta_status}</div></div><div class="detail-item"><label>Revizto</label><div class="value">${r.revizto_status}</div></div><div class="detail-item"><label>Forma</label><div class="value">${r.forma_status}</div></div></div>
+        <button class="btn btn-secondary" style="margin-top:12px" onclick="closeInviteModal();location.reload()">Close & Refresh</button>`;
+    }else if(bulk){
+        el.innerHTML=`<div class="alert alert-${bulk.errors>0?'warning':'success'}">Processed ${bulk.total} users: ${bulk.success} success, ${bulk.errors} errors</div>
+        <button class="btn btn-secondary" onclick="closeInviteModal();location.reload()">Close & Refresh</button>`;
+    }
+}
+
+// --- Search with caching + hacker text ---
+async function searchUser(){
+    const email=document.getElementById('searchEmail').value.trim();
+    if(!email)return;
+    const detail=document.getElementById('userDetail');
+    detail.classList.remove('visible');
+    const btn=document.getElementById('btnSearch');
+    btn.innerHTML='<span class="spinner"></span>';btn.disabled=true;
+
+    const cacheKey='user_'+email.toLowerCase();
+
+    await smartFetch('/api/user/search?email='+encodeURIComponent(email),cacheKey,{
+        onCached:(data,age)=>{
+            if(data.found){
+                renderUserDetail(data);
+                document.getElementById('cacheAge').textContent='cached '+timeAgo(age);
+                detail.classList.add('visible');
+            }
+        },
+        onSyncing:()=>showSyncIndicator('Searching platforms'),
+        onFresh:(data)=>{
+            hideSyncIndicator();
+            if(data.found){
+                renderUserDetail(data);
+                document.getElementById('cacheAge').textContent='just now';
+                detail.classList.add('visible');
+                // Animate values
+                document.querySelectorAll('.hacker-animate').forEach(el=>{
+                    hackerText(el,el.textContent,{duration:800});
+                });
+            }else{
+                detail.classList.remove('visible');
+                showBanner('User not found on any platform. Click "+ Invite" to add them.','warning');
+            }
+        },
+        onError:(err)=>{hideSyncIndicator();showBanner('Search error: '+err.message,'error')},
+        forceRefresh:false,
+    });
+
+    btn.textContent='Search';btn.disabled=false;
+}
+
+function renderUserDetail(data){
+    const nameEl=document.getElementById('userName');
+    const emailEl=document.getElementById('userEmail');
+    nameEl.textContent=data.name||data.email;
+    emailEl.textContent=data.email;
+    hackerText(nameEl,data.name||data.email,{duration:1000});
+    hackerText(emailEl,data.email,{duration:800,startDelay:200});
+    renderMorta(data.morta);
+    renderRevizto(data.revizto);
+    renderForma(data.forma);
+}
+
+function showBanner(msg,type){const b=document.getElementById('resultBanner');b.textContent=msg;b.className='result-banner show '+type;setTimeout(()=>b.classList.remove('show'),5000)}
+
+function renderMorta(m){
+    const c=document.getElementById('mortaContent'),t=document.getElementById('mortaTitle');
+    if(!m){t.textContent='';c.innerHTML='<div class="not-found">Not found in Morta</div>';return}
+    t.textContent=m.role;
+    let tags=m.tags&&m.tags.length?'<div style="margin-top:6px">'+m.tags.map(t=>`<span class="tag-pill">${t.name}</span>`).join('')+'</div>':'<div class="value">None</div>';
+    const hubName=m.hub_name||m.hub_id||'—';
+    c.innerHTML=`<div class="detail-grid">
+        <div class="detail-item"><label>Hub</label><div class="value hacker-animate">${hubName}</div></div>
+        <div class="detail-item"><label>Role</label><div class="value hacker-animate">${m.role}</div></div>
+        <div class="detail-item"><label>Method</label><div class="value hacker-animate">${m.role_method||'—'}</div></div>
+        <div class="detail-item"><label>Joined</label><div class="value hacker-animate">${m.joined?m.joined.split('T')[0]:'—'}</div></div>
+    </div><div class="detail-item"><label>Permission Tags</label>${tags}</div>`;
+}
+
+function renderRevizto(r){
+    const c=document.getElementById('reviztoContent'),t=document.getElementById('reviztoTitle');
+    if(!r){t.textContent='';c.innerHTML='<div class="not-found">Not found in Revizto</div>';return}
+    t.textContent=r.license_role;
+    let phtml=r.projects&&r.projects.length?'<div class="project-list">'+r.projects.map(p=>`<div class="project-row"><span class="proj-name">${p.name}</span><span class="proj-meta">${p.role}</span></div>`).join('')+'</div>':'<div class="not-found">No project assignments</div>';
+    c.innerHTML=`<div class="detail-grid">
+        <div class="detail-item"><label>License Role</label><div class="value hacker-animate">${r.license_role}</div></div>
+        <div class="detail-item"><label>Status</label><div class="value hacker-animate">${r.status}</div></div>
+        <div class="detail-item"><label>Company</label><div class="value hacker-animate">${r.company||'—'}</div></div>
+        <div class="detail-item"><label>Region</label><div class="value hacker-animate">${r.region||'—'}</div></div>
+        <div class="detail-item"><label>Last Active</label><div class="value hacker-animate">${r.last_active?r.last_active.split(' ')[0]:'—'}</div></div>
+    </div><div style="margin-top:10px"><label style="font-size:var(--fs-xs);color:var(--text-dark-muted);text-transform:uppercase;letter-spacing:.3px;font-weight:600">Projects (${r.projects?r.projects.length:0})</label>${phtml}</div>`;
+}
+
+function renderForma(f){
+    const c=document.getElementById('formaContent'),t=document.getElementById('formaTitle');
+    if(!f){t.textContent='';c.innerHTML='<div class="not-found">Not found in Forma/ACC</div>';return}
+    t.textContent=f.hub_role;
+    let phtml=f.projects&&f.projects.length?'<div class="project-list">'+f.projects.map(p=>`<div class="project-row"><span class="proj-name">${p.name}</span><span class="proj-meta">${p.platform}</span><span class="proj-meta">${p.access_levels}</span></div>`).join('')+'</div>':'<div class="not-found">No project assignments</div>';
+    c.innerHTML=`<div class="detail-grid">
+        <div class="detail-item"><label>Hub Role</label><div class="value hacker-animate">${f.hub_role}</div></div>
+        <div class="detail-item"><label>Status</label><div class="value hacker-animate">${f.hub_status}</div></div>
+        <div class="detail-item"><label>Company</label><div class="value hacker-animate">${f.company||'—'}</div></div>
+        <div class="detail-item"><label>Job Title</label><div class="value hacker-animate">${f.job_title||'—'}</div></div>
+        <div class="detail-item"><label>Last Sign In</label><div class="value hacker-animate">${f.last_sign_in?f.last_sign_in.split('T')[0]:'—'}</div></div>
+    </div><div style="margin-top:10px"><label style="font-size:var(--fs-xs);color:var(--text-dark-muted);text-transform:uppercase;letter-spacing:.3px;font-weight:600">Projects (${f.projects?f.projects.length:0})</label>${phtml}</div>`;
+}
+</script>
+{% endblock %}

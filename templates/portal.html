@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Platform Access Request — ALEC Digital</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --navy:           #0f1b2d;
+            --navy-light:     #162236;
+            --navy-mid:       #1a2a3f;
+            --cream:          #e8edf2;
+            --cream-dark:     #d4dbe5;
+            --cream-mid:      #dde3ea;
+            --accent:         #4a9eff;
+            --accent-hover:   #6bb3ff;
+            --success:        #34d399;
+            --warning:        #fbbf24;
+            --error:          #f87171;
+            --text-light:     #f5f0e8;
+            --text-muted:     #8899aa;
+            --text-dark:      #1a1a1a;
+            --text-dark-muted:#666;
+            --border:         rgba(255,255,255,0.08);
+            --border-cream:   rgba(0,0,0,0.08);
+            --radius:         6px;
+            --radius-lg:      10px;
+            --shadow:         0 1px 3px rgba(0,0,0,0.08);
+            --shadow-lg:      0 4px 16px rgba(0,0,0,0.12);
+            --transition:     0.2s ease;
+            --font:           'JetBrains Mono', monospace;
+            --fs-xs:          10px;
+            --fs-sm:          11px;
+            --fs-base:        12px;
+            --fs-md:          13px;
+            --fs-title:       16px;
+        }
+
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: var(--font);
+            font-size: var(--fs-base);
+            font-weight: 400;
+            background: var(--navy);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 32px 16px;
+            letter-spacing: 0.2px;
+        }
+
+        .portal-wrap {
+            width: 100%;
+            max-width: 460px;
+        }
+
+        /* ── Logo bar — same as sidebar-header style ── */
+        .portal-logo {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 18px;
+            padding: 0 2px;
+        }
+        .logo-mark {
+            width: 28px;
+            height: 28px;
+            background: var(--accent);
+            border-radius: var(--radius);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: var(--fs-sm);
+            font-weight: 700;
+            color: white;
+            flex-shrink: 0;
+        }
+        .logo-text {
+            font-size: var(--fs-sm);
+            font-weight: 600;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            color: var(--text-light);
+            line-height: 1.4;
+        }
+        .logo-sub {
+            font-size: var(--fs-xs);
+            color: var(--text-muted);
+        }
+
+        /* ── Card — matches cockpit .card ── */
+        .portal-card {
+            background: white;
+            border-radius: var(--radius-lg);
+            border: 1px solid var(--border-cream);
+            overflow: hidden;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.28);
+        }
+
+        /* ── Navy header strip ── */
+        .card-head {
+            background: var(--navy);
+            padding: 18px 22px;
+            border-bottom: 1px solid var(--border);
+        }
+        .card-head h1 {
+            font-size: var(--fs-title);
+            font-weight: 600;
+            color: var(--text-light);
+            letter-spacing: -0.3px;
+            margin-bottom: 3px;
+        }
+        .card-head p {
+            font-size: var(--fs-sm);
+            color: var(--text-muted);
+        }
+
+        .card-body { padding: 20px 22px; }
+
+        /* ── Section label — matches .card-title ── */
+        .section-label {
+            font-size: var(--fs-xs);
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--navy);
+            margin-bottom: 12px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid var(--border-cream);
+        }
+
+        /* ── Form — exact match to cockpit .form-group ── */
+        .form-group { margin-bottom: 12px; }
+        .form-group label {
+            display: block;
+            font-size: var(--fs-xs);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-dark-muted);
+            margin-bottom: 5px;
+            font-weight: 600;
+        }
+        .form-group input {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid var(--border-cream);
+            border-radius: var(--radius);
+            font-family: var(--font);
+            font-size: var(--fs-sm);
+            color: var(--text-dark);
+            background: white;
+            transition: border-color var(--transition), box-shadow var(--transition);
+        }
+        .form-group input:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(74,158,255,0.1);
+        }
+        .form-group input::placeholder {
+            color: var(--text-dark-muted);
+            font-size: var(--fs-xs);
+        }
+        .form-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+
+        .divider {
+            border: none;
+            border-top: 1px solid var(--border-cream);
+            margin: 16px 0;
+        }
+
+        /* ── Drop zone ── */
+        .drop-zone {
+            border: 1.5px dashed var(--cream-dark);
+            border-radius: var(--radius-lg);
+            padding: 22px 16px;
+            text-align: center;
+            cursor: pointer;
+            position: relative;
+            transition: border-color var(--transition), background var(--transition);
+        }
+        .drop-zone:hover,
+        .drop-zone.drag-over {
+            border-color: var(--accent);
+            background: rgba(74,158,255,0.03);
+        }
+        .drop-zone input[type="file"] {
+            position: absolute;
+            inset: 0;
+            opacity: 0;
+            cursor: pointer;
+            width: 100%;
+            height: 100%;
+        }
+        .drop-icon { font-size: 20px; display: block; margin-bottom: 6px; }
+        .drop-label {
+            font-size: var(--fs-sm);
+            font-weight: 600;
+            color: var(--navy);
+            margin-bottom: 2px;
+        }
+        .drop-sub { font-size: var(--fs-xs); color: var(--text-dark-muted); }
+
+        /* ── File pill ── */
+        .file-chosen {
+            display: none;
+            align-items: center;
+            gap: 8px;
+            background: rgba(74,158,255,0.06);
+            border: 1px solid rgba(74,158,255,0.2);
+            border-radius: var(--radius);
+            padding: 6px 10px;
+            margin-top: 8px;
+            font-size: var(--fs-xs);
+            color: var(--navy);
+        }
+        .file-chosen.show { display: flex; }
+        .file-chosen .fname {
+            flex: 1; font-weight: 600;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        .file-remove {
+            cursor: pointer; color: var(--text-muted);
+            font-size: 11px; flex-shrink: 0;
+            transition: color var(--transition);
+        }
+        .file-remove:hover { color: var(--error); }
+
+        /* ── Info box — matches cockpit alert-warning colours ── */
+        .info-box {
+            background: rgba(251,191,36,0.06);
+            border: 1px solid rgba(251,191,36,0.2);
+            border-radius: var(--radius);
+            padding: 10px 12px;
+            font-size: var(--fs-xs);
+            color: var(--text-dark-muted);
+            line-height: 1.7;
+            margin-bottom: 14px;
+        }
+        .info-box strong { color: var(--text-dark); }
+
+        /* ── Platform tags — exact cockpit .platform-tag ── */
+        .platform-tags { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 6px; }
+        .platform-tag {
+            display: inline-flex; align-items: center; gap: 3px;
+            padding: 2px 7px; border-radius: 3px;
+            font-size: var(--fs-xs); font-weight: 500;
+        }
+        .platform-tag.morta   { background: rgba(74,158,255,0.1);  color: var(--accent); }
+        .platform-tag.revizto { background: rgba(52,211,153,0.1);  color: var(--success); }
+        .platform-tag.forma   { background: rgba(251,191,36,0.1);  color: #b8860b; }
+
+        /* ── Button — exact cockpit .btn .btn-primary ── */
+        .btn-submit {
+            width: 100%;
+            padding: 8px 16px;
+            background: var(--navy);
+            color: var(--text-light);
+            border: none;
+            border-radius: var(--radius);
+            font-family: var(--font);
+            font-size: var(--fs-sm);
+            font-weight: 600;
+            letter-spacing: 0.2px;
+            cursor: pointer;
+            transition: background var(--transition);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+        .btn-submit:hover:not(:disabled) { background: var(--navy-mid); }
+        .btn-submit:disabled { opacity: 0.4; cursor: not-allowed; }
+
+        /* ── Spinner ── */
+        .spinner {
+            width: 10px; height: 10px;
+            border: 1.5px solid rgba(255,255,255,0.3);
+            border-top-color: white;
+            border-radius: 50%;
+            animation: spin 0.7s linear infinite;
+            display: none;
+        }
+        .btn-submit.loading .spinner { display: block; }
+        .btn-submit.loading .btn-label { display: none; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* ── Alerts — exact cockpit .alert styles ── */
+        .alert {
+            padding: 10px 14px;
+            border-radius: var(--radius);
+            font-size: var(--fs-sm);
+            display: none;
+            align-items: flex-start;
+            gap: 8px;
+            margin-top: 10px;
+            line-height: 1.6;
+        }
+        .alert.show { display: flex; }
+        .alert-success {
+            background: rgba(52,211,153,0.1);
+            color: #065f46;
+            border: 1px solid rgba(52,211,153,0.2);
+        }
+        .alert-error {
+            background: rgba(248,113,113,0.1);
+            color: #991b1b;
+            border: 1px solid rgba(248,113,113,0.2);
+        }
+        .alert-icon { flex-shrink: 0; margin-top: 1px; }
+        .alert-sub { font-size: var(--fs-xs); margin-top: 2px; opacity: 0.8; }
+
+        /* ── Footer strip ── */
+        .card-foot {
+            padding: 10px 22px;
+            border-top: 1px solid var(--border-cream);
+            background: rgba(0,0,0,0.015);
+            font-size: var(--fs-xs);
+            color: var(--text-dark-muted);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .foot-dot {
+            width: 4px; height: 4px;
+            border-radius: 50%;
+            background: var(--success);
+            flex-shrink: 0;
+        }
+
+        .portal-version {
+            text-align: center;
+            margin-top: 12px;
+            font-size: var(--fs-xs);
+            color: var(--text-muted);
+            letter-spacing: 0.5px;
+        }
+
+        @media (max-width: 480px) {
+            .form-row { grid-template-columns: 1fr; }
+            .card-body, .card-foot, .card-head { padding-left: 16px; padding-right: 16px; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="portal-wrap">
+
+    <div class="portal-logo">
+        <div class="logo-mark">A</div>
+        <div>
+            <div class="logo-text">ALEC Digital</div>
+            <div class="logo-sub">Digital Construction Cockpit</div>
+        </div>
+    </div>
+
+    <div class="portal-card">
+
+        <div class="card-head">
+            <h1>Platform Access Request</h1>
+            <p>Submit your team's user list — we'll review and process it.</p>
+        </div>
+
+        <div class="card-body">
+
+            <div class="section-label">Your Details</div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Full Name</label>
+                    <input type="text" id="submitter_name" placeholder="Ahmed Al Mansouri" autocomplete="name">
+                </div>
+                <div class="form-group">
+                    <label>Email Address</label>
+                    <input type="email" id="submitter_email" placeholder="ahmed@company.com" autocomplete="email">
+                </div>
+            </div>
+
+            <hr class="divider">
+
+            <div class="section-label">User List</div>
+
+            <div class="drop-zone" id="dropZone">
+                <input type="file" id="fileInput" accept=".xlsx,.xls,.csv">
+                <span class="drop-icon">📋</span>
+                <div class="drop-label">Drop file here or click to browse</div>
+                <div class="drop-sub">Accepts .xlsx, .xls, .csv — use the ALEC template</div>
+            </div>
+
+            <div class="file-chosen" id="fileChosen">
+                <span>📄</span>
+                <span class="fname" id="fileName"></span>
+                <span class="file-remove" id="removeFile">✕</span>
+            </div>
+
+            <hr class="divider">
+
+            <div class="info-box">
+                <strong>Required columns:</strong> Email · First Name · Last Name · Company · Department
+                <div class="platform-tags">
+                    <span class="platform-tag morta">Morta Access</span>
+                    <span class="platform-tag revizto">Revizto Access</span>
+                    <span class="platform-tag forma">ACC Access</span>
+                </div>
+                Each platform column must be <strong>YES</strong> or <strong>NO</strong>.
+            </div>
+
+            <button class="btn-submit" id="submitBtn" disabled>
+                <div class="spinner"></div>
+                <span class="btn-label">Submit Access Request</span>
+            </button>
+
+            <div class="alert alert-success" id="alertSuccess">
+                <span class="alert-icon">✓</span>
+                <div>
+                    <div id="alertSuccessMsg"></div>
+                    <div class="alert-sub">The ALEC Digital team will review and process access shortly.</div>
+                </div>
+            </div>
+            <div class="alert alert-error" id="alertError">
+                <span class="alert-icon">✕</span>
+                <div>
+                    <div id="alertErrorMsg">Submission failed</div>
+                    <div class="alert-sub" id="alertErrorSub"></div>
+                </div>
+            </div>
+
+        </div>
+
+        <div class="card-foot">
+            <span class="foot-dot"></span>
+            Submissions are reviewed by ALEC Digital before any access is granted.
+        </div>
+
+    </div>
+
+    <div class="portal-version">portal/platformAccess · v1.0</div>
+
+</div>
+
+<script>
+    const nameEl     = document.getElementById('submitter_name');
+    const emailEl    = document.getElementById('submitter_email');
+    const fileInput  = document.getElementById('fileInput');
+    const dropZone   = document.getElementById('dropZone');
+    const fileChosen = document.getElementById('fileChosen');
+    const fileNameEl = document.getElementById('fileName');
+    const removeFile = document.getElementById('removeFile');
+    const submitBtn  = document.getElementById('submitBtn');
+    let   selectedFile = null;
+
+    function validate() {
+        submitBtn.disabled = !(nameEl.value.trim() && emailEl.value.trim() && selectedFile);
+    }
+    nameEl.addEventListener('input', validate);
+    emailEl.addEventListener('input', validate);
+
+    function setFile(file) {
+        if (!file) return;
+        selectedFile = file;
+        fileNameEl.textContent = file.name;
+        fileChosen.classList.add('show');
+        validate();
+    }
+
+    fileInput.addEventListener('change', () => setFile(fileInput.files[0]));
+    removeFile.addEventListener('click', () => {
+        selectedFile = null; fileInput.value = '';
+        fileChosen.classList.remove('show'); validate();
+    });
+    dropZone.addEventListener('dragover',  e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+    dropZone.addEventListener('drop', e => {
+        e.preventDefault(); dropZone.classList.remove('drag-over');
+        setFile(e.dataTransfer.files[0]);
+    });
+
+    submitBtn.addEventListener('click', async () => {
+        if (!selectedFile) return;
+        submitBtn.classList.add('loading');
+        submitBtn.disabled = true;
+        document.getElementById('alertSuccess').classList.remove('show');
+        document.getElementById('alertError').classList.remove('show');
+
+        const fd = new FormData();
+        fd.append('submitter_name',  nameEl.value.trim());
+        fd.append('submitter_email', emailEl.value.trim());
+        fd.append('file', selectedFile);
+
+        try {
+            const res  = await fetch('/portal/platformAccess/submit', { method: 'POST', body: fd });
+            const data = await res.json();
+            if (res.ok && data.status === 'success') {
+                document.getElementById('alertSuccessMsg').textContent =
+                    `${data.total} user${data.total !== 1 ? 's' : ''} received`;
+                document.getElementById('alertSuccess').classList.add('show');
+                nameEl.value = ''; emailEl.value = '';
+                selectedFile = null; fileInput.value = '';
+                fileChosen.classList.remove('show');
+            } else {
+                document.getElementById('alertErrorSub').textContent = data.detail || 'Please check your file and try again.';
+                document.getElementById('alertError').classList.add('show');
+                submitBtn.disabled = false;
+            }
+        } catch {
+            document.getElementById('alertErrorSub').textContent = 'Could not reach the server — please try again.';
+            document.getElementById('alertError').classList.add('show');
+            submitBtn.disabled = false;
+        }
+        submitBtn.classList.remove('loading');
+    });
+</script>
+
+</body>
+</html>

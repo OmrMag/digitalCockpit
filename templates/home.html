@@ -1,0 +1,688 @@
+{% extends "base.html" %}
+
+{% block title %}Home — Digital Construction Cockpit{% endblock %}
+
+{% block page_title %}Dashboard{% endblock %}
+{% block page_subtitle %}Weekly insights and platform summary{% endblock %}
+
+{% block head %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+{% endblock %}
+
+{% block content %}
+
+<!-- Platform Summary Cards -->
+<div class="grid-3" style="margin-bottom: 32px;">
+    <div class="stat-card">
+        <div class="stat-icon morta">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/>
+            </svg>
+        </div>
+        <div class="stat-label">Morta Members</div>
+        <div class="stat-value">{{ morta_count or '—' }}</div>
+        <div class="stat-change up">Hub: {{ morta_hub or 'Not configured' }}</div>
+    </div>
+
+    <div class="stat-card">
+        <div class="stat-icon revizto">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M14 10l-2 1m0 0l-2-1m2 1v2.5M20 7l-2 1m2-1l-2-1m2 1v2.5M14 4l-2-1-2 1M4 7l2-1M4 7l2 1M4 7v2.5M12 21l-2-1m2 1l2-1m-2 1v-2.5M6 18l-2-1v-2.5M18 18l2-1v-2.5"/>
+            </svg>
+        </div>
+        <div class="stat-label">Revizto Projects</div>
+        <div class="stat-value">{{ revizto_count or '—' }}</div>
+        <div class="stat-change up">Region: {{ revizto_region or 'Not configured' }}</div>
+    </div>
+
+    <div class="stat-card">
+        <div class="stat-icon forma">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/>
+            </svg>
+        </div>
+        <div class="stat-label">Forma/ACC Projects</div>
+        <div class="stat-value">{{ forma_count or '—' }}</div>
+        <div class="stat-change up">Account: {{ forma_account or 'Not configured' }}</div>
+    </div>
+</div>
+
+<!-- Weekly Insights + Recent Invites -->
+<div class="grid-2" style="margin-bottom: 32px;">
+    <!-- Weekly Insights -->
+    <div class="card">
+        <div class="card-header">
+            <span class="card-title">Weekly Insights</span>
+            <span class="card-badge success">This Week</span>
+        </div>
+        {% if insights %}
+            {% for insight in insights %}
+                <div style="padding: 10px 0; border-bottom: 1px solid var(--border-cream); font-size: 13px; display: flex; align-items: center; gap: 10px;">
+                    <span class="status-dot {{ insight.type }}"></span>
+                    <span>{{ insight.message }}</span>
+                    <span style="margin-left: auto; color: var(--text-dark-muted); font-size: 11px;">{{ insight.date }}</span>
+                </div>
+            {% endfor %}
+        {% else %}
+            <div class="empty-state">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+                <h3>No insights yet</h3>
+                <p>Run your first sync to generate weekly insights.</p>
+            </div>
+        {% endif %}
+    </div>
+
+    <!-- Recent Invites -->
+    <div class="card">
+        <div class="card-header">
+            <span class="card-title">Recent Invites</span>
+            <a href="/invite" class="btn btn-sm btn-secondary">New Invite</a>
+        </div>
+        {% if recent_invites %}
+            <div class="table-wrapper">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Email</th>
+                            <th>Platforms</th>
+                            <th>Status</th>
+                            <th>Date</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for invite in recent_invites %}
+                        <tr>
+                            <td>{{ invite.email }}</td>
+                            <td>
+                                {% if invite.morta_status != 'skipped' %}<span class="platform-tag morta">Morta</span>{% endif %}
+                                {% if invite.revizto_status != 'skipped' %}<span class="platform-tag revizto">Revizto</span>{% endif %}
+                                {% if invite.forma_status != 'skipped' %}<span class="platform-tag forma">Forma</span>{% endif %}
+                            </td>
+                            <td>
+                                {% set statuses = [] %}
+                                {% for p in ['morta_status', 'revizto_status', 'forma_status'] %}
+                                    {% if invite[p] != 'skipped' %}
+                                        {% if invite[p] == 'success' %}
+                                            {% set _ = statuses.append('success') %}
+                                        {% else %}
+                                            {% set _ = statuses.append('error') %}
+                                        {% endif %}
+                                    {% endif %}
+                                {% endfor %}
+                                {% if 'error' in statuses %}
+                                    <span class="status"><span class="status-dot error"></span> Partial</span>
+                                {% else %}
+                                    <span class="status"><span class="status-dot success"></span> Success</span>
+                                {% endif %}
+                            </td>
+                            <td style="font-size: 12px; color: var(--text-dark-muted);">{{ invite.date }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% else %}
+            <div class="empty-state">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z"/>
+                </svg>
+                <h3>No invites yet</h3>
+                <p>Start by inviting your first user.</p>
+            </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Widget Builder -->
+<div class="card" style="margin-bottom: 32px;">
+    <div class="card-header">
+        <span class="card-title">Analytics Widgets</span>
+        <button class="btn btn-sm btn-secondary" id="addWidgetBtn" onclick="openWidgetModal()">
+            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/>
+            </svg>
+            Add Widget
+        </button>
+    </div>
+
+    <!-- Widget grid -->
+    <div id="widgetGrid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px;">
+        <div class="empty-state" id="widgetEmptyState" style="grid-column: 1/-1; padding: 32px 20px;">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+            </svg>
+            <h3>No widgets yet</h3>
+            <p>Click "Add Widget" to create your first chart from exported data.</p>
+        </div>
+    </div>
+</div>
+
+<!-- Quick Actions -->
+<div class="card">
+    <div class="card-header">
+        <span class="card-title">Quick Actions</span>
+    </div>
+    <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+        <a href="/invite" class="btn btn-primary">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z"/>
+            </svg>
+            Single Invite
+        </a>
+        <a href="/invite?mode=bulk" class="btn btn-secondary">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+            </svg>
+            Bulk Upload
+        </a>
+        <a href="/manage" class="btn btn-secondary">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197"/>
+            </svg>
+            Manage Permissions
+        </a>
+        <a href="/settings" class="btn btn-secondary">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+                <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+            </svg>
+            Configure Platforms
+        </a>
+    </div>
+</div>
+
+<!-- ============================================================
+     Widget Modal (overlay using fixed positioning on body)
+     ============================================================ -->
+<div id="widgetModalOverlay" style="display:none; position:fixed; inset:0; background:rgba(15,27,45,0.55); z-index:200; align-items:center; justify-content:center;">
+    <div style="background:white; border-radius:var(--radius-lg); border:1px solid var(--border-cream); width:500px; max-width:95vw; max-height:90vh; overflow-y:auto; box-shadow:var(--shadow-lg);">
+
+        <!-- Modal header -->
+        <div style="display:flex; align-items:center; justify-content:space-between; padding:16px 20px; border-bottom:1px solid var(--border-cream);">
+            <span style="font-size:var(--fs-xs); font-weight:600; text-transform:uppercase; letter-spacing:1px; color:var(--navy);">Configure Widget</span>
+            <button onclick="closeWidgetModal()" style="background:none; border:none; cursor:pointer; color:var(--text-dark-muted); font-size:18px; line-height:1; padding:0 4px;">&times;</button>
+        </div>
+
+        <div style="padding:20px;">
+
+            <!-- Step 1: Dataset -->
+            <div class="form-group">
+                <label>Data source</label>
+                <select id="wDataset" onchange="onDatasetChange()" style="width:100%; padding:8px 12px; border:1px solid var(--border-cream); border-radius:var(--radius); font-family:var(--font); font-size:var(--fs-sm); color:var(--text-dark); background:white;">
+                    <option value="">— select a dataset —</option>
+                </select>
+                <div id="datasetMeta" style="font-size:var(--fs-xs); color:var(--text-dark-muted); margin-top:4px;"></div>
+            </div>
+
+            <!-- Step 2: Chart type -->
+            <div class="form-group">
+                <label>Chart type</label>
+                <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:8px;" id="chartTypeGrid">
+                    <button class="chart-type-btn active" data-type="pie" onclick="selectChartType(this)">
+                        <svg width="18" height="18" viewBox="0 0 22 22" fill="none"><path d="M11 11L11 2A9 9 0 0 1 20 11Z" fill="currentColor" opacity="0.7"/><circle cx="11" cy="11" r="9" stroke="currentColor" stroke-width="1.3"/></svg>
+                        Pie
+                    </button>
+                    <button class="chart-type-btn" data-type="doughnut" onclick="selectChartType(this)">
+                        <svg width="18" height="18" viewBox="0 0 22 22" fill="none"><circle cx="11" cy="11" r="9" stroke="currentColor" stroke-width="4" stroke-dasharray="28 56" stroke-dashoffset="-14"/><circle cx="11" cy="11" r="5" fill="white"/></svg>
+                        Donut
+                    </button>
+                    <button class="chart-type-btn" data-type="bar" onclick="selectChartType(this)">
+                        <svg width="18" height="18" viewBox="0 0 22 22" fill="none"><rect x="2" y="10" width="4" height="9" fill="currentColor" opacity="0.5"/><rect x="9" y="6" width="4" height="13" fill="currentColor" opacity="0.7"/><rect x="16" y="2" width="4" height="17" fill="currentColor"/></svg>
+                        Bar
+                    </button>
+                    <button class="chart-type-btn" data-type="horizontalBar" onclick="selectChartType(this)">
+                        <svg width="18" height="18" viewBox="0 0 22 22" fill="none"><rect x="2" y="3" width="9" height="4" fill="currentColor" opacity="0.5"/><rect x="2" y="9" width="13" height="4" fill="currentColor" opacity="0.7"/><rect x="2" y="15" width="17" height="4" fill="currentColor"/></svg>
+                        Column
+                    </button>
+                    <button class="chart-type-btn" data-type="line" onclick="selectChartType(this)">
+                        <svg width="18" height="18" viewBox="0 0 22 22" fill="none"><polyline points="2,18 7,10 12,14 17,5 22,8" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                        Line
+                    </button>
+                    <button class="chart-type-btn" data-type="table" onclick="selectChartType(this)">
+                        <svg width="18" height="18" viewBox="0 0 22 22" fill="none"><rect x="2" y="2" width="18" height="18" rx="2" stroke="currentColor" stroke-width="1.3"/><path d="M2 8h18M8 8v12" stroke="currentColor" stroke-width="1.3"/></svg>
+                        Table
+                    </button>
+                </div>
+            </div>
+
+            <!-- Step 3: Title -->
+            <div class="form-group">
+                <label>Widget title</label>
+                <input type="text" id="wTitle" placeholder="e.g. Members by Tag" style="width:100%; padding:8px 12px; border:1px solid var(--border-cream); border-radius:var(--radius); font-family:var(--font); font-size:var(--fs-sm);">
+            </div>
+
+            <!-- Step 4: Column mapping -->
+            <div id="columnConfig" style="opacity:0.4; pointer-events:none;">
+                <div class="form-row">
+                    <div class="form-group" style="margin-bottom:0;">
+                        <label id="colXLabel">Category / X axis</label>
+                        <select id="wColX" style="width:100%; padding:8px 12px; border:1px solid var(--border-cream); border-radius:var(--radius); font-family:var(--font); font-size:var(--fs-sm);">
+                            <option value="">— select column —</option>
+                        </select>
+                    </div>
+                    <div class="form-group" style="margin-bottom:0;" id="colYGroup">
+                        <label>Value / Y axis</label>
+                        <select id="wColY" style="width:100%; padding:8px 12px; border:1px solid var(--border-cream); border-radius:var(--radius); font-family:var(--font); font-size:var(--fs-sm);">
+                            <option value="">— count rows —</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 5: Filters -->
+            <div class="form-group" style="margin-top:16px;">
+                <label>Filters <span style="font-weight:400; text-transform:none; letter-spacing:0; font-size:var(--fs-xs); color:var(--text-dark-muted);">(optional)</span></label>
+                <div id="filterList" style="display:flex; flex-direction:column; gap:6px;"></div>
+                <button onclick="addFilter()" class="btn btn-sm btn-secondary" style="margin-top:8px;">+ Add filter</button>
+            </div>
+
+            <!-- Actions -->
+            <div style="display:flex; gap:8px; justify-content:flex-end; padding-top:12px; border-top:1px solid var(--border-cream);">
+                <button onclick="closeWidgetModal()" class="btn btn-secondary">Cancel</button>
+                <button onclick="createWidget()" class="btn btn-primary">Create widget</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.chart-type-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 5px;
+    padding: 10px 6px;
+    border: 1px solid var(--border-cream);
+    border-radius: var(--radius);
+    background: white;
+    font-family: var(--font);
+    font-size: var(--fs-xs);
+    font-weight: 500;
+    color: var(--text-dark-muted);
+    cursor: pointer;
+    transition: all var(--transition);
+}
+.chart-type-btn:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+.chart-type-btn.active {
+    border-color: var(--accent);
+    background: rgba(74,158,255,0.06);
+    color: var(--accent);
+}
+.widget-card {
+    background: white;
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border-cream);
+    padding: 16px;
+    box-shadow: var(--shadow);
+    position: relative;
+}
+.widget-card-label {
+    font-size: var(--fs-xs);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--navy);
+    margin-bottom: 4px;
+}
+.widget-card-meta {
+    font-size: var(--fs-xs);
+    color: var(--text-dark-muted);
+    margin-bottom: 10px;
+}
+.widget-remove {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--text-dark-muted);
+    font-size: 16px;
+    padding: 2px 6px;
+    border-radius: var(--radius);
+    line-height: 1;
+    transition: all var(--transition);
+}
+.widget-remove:hover {
+    color: var(--error);
+    background: rgba(248,113,113,0.08);
+}
+.widget-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+.widget-legend-item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: var(--fs-xs);
+    color: var(--text-dark-muted);
+}
+.widget-legend-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
+    flex-shrink: 0;
+}
+.filter-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr auto;
+    gap: 6px;
+    align-items: center;
+}
+.filter-row select,
+.filter-row input {
+    padding: 6px 8px;
+    border: 1px solid var(--border-cream);
+    border-radius: var(--radius);
+    font-family: var(--font);
+    font-size: var(--fs-xs);
+    color: var(--text-dark);
+    background: white;
+}
+</style>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+const COLORS = ['#4a9eff','#34d399','#fbbf24','#f87171','#a78bfa','#fb923c','#38bdf8','#4ade80','#f472b6','#facc15'];
+
+let csvCache    = {};
+let widgetList  = [];
+let chartInst   = {};
+let selectedType = 'pie';
+let currentHeaders = [];
+
+// ── Modal open/close ──────────────────────────────────────────
+function openWidgetModal() {
+    loadExportsList();
+    document.getElementById('widgetModalOverlay').style.display = 'flex';
+}
+
+function closeWidgetModal() {
+    document.getElementById('widgetModalOverlay').style.display = 'none';
+    document.getElementById('filterList').innerHTML = '';
+    document.getElementById('wTitle').value = '';
+    document.getElementById('datasetMeta').textContent = '';
+}
+
+// ── Load exports list from API ────────────────────────────────
+async function loadExportsList() {
+    const sel = document.getElementById('wDataset');
+    sel.innerHTML = '<option value="">Loading...</option>';
+    try {
+        const res  = await fetch('/api/exports');
+        const data = await res.json();
+        sel.innerHTML = '<option value="">— select a dataset —</option>';
+        if (!data.files.length) {
+            sel.innerHTML += '<option disabled>No exports found in exports/ folder</option>';
+            return;
+        }
+        data.files.forEach(f => {
+            sel.innerHTML += `<option value="${f.filename}" data-size="${f.size_kb}" data-modified="${f.modified}">${f.name} (${f.size_kb} KB)</option>`;
+        });
+    } catch {
+        sel.innerHTML = '<option value="">Failed to load exports</option>';
+    }
+}
+
+// ── Dataset selected: fetch its headers ───────────────────────
+async function onDatasetChange() {
+    const sel      = document.getElementById('wDataset');
+    const filename = sel.value;
+    const colConfig = document.getElementById('columnConfig');
+
+    if (!filename) {
+        colConfig.style.opacity = '0.4';
+        colConfig.style.pointerEvents = 'none';
+        document.getElementById('datasetMeta').textContent = '';
+        return;
+    }
+
+    const opt = sel.options[sel.selectedIndex];
+    document.getElementById('datasetMeta').textContent =
+        `${opt.dataset.modified} · ${opt.dataset.size} KB`;
+
+    // Use cache if available
+    if (!csvCache[filename]) {
+        try {
+            const res  = await fetch(`/api/exports/${filename}`);
+            csvCache[filename] = await res.json();
+        } catch {
+            document.getElementById('datasetMeta').textContent = 'Failed to load file.';
+            return;
+        }
+    }
+
+    const data = csvCache[filename];
+    currentHeaders = data.headers || [];
+    document.getElementById('datasetMeta').textContent =
+        `${opt.dataset.modified} · ${data.total} rows · ${currentHeaders.length} columns`;
+
+    populateColumnSelects();
+    colConfig.style.opacity = '1';
+    colConfig.style.pointerEvents = 'auto';
+}
+
+function populateColumnSelects() {
+    ['wColX', 'wColY'].forEach((id, i) => {
+        const sel  = document.getElementById(id);
+        const def  = i === 0 ? '— select column —' : '— count rows —';
+        sel.innerHTML = `<option value="">${def}</option>` +
+            currentHeaders.map(h => `<option value="${h}">${h}</option>`).join('');
+    });
+}
+
+// ── Chart type selection ──────────────────────────────────────
+function selectChartType(btn) {
+    document.querySelectorAll('.chart-type-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    selectedType = btn.dataset.type;
+    document.getElementById('colXLabel').textContent =
+        (selectedType === 'pie' || selectedType === 'doughnut') ? 'Category column' : 'X axis';
+}
+
+// ── Filters ───────────────────────────────────────────────────
+function addFilter() {
+    if (!currentHeaders.length) return;
+    const row = document.createElement('div');
+    row.className = 'filter-row';
+    row.innerHTML = `
+        <select>${currentHeaders.map(h => `<option>${h}</option>`).join('')}</select>
+        <select>
+            <option value="eq">equals</option>
+            <option value="neq">not equals</option>
+            <option value="contains">contains</option>
+        </select>
+        <input type="text" placeholder="value">
+        <button onclick="this.parentElement.remove()" class="btn btn-sm btn-secondary" style="padding:4px 8px;">&times;</button>
+    `;
+    document.getElementById('filterList').appendChild(row);
+}
+
+function getFilters() {
+    return [...document.querySelectorAll('.filter-row')].map(row => {
+        const [col, op, val] = row.querySelectorAll('select, input');
+        return { col: col.value, op: op.value, val: val.value.trim() };
+    }).filter(f => f.val);
+}
+
+function applyFilters(rows, filters) {
+    return rows.filter(row => filters.every(f => {
+        const cell = (row[f.col] || '').toLowerCase();
+        const val  = f.val.toLowerCase();
+        if (f.op === 'eq')       return cell === val;
+        if (f.op === 'neq')      return cell !== val;
+        if (f.op === 'contains') return cell.includes(val);
+        return true;
+    }));
+}
+
+// ── Aggregate ─────────────────────────────────────────────────
+function aggregate(rows, colX, colY) {
+    const counts = {};
+    rows.forEach(row => {
+        const key = row[colX] || 'Unknown';
+        if (colY) {
+            const num = parseFloat(row[colY]);
+            counts[key] = (counts[key] || 0) + (isNaN(num) ? 1 : num);
+        } else {
+            counts[key] = (counts[key] || 0) + 1;
+        }
+    });
+    const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+    return { labels: sorted.map(([k]) => k), values: sorted.map(([, v]) => v) };
+}
+
+// ── Create widget ─────────────────────────────────────────────
+function createWidget() {
+    const filename = document.getElementById('wDataset').value;
+    const colX     = document.getElementById('wColX').value;
+    const title    = document.getElementById('wTitle').value || document.getElementById('wDataset').options[document.getElementById('wDataset').selectedIndex]?.text || 'Widget';
+    const filters  = getFilters();
+
+    if (!filename)                             return alert('Please select a data source.');
+    if (!colX && selectedType !== 'table')     return alert('Please select a category / X axis column.');
+
+    const id = 'w_' + Date.now();
+    const w  = { id, title, type: selectedType, filename, colX, colY: document.getElementById('wColY').value, filters };
+    widgetList.push(w);
+    renderWidget(w);
+    closeWidgetModal();
+}
+
+// ── Render widget ─────────────────────────────────────────────
+function renderWidget(w) {
+    const data    = csvCache[w.filename];
+    if (!data)    return;
+    const filtered = applyFilters(data.rows, w.filters);
+    const total    = filtered.length;
+
+    // Remove empty state
+    const empty = document.getElementById('widgetEmptyState');
+    if (empty) empty.remove();
+
+    const card = document.createElement('div');
+    card.className = 'widget-card';
+    card.id = w.id;
+
+    if (w.type === 'table') {
+        const cols = (data.headers || []).slice(0, 5);
+        card.innerHTML = `
+            <button class="widget-remove" onclick="removeWidget('${w.id}')">&times;</button>
+            <div class="widget-card-label">${w.title}</div>
+            <div class="widget-card-meta">${total} rows${w.filters.length ? ` · ${w.filters.length} filter(s)` : ''}</div>
+            <div class="table-wrapper" style="max-height:220px; overflow-y:auto;">
+                <table>
+                    <thead><tr>${cols.map(c => `<th>${c}</th>`).join('')}</tr></thead>
+                    <tbody>${filtered.slice(0, 20).map(row =>
+                        `<tr>${cols.map(c => `<td>${row[c] || ''}</td>`).join('')}</tr>`
+                    ).join('')}</tbody>
+                </table>
+                ${filtered.length > 20 ? `<div style="text-align:center; font-size:var(--fs-xs); color:var(--text-dark-muted); padding:8px;">+${filtered.length - 20} more rows</div>` : ''}
+            </div>
+        `;
+        document.getElementById('widgetGrid').appendChild(card);
+        return;
+    }
+
+    const { labels, values } = aggregate(filtered, w.colX, w.colY);
+    const grandTotal = values.reduce((a, b) => a + b, 0);
+    const isPie      = w.type === 'pie' || w.type === 'doughnut';
+    const isHBar     = w.type === 'horizontalBar';
+    const chartType  = isHBar ? 'bar' : w.type;
+
+    const legendHTML = labels.slice(0, 8).map((l, i) => {
+        const pct = grandTotal > 0 ? ((values[i] / grandTotal) * 100).toFixed(1) : 0;
+        return `<span class="widget-legend-item">
+            <span class="widget-legend-dot" style="background:${COLORS[i % COLORS.length]};"></span>
+            ${l.length > 20 ? l.slice(0, 20) + '…' : l}${isPie ? ` ${pct}%` : ` (${values[i]})`}
+        </span>`;
+    }).join('');
+
+    const chartHeight = isHBar ? Math.max(160, labels.length * 28 + 40) : 200;
+
+    card.innerHTML = `
+        <button class="widget-remove" onclick="removeWidget('${w.id}')">&times;</button>
+        <div class="widget-card-label">${w.title}</div>
+        <div class="widget-card-meta">${total} records${w.filters.length ? ` · ${w.filters.length} filter(s)` : ''}</div>
+        <div class="widget-legend">${legendHTML}</div>
+        <div style="position:relative; width:100%; height:${chartHeight}px;">
+            <canvas id="c_${w.id}" role="img" aria-label="${w.title} chart"></canvas>
+        </div>
+    `;
+    document.getElementById('widgetGrid').appendChild(card);
+
+    const bgColors = labels.map((_, i) => COLORS[i % COLORS.length]);
+    if (chartInst[w.id]) chartInst[w.id].destroy();
+
+    chartInst[w.id] = new Chart(document.getElementById('c_' + w.id), {
+        type: chartType,
+        data: {
+            labels,
+            datasets: [{
+                data: values,
+                backgroundColor: bgColors,
+                borderWidth: isPie ? 2 : 0,
+                borderColor: 'transparent',
+                borderRadius: isPie ? 0 : 3,
+                hoverOffset: isPie ? 6 : 0,
+            }]
+        },
+        options: {
+            indexAxis: isHBar ? 'y' : 'x',
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        label: ctx => {
+                            const v   = isPie ? ctx.parsed : (isHBar ? ctx.parsed.x : ctx.parsed.y);
+                            const pct = grandTotal > 0 ? ((v / grandTotal) * 100).toFixed(1) : 0;
+                            return isPie ? ` ${v} (${pct}%)` : ` ${Math.round(v)}`;
+                        }
+                    }
+                }
+            },
+            scales: isPie ? {} : {
+                x: { grid: { color: 'rgba(0,0,0,0.05)' }, ticks: { font: { family: "'JetBrains Mono', monospace", size: 10 } } },
+                y: { grid: { color: 'rgba(0,0,0,0.05)' }, ticks: { font: { family: "'JetBrains Mono', monospace", size: 10 } } }
+            }
+        }
+    });
+}
+
+// ── Remove widget ─────────────────────────────────────────────
+function removeWidget(id) {
+    if (chartInst[id]) { chartInst[id].destroy(); delete chartInst[id]; }
+    const el = document.getElementById(id);
+    if (el) el.remove();
+    widgetList = widgetList.filter(w => w.id !== id);
+    if (!widgetList.length) {
+        const grid = document.getElementById('widgetGrid');
+        grid.innerHTML = `
+            <div class="empty-state" id="widgetEmptyState" style="grid-column:1/-1; padding:32px 20px;">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+                </svg>
+                <h3>No widgets yet</h3>
+                <p>Click "Add Widget" to create your first chart from exported data.</p>
+            </div>`;
+    }
+}
+
+// Close modal on overlay click
+document.getElementById('widgetModalOverlay').addEventListener('click', function(e) {
+    if (e.target === this) closeWidgetModal();
+});
+</script>
+{% endblock %}

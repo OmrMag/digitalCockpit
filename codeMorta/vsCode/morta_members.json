@@ -1,0 +1,640 @@
+{
+  "bkirkman@alec.ae": {
+    "name": "Bridget Kirkman",
+    "email": "bkirkman@alec.ae",
+    "project_role": "member",
+    "role_assigned_method": "direct",
+    "tags": [
+      {
+        "documentTableId": "4826a078-5331-4c29-a404-a2d374affaa3",
+        "projectPublicId": "406ed81a-5e01-47df-b8e4-f0ddbf474d8a",
+        "publicId": "c41e5c6b-5e81-4b41-8159-c3a274ae4bd1",
+        "referencePublicId": "table/4826a078-5331-4c29-a404-a2d374affaa3/1dc34972-ab60-4eda-8e0d-cb8286821eab/0bda778b-64d2-41e7-a59c-655987a01680",
+        "value": "ALEC-MC01-Design & Engineering"
+      }
+    ],
+    "created_at": "2025-07-18T07:37:53.656245",
+    "public_id": "0b52ce65-9090-4e7e-a63c-17e28db05535"
+  },
+  "mimirza@alec.ae": {
+    "name": "Irfan Baig",
+    "email": "mimirza@alec.ae",
+    "project_role": "admin",
+    "role_assigned_method": "direct",
+    "tags": [
+      {
+        "documentTableId": "4826a078-5331-4c29-a404-a2d374affaa3",
+        "projectPublicId": "406ed81a-5e01-47df-b8e4-f0ddbf474d8a",
+        "publicId": "557d604c-d6a6-4a43-803a-b4b73cb17430",
+        "referencePublicId": "table/4826a078-5331-4c29-a404-a2d374affaa3/1dc34972-ab60-4eda-8e0d-cb8286821eab/5ecc85dd-1d42-44ab-aac8-ef719c05f27f",
+        "value": "ALEC-MC01-Digital Construction"
+      }
+    ],
+    "created_at": "2024-12-09T04:47:39.480757",
+    "public_id": "9e6672dd-b8ba-4332-902f-c3afb193a3ba"
+  },
+  "astepanyan@alec.ae": {
+    "name": "Aram Stepanyan",
+    "email": "astepanyan@alec.ae",
+    "project_role": "owner",
+    "role_assigned_method": "direct",
+    "tags": [
+      {
+        "documentTableId": "4826a078-5331-4c29-a404-a2d374affaa3",
+        "projectPublicId": "406ed81a-5e01-47df-b8e4-f0ddbf474d8a",
+        "publicId": "557d604c-d6a6-4a43-803a-b4b73cb17430",
+        "referencePublicId": "table/4826a078-5331-4c29-a404-a2d374affaa3/1dc34972-ab60-4eda-8e0d-cb8286821eab/5ecc85dd-1d42-44ab-aac8-ef719c05f27f",
+        "value": "ALEC-MC01-Digital Construction"
+      }
+    ],
+    "created_at": "2025-07-18T07:38:59.589765",
+    "public_id": "213e9fed-5768-429b-83dd-e32d2eab8f9e"
+  },
+  "bnilath@alec.ae": {
+    "name": "Bujair",
+    "email": "bnilath@alec.ae",
+    "project_role": "member",
+    "role_assigned_method": "direct",
+    "tags": [
+      {
+        "documentTableId": "4826a078-5331-4c29-a404-a2d374affaa3",
+        "projectPublicId": "406ed81a-5e01-47df-b8e4-f0ddbf474d8a",
+        "publicId": "35128e4d-4bb8-4452-a9b4-add487f1870b",
+        "referencePublicId": "table/4826a078-5331-4c29-a404-a2d374affaa3/1dc34972-ab60-4eda-8e0d-cb8286821eab/09f320c1-2702-4473-b304-48034b113db5",
+        "value": "ALEC-MC01-Main Contract - Direct Works"
+      }
+    ],
+    "created_at": "2025-08-22T07:41:58.528290",
+    "public_id": "12b6a524-4d8d-426d-9c63-247013978dad"
+  },
+  "srajendren@alec.ae": {
+    "name": "Sanmugam Rajendren",
+    "email": "srajendren@alec.ae",
+    "project_role": "owner",
+    "role_assigned_method": "direct",
+    "tags": [
+      {
+        "documentTableId": "4826a078-5331-4c29-a404-a2d374affaa3",
+        "projectPublicId": "406ed81a-5e01-47df-b8e4-f0ddbf474d8a",
+        "publicId": "557d604c-d6a6-4a43-803a-b4b73cb17430",
+        "referencePublicId": "table/4826a078-5331-4c29-a404-a2d374affaa3/1dc34972-ab60-4eda-8e0d-cb8286821eab/5ecc85dd-1d42-44ab-aac8-ef719c05f27f",
+        "value": "ALEC-MC01-Digital Construction"
+      }
+    ],
+    "created_at": "2024-12-10T11:38:58.153482",
+    "public_id": "d075049b-fc79-462d-96db-cfc7d4b5f35c"
+  },
+  "munafa@alec.ae": {
+    "name": "Munaf Abdul",
+    "email": "munafa@alec.ae",
+    "project_role": "owner",
+    "role_assigned_method": "direct",
+    "tags": [
+      {
+        "documentTableId": "4826a078-5331-4c29-a404-a2d374affaa3",
+        "projectPublicId": "406ed81a-5e01-47df-b8e4-f0ddbf474d8a",
+        "publicId": "557d604c-d6a6-4a43-803a-b4b73cb17430",
+        "referencePublicId": "table/4826a078-5331-4c29-a404-a2d374affaa3/1dc34972-ab60-4eda-8e0d-cb8286821eab/5ecc85dd-1d42-44ab-aac8-ef719c05f27f",
+        "value": "ALEC-MC01-Digital Construction"
+      }
+    ],
+    "created_at": "2025-09-04T10:56:59.240869",
+    "public_id": "c9f9241f-55ce-4e35-9f19-d4cece7a95c5"
+  },
+  "halanoud@alec.ae": {
+    "name": "hisham alanoud",
+    "email": "halanoud@alec.ae",
+    "project_role": "member",
+    "role_assigned_method": "direct",
+    "tags": [
+      {
+        "documentTableId": "4826a078-5331-4c29-a404-a2d374affaa3",
+        "projectPublicId": "406ed81a-5e01-47df-b8e4-f0ddbf474d8a",
+        "publicId": "77420bd9-3d99-44d8-a3f3-938854633f6b",
+        "referencePublicId": "table/4826a078-5331-4c29-a404-a2d374affaa3/1dc34972-ab60-4eda-8e0d-cb8286821eab/67ad48c6-2ff3-4d2c-b201-6b3e49673421",
+        "value": "ALEC-MC01-Project Leadership"
+      }
+    ],
+    "created_at": "2025-09-08T07:03:16.549277",
+    "public_id": "a7566ac6-d61c-4fbf-8250-4717842394cd"
+  },
+  "pmani@alec.ae": {
+    "name": "Praveen Mani",
+    "email": "pmani@alec.ae",
+    "project_role": "member",
+    "role_assigned_method": "direct",
+    "tags": [
+      {
+        "documentTableId": "4826a078-5331-4c29-a404-a2d374affaa3",
+        "projectPublicId": "406ed81a-5e01-47df-b8e4-f0ddbf474d8a",
+        "publicId": "955d12e9-04e1-4e28-be76-bc6c165de305",
+        "referencePublicId": "table/4826a078-5331-4c29-a404-a2d374affaa3/1dc34972-ab60-4eda-8e0d-cb8286821eab/bf1bafbc-4e30-4c9a-89ff-e7da106c21e7",
+        "value": "ALEC-MC01-QA/QC"
+      }
+    ],
+    "created_at": "2025-09-08T08:01:33.942757",
+    "public_id": "772cb1f4-f58b-425b-bfb9-35bb9c9d94b9"
+  },
+  "rchallahali@alec.ae": {
+    "name": "Ramesh Challahali",
+    "email": "rchallahali@alec.ae",
+    "project_role": "member",
+    "role_assigned_method": "direct",
+    "tags": [
+      {
+        "documentTableId": "4826a078-5331-4c29-a404-a2d374affaa3",
+        "projectPublicId": "406ed81a-5e01-47df-b8e4-f0ddbf474d8a",
+        "publicId": "49e89729-c2a3-40ba-977a-aaaccc1744b8",
+        "referencePublicId": "table/4826a078-5331-4c29-a404-a2d374affaa3/1dc34972-ab60-4eda-8e0d-cb8286821eab/80579279-1068-43e1-991c-023e9dde11aa",
+        "value": "ALEC-MC01-Planning"
+      }
+    ],
+    "created_at": "2025-09-12T05:23:49.379197",
+    "public_id": "f0d7672a-a846-4399-b2e9-b5f2dadcd796"
+  },
+  "shvarghese@alec.ae": {
+    "name": "SHIJO VARGHESE",
+    "email": "shvarghese@alec.ae",
+    "project_role": "member",
+    "role_assigned_method": "direct",
+    "tags": [
+      {
+        "documentTableId": "4826a078-5331-4c29-a404-a2d374affaa3",
+        "projectPublicId": "406ed81a-5e01-47df-b8e4-f0ddbf474d8a",
+        "publicId": "35128e4d-4bb8-4452-a9b4-add487f1870b",
+        "referencePublicId": "table/4826a078-5331-4c29-a404-a2d374affaa3/1dc34972-ab60-4eda-8e0d-cb8286821eab/09f320c1-2702-4473-b304-48034b113db5",
+        "value": "ALEC-MC01-Main Contract - Direct Works"
+      }
+    ],
+    "created_at": "2025-09-27T05:02:45.286024",
+    "public_id": "6ea3b932-03f2-48db-99bc-3808822f2071"
+  },
+  "rmahanamage@alemco.ae": {
+    "name": "Raveendra Fernando",
+    "email": "rmahanamage@alemco.ae",
+    "project_role": "member",
+    "role_assigned_method": "direct",
+    "tags": [
+      {
+        "documentTableId": "4826a078-5331-4c29-a404-a2d374affaa3",
+        "projectPublicId": "406ed81a-5e01-47df-b8e4-f0ddbf474d8a",
+        "publicId": "17555994-7a0f-47a9-89d3-dbb7ddc4d7e9",
+        "referencePublicId": "table/4826a078-5331-4c29-a404-a2d374affaa3/1dc34972-ab60-4eda-8e0d-cb8286821eab/e41f243e-905c-4cc9-8617-a83454a120fc",
+        "value": "ALEC LITE-MC04-MEP Early Works"
+      }
+    ],
+    "created_at": "2025-09-30T11:52:41.809054",
+    "public_id": "9c46f0e7-6258-4a02-bc99-486174f28a22"
+  },
+  "gsellappan@alemco.ae": {
+    "name": "GOPINATH SELLAPPAN",
+    "email": "gsellappan@alemco.ae",
+    "project_role": "member",
+    "role_assigned_method": "direct",
+    "tags": [
+      {
+        "documentTableId": "4826a078-5331-4c29-a404-a2d374affaa3",
+        "projectPublicId": "406ed81a-5e01-47df-b8e4-f0ddbf474d8a",
+        "publicId": "17555994-7a0f-47a9-89d3-dbb7ddc4d7e9",
+        "referencePublicId": "table/4826a078-5331-4c29-a404-a2d374affaa3/1dc34972-ab60-4eda-8e0d-cb8286821eab/e41f243e-905c-4cc9-8617-a83454a120fc",
+        "value": "ALEC LITE-MC04-MEP Early Works"
+      }
+    ],
+    "created_at": "2025-09-30T11:53:01.654461",
+    "public_id": "a315fd94-8788-4d39-8243-83d96340e92c"
+  },
+  "sgeorge@alec.ae": {
+    "name": "Sam George",
+    "email": "sgeorge@alec.ae",
+    "project_role": "member",
+    "role_assigned_method": "direct",
+    "tags": [
+      {
+        "documentTableId": "4826a078-5331-4c29-a404-a2d374affaa3",
+        "projectPublicId": "406ed81a-5e01-47df-b8e4-f0ddbf474d8a",
+        "publicId": "35128e4d-4bb8-4452-a9b4-add487f1870b",
+        "referencePublicId": "table/4826a078-5331-4c29-a404-a2d374affaa3/1dc34972-ab60-4eda-8e0d-cb8286821eab/09f320c1-2702-4473-b304-48034b113db5",
+        "value": "ALEC-MC01-Main Contract - Direct Works"
+      }
+    ],
+    "created_at": "2025-10-02T14:36:33.741979",
+    "public_id": "c18b2298-e6f7-489e-8e40-eee5f9e7e9cb"
+  },
+  "malhabahbeh@alec.ae": {
+    "name": "Mais Ahmad Al Habahbeh",
+    "email": "malhabahbeh@alec.ae",
+    "project_role": "member",
+    "role_assigned_method": "direct",
+    "tags": [
+      {
+        "documentTableId": "4826a078-5331-4c29-a404-a2d374affaa3",
+        "projectPublicId": "406ed81a-5e01-47df-b8e4-f0ddbf474d8a",
+        "publicId": "34d32215-9d6a-4c54-be0b-5efc4ea58455",
+        "referencePublicId": "table/4826a078-5331-4c29-a404-a2d374affaa3/1dc34972-ab60-4eda-8e0d-cb8286821eab/4b6bab37-c135-4f5d-9fdf-732ead6ba796",
+        "value": "ALEC-MC01-Procurement"
+      }
+    ],
+    "created_at": "2025-10-02T14:39:26.822855",
+    "public_id": "d4119ff4-3b4b-4726-a970-a6ef4c4e4d6c"
+  },
+  "dfletcher@alec.ae": {
+    "name": "Darrel Fletcher",
+    "email": "dfletcher@alec.ae",
+    "project_role": "member",
+    "role_assigned_method": "direct",
+    "tags": [
+      {
+        "documentTableId": "4826a078-5331-4c29-a404-a2d374affaa3",
+        "projectPublicId": "406ed81a-5e01-47df-b8e4-f0ddbf474d8a",
+        "publicId": "1929c460-7962-4e3a-b4f5-111bc0d4df09",
+        "referencePublicId": "table/4826a078-5331-4c29-a404-a2d374affaa3/1dc34972-ab60-4eda-8e0d-cb8286821eab/e3cd9d5d-b9a8-4bb3-b5a8-456cf384eaba",
+        "value": "ALEC-MC01-CRM"
+      }
+    ],
+    "created_at": "2025-10-02T14:41:31.494084",
+    "public_id": "83044ea9-1edd-4b6b-91b2-c2937283e991"
+  },
+  "atalafha@alec.ae": {
+    "name": "Ali Taha Ali Talafha",
+    "email": "atalafha@alec.ae",
+    "project_role": "member",
+    "role_assigned_method": "direct",
+    "tags": [
+      {
+        "documentTableId": "4826a078-5331-4c29-a404-a2d374affaa3",
+        "projectPublicId": "406ed81a-5e01-47df-b8e4-f0ddbf474d8a",
+        "publicId": "d00cc6bd-d63c-4a74-96e9-0983454bd7d7",
+        "referencePublicId": "table/4826a078-5331-4c29-a404-a2d374affaa3/1dc34972-ab60-4eda-8e0d-cb8286821eab/4ee6b4f5-76f2-421b-a6ee-845d33dff798",
+        "value": "ALEC-MC01-Authorities"
+      }
+    ],
+    "created_at": "2025-10-03T03:52:05.291812",
+    "public_id": "b1fd3795-4f08-4af6-825a-cec13c9acd38"
+  },
+  "jtemple@alec.ae": {
+    "name": "Jonathan William Temple",
+    "email": "jtemple@alec.ae",
+    "project_role": "member",
+    "role_assigned_method": "direct",
+    "tags": [
+      {
+        "documentTableId": "4826a078-5331-4c29-a404-a2d374affaa3",
+        "projectPublicId": "406ed81a-5e01-47df-b8e4-f0ddbf474d8a",
+        "publicId": "9ee76d66-fc69-4f7e-a8d6-d64565743e94",
+        "referencePublicId": "table/4826a078-5331-4c29-a404-a2d374affaa3/1dc34972-ab60-4eda-8e0d-cb8286821eab/e348e1a6-6a1b-4a54-a931-db06999eb457",
+        "value": "ALEC-MC01-Logistics"
+      }
+    ],
+    "created_at": "2025-10-03T03:53:41.811241",
+    "public_id": "67fc2352-7be2-46ac-93fd-fa1f735a133b"
+  },
+  "jouseph@alec.ae": {
+    "name": "JOBY VADAKKEN OUSEPH",
+    "email": "jouseph@alec.ae",
+    "project_role": "member",
+    "role_assigned_method": "direct",
+    "tags": [
+      {
+        "documentTableId": "4826a078-5331-4c29-a404-a2d374affaa3",
+        "projectPublicId": "406ed81a-5e01-47df-b8e4-f0ddbf474d8a",
+        "publicId": "c41e5c6b-5e81-4b41-8159-c3a274ae4bd1",
+        "referencePublicId": "table/4826a078-5331-4c29-a404-a2d374affaa3/1dc34972-ab60-4eda-8e0d-cb8286821eab/0bda778b-64d2-41e7-a59c-655987a01680",
+        "value": "ALEC-MC01-Design & Engineering"
+      }
+    ],
+    "created_at": "2025-10-03T03:54:02.847229",
+    "public_id": "23815ad3-d2d8-4c00-87ae-2b69fe5803f6"
+  },
+  "prasanthk@alec.ae": {
+    "name": "Prasanth Divakar",
+    "email": "prasanthk@alec.ae",
+    "project_role": "member",
+    "role_assigned_method": "direct",
+    "tags": [
+      {
+        "documentTableId": "4826a078-5331-4c29-a404-a2d374affaa3",
+        "projectPublicId": "406ed81a-5e01-47df-b8e4-f0ddbf474d8a",
+        "publicId": "c41e5c6b-5e81-4b41-8159-c3a274ae4bd1",
+        "referencePublicId": "table/4826a078-5331-4c29-a404-a2d374affaa3/1dc34972-ab60-4eda-8e0d-cb8286821eab/0bda778b-64d2-41e7-a59c-655987a01680",
+        "value": "ALEC-MC01-Design & Engineering"
+      }
+    ],
+    "created_at": "2025-10-03T04:05:27.004512",
+    "public_id": "4f11d51a-7016-48f4-b900-2d7b9a3b4276"
+  },
+  "zsiddiqui@alec.ae": {
+    "name": "Zubair Siddiqui",
+    "email": "zsiddiqui@alec.ae",
+    "project_role": "member",
+    "role_assigned_method": "direct",
+    "tags": [
+      {
+        "documentTableId": "4826a078-5331-4c29-a404-a2d374affaa3",
+        "projectPublicId": "406ed81a-5e01-47df-b8e4-f0ddbf474d8a",
+        "publicId": "d53fcb82-3a29-4007-9e1b-b1a7ebf9ff67",
+        "referencePublicId": "table/4826a078-5331-4c29-a404-a2d374affaa3/1dc34972-ab60-4eda-8e0d-cb8286821eab/bbdeff5e-cb36-4913-b9bd-b6a3c9ce1169",
+        "value": "ALEC-MC01-Operations"
+      }
+    ],
+    "created_at": "2025-10-03T06:13:07.677415",
+    "public_id": "366efee0-4772-4aca-9384-4d0151224216"
+  },
+  "almorland@alec.ae": {
+    "name": "Alistair Thomas Morland",
+    "email": "almorland@alec.ae",
+    "project_role": "member",
+    "role_assigned_method": "direct",
+    "tags": [
+      {
+        "documentTableId": "4826a078-5331-4c29-a404-a2d374affaa3",
+        "projectPublicId": "406ed81a-5e01-47df-b8e4-f0ddbf474d8a",
+        "publicId": "9ee76d66-fc69-4f7e-a8d6-d64565743e94",
+        "referencePublicId": "table/4826a078-5331-4c29-a404-a2d374affaa3/1dc34972-ab60-4eda-8e0d-cb8286821eab/e348e1a6-6a1b-4a54-a931-db06999eb457",
+        "value": "ALEC-MC01-Logistics"
+      }
+    ],
+    "created_at": "2025-10-03T06:20:24.286299",
+    "public_id": "833049e7-354c-4668-b87b-267dd086e74e"
+  },
+  "vkannan@alec.ae": {
+    "name": "Vignesh Kannan",
+    "email": "vkannan@alec.ae",
+    "project_role": "member",
+    "role_assigned_method": "direct",
+    "tags": [
+      {
+        "documentTableId": "4826a078-5331-4c29-a404-a2d374affaa3",
+        "projectPublicId": "406ed81a-5e01-47df-b8e4-f0ddbf474d8a",
+        "publicId": "49e89729-c2a3-40ba-977a-aaaccc1744b8",
+        "referencePublicId": "table/4826a078-5331-4c29-a404-a2d374affaa3/1dc34972-ab60-4eda-8e0d-cb8286821eab/80579279-1068-43e1-991c-023e9dde11aa",
+        "value": "ALEC-MC01-Planning"
+      }
+    ],
+    "created_at": "2025-10-03T07:24:52.641852",
+    "public_id": "cba417ea-c21a-4ec3-af66-fcf47453c13f"
+  },
+  "gbothma@alec.ae": {
+    "name": "Gerhard Bothma",
+    "email": "gbothma@alec.ae",
+    "project_role": "member",
+    "role_assigned_method": "direct",
+    "tags": [
+      {
+        "documentTableId": "4826a078-5331-4c29-a404-a2d374affaa3",
+        "projectPublicId": "406ed81a-5e01-47df-b8e4-f0ddbf474d8a",
+        "publicId": "93897f0f-f00f-4152-bea9-26ef7836797c",
+        "referencePublicId": "table/4826a078-5331-4c29-a404-a2d374affaa3/1dc34972-ab60-4eda-8e0d-cb8286821eab/8b94c9b2-23dc-4ef8-b531-105265ff0c8f",
+        "value": "ALEC-MC01-Commercial"
+      }
+    ],
+    "created_at": "2025-10-15T08:47:32.309307",
+    "public_id": "a44cd7f1-b33a-4573-929f-4cb8ff08fbc5"
+  },
+  "ushah@alec.ae": {
+    "name": "\u0639\u0645\u0631 \u0639\u0644\u0649",
+    "email": "ushah@alec.ae",
+    "project_role": "member",
+    "role_assigned_method": "direct",
+    "tags": [
+      {
+        "documentTableId": "4826a078-5331-4c29-a404-a2d374affaa3",
+        "projectPublicId": "406ed81a-5e01-47df-b8e4-f0ddbf474d8a",
+        "publicId": "36de9ac2-d5f3-42e7-888a-5915bc13d110",
+        "referencePublicId": "table/4826a078-5331-4c29-a404-a2d374affaa3/1dc34972-ab60-4eda-8e0d-cb8286821eab/4c453751-ff29-4f69-886b-b73250f66f67",
+        "value": "ALEC-MC01-HSE"
+      }
+    ],
+    "created_at": "2025-11-20T07:40:32.774161",
+    "public_id": "487a3e97-88b2-4186-8331-3f3448db8133"
+  },
+  "aalexander@alec.ae": {
+    "name": "Anil Pattathil Alexander",
+    "email": "aalexander@alec.ae",
+    "project_role": "member",
+    "role_assigned_method": "direct",
+    "tags": [
+      {
+        "documentTableId": "4826a078-5331-4c29-a404-a2d374affaa3",
+        "projectPublicId": "406ed81a-5e01-47df-b8e4-f0ddbf474d8a",
+        "publicId": "955d12e9-04e1-4e28-be76-bc6c165de305",
+        "referencePublicId": "table/4826a078-5331-4c29-a404-a2d374affaa3/1dc34972-ab60-4eda-8e0d-cb8286821eab/bf1bafbc-4e30-4c9a-89ff-e7da106c21e7",
+        "value": "ALEC-MC01-QA/QC"
+      }
+    ],
+    "created_at": "2025-11-20T13:40:21.524452",
+    "public_id": "3068ae9a-9a3a-4fd2-82b6-1fa0d9de3159"
+  },
+  "ali@morta.io": {
+    "name": "Ali Kalek",
+    "email": "ali@morta.io",
+    "project_role": "admin",
+    "role_assigned_method": "direct",
+    "tags": [
+      {
+        "documentTableId": "4826a078-5331-4c29-a404-a2d374affaa3",
+        "projectPublicId": "406ed81a-5e01-47df-b8e4-f0ddbf474d8a",
+        "publicId": "557d604c-d6a6-4a43-803a-b4b73cb17430",
+        "referencePublicId": "table/4826a078-5331-4c29-a404-a2d374affaa3/1dc34972-ab60-4eda-8e0d-cb8286821eab/5ecc85dd-1d42-44ab-aac8-ef719c05f27f",
+        "value": "ALEC-MC01-Digital Construction"
+      }
+    ],
+    "created_at": "2025-12-11T05:17:38.198089",
+    "public_id": "be5fe7c3-febe-4557-9e1c-ff2ab50b42de"
+  },
+  "oawad@alec.ae": {
+    "name": "Omar",
+    "email": "oawad@alec.ae",
+    "project_role": "owner",
+    "role_assigned_method": "direct",
+    "tags": [
+      {
+        "documentTableId": "4826a078-5331-4c29-a404-a2d374affaa3",
+        "projectPublicId": "406ed81a-5e01-47df-b8e4-f0ddbf474d8a",
+        "publicId": "557d604c-d6a6-4a43-803a-b4b73cb17430",
+        "referencePublicId": "table/4826a078-5331-4c29-a404-a2d374affaa3/1dc34972-ab60-4eda-8e0d-cb8286821eab/5ecc85dd-1d42-44ab-aac8-ef719c05f27f",
+        "value": "ALEC-MC01-Digital Construction"
+      }
+    ],
+    "created_at": "2025-12-23T09:46:15.524153",
+    "public_id": "fbcafb44-fab9-474e-89ee-e166d071ece9"
+  },
+  "jmundamkottil@alec.ae": {
+    "name": "JAGADEESH MUNDAMGOTTIL",
+    "email": "jmundamkottil@alec.ae",
+    "project_role": "member",
+    "role_assigned_method": "direct",
+    "tags": [
+      {
+        "documentTableId": "4826a078-5331-4c29-a404-a2d374affaa3",
+        "projectPublicId": "406ed81a-5e01-47df-b8e4-f0ddbf474d8a",
+        "publicId": "955d12e9-04e1-4e28-be76-bc6c165de305",
+        "referencePublicId": "table/4826a078-5331-4c29-a404-a2d374affaa3/1dc34972-ab60-4eda-8e0d-cb8286821eab/bf1bafbc-4e30-4c9a-89ff-e7da106c21e7",
+        "value": "ALEC-MC01-QA/QC"
+      }
+    ],
+    "created_at": "2026-01-06T13:01:39.641076",
+    "public_id": "1f303857-5acc-4db0-a0b2-c14acc6174a8"
+  },
+  "asasidharan@alec.ae": {
+    "name": "Ashik Sasidharan",
+    "email": "asasidharan@alec.ae",
+    "project_role": "member",
+    "role_assigned_method": "direct",
+    "tags": [
+      {
+        "documentTableId": "4826a078-5331-4c29-a404-a2d374affaa3",
+        "projectPublicId": "406ed81a-5e01-47df-b8e4-f0ddbf474d8a",
+        "publicId": "955d12e9-04e1-4e28-be76-bc6c165de305",
+        "referencePublicId": "table/4826a078-5331-4c29-a404-a2d374affaa3/1dc34972-ab60-4eda-8e0d-cb8286821eab/bf1bafbc-4e30-4c9a-89ff-e7da106c21e7",
+        "value": "ALEC-MC01-QA/QC"
+      }
+    ],
+    "created_at": "2026-01-07T08:02:05.783045",
+    "public_id": "5374b190-fcb3-45a0-81b7-108e1cc98396"
+  },
+  "rriyaz@alec.ae": {
+    "name": "rehana",
+    "email": "rriyaz@alec.ae",
+    "project_role": "member",
+    "role_assigned_method": "direct",
+    "tags": [
+      {
+        "documentTableId": "4826a078-5331-4c29-a404-a2d374affaa3",
+        "projectPublicId": "406ed81a-5e01-47df-b8e4-f0ddbf474d8a",
+        "publicId": "955d12e9-04e1-4e28-be76-bc6c165de305",
+        "referencePublicId": "table/4826a078-5331-4c29-a404-a2d374affaa3/1dc34972-ab60-4eda-8e0d-cb8286821eab/bf1bafbc-4e30-4c9a-89ff-e7da106c21e7",
+        "value": "ALEC-MC01-QA/QC"
+      }
+    ],
+    "created_at": "2026-01-07T11:51:46.436815",
+    "public_id": "48260a3e-16e2-4b11-b166-7b21994ebaaf"
+  },
+  "tthambi@alec.ae": {
+    "name": "THARUN K THAMBI",
+    "email": "tthambi@alec.ae",
+    "project_role": "member",
+    "role_assigned_method": "direct",
+    "tags": [
+      {
+        "documentTableId": "4826a078-5331-4c29-a404-a2d374affaa3",
+        "projectPublicId": "406ed81a-5e01-47df-b8e4-f0ddbf474d8a",
+        "publicId": "955d12e9-04e1-4e28-be76-bc6c165de305",
+        "referencePublicId": "table/4826a078-5331-4c29-a404-a2d374affaa3/1dc34972-ab60-4eda-8e0d-cb8286821eab/bf1bafbc-4e30-4c9a-89ff-e7da106c21e7",
+        "value": "ALEC-MC01-QA/QC"
+      }
+    ],
+    "created_at": "2026-01-07T11:58:02.117447",
+    "public_id": "2b22443f-b20f-4efa-925b-1df8b37a93f5"
+  },
+  "pbeukman@alec.ae": {
+    "name": "Paul Beukman",
+    "email": "pbeukman@alec.ae",
+    "project_role": "member",
+    "role_assigned_method": "direct",
+    "tags": [
+      {
+        "documentTableId": "4826a078-5331-4c29-a404-a2d374affaa3",
+        "projectPublicId": "406ed81a-5e01-47df-b8e4-f0ddbf474d8a",
+        "publicId": "77420bd9-3d99-44d8-a3f3-938854633f6b",
+        "referencePublicId": "table/4826a078-5331-4c29-a404-a2d374affaa3/1dc34972-ab60-4eda-8e0d-cb8286821eab/67ad48c6-2ff3-4d2c-b201-6b3e49673421",
+        "value": "ALEC-MC01-Project Leadership"
+      }
+    ],
+    "created_at": "2026-02-18T08:20:07.873122",
+    "public_id": "bd319868-1f73-494d-8bfe-8e790b280c7a"
+  },
+  "lokesh@ikigai-steel.com": {
+    "name": "Lokesh Makkena",
+    "email": "lokesh@ikigai-steel.com",
+    "project_role": "member",
+    "role_assigned_method": "direct",
+    "tags": [
+      {
+        "documentTableId": "4826a078-5331-4c29-a404-a2d374affaa3",
+        "projectPublicId": "406ed81a-5e01-47df-b8e4-f0ddbf474d8a",
+        "publicId": "94565a44-a232-400b-82d3-a84a8b9bf9d4",
+        "referencePublicId": "table/4826a078-5331-4c29-a404-a2d374affaa3/1dc34972-ab60-4eda-8e0d-cb8286821eab/de3d73b2-e59e-4027-a882-31f016683d62",
+        "value": "IKIGAI Steel Products Installation LLC-PS04-Structural Steel Works"
+      }
+    ],
+    "created_at": "2026-03-02T07:33:58.231105",
+    "public_id": "0fb80763-b4b0-489d-b254-70cdae32015b"
+  },
+  "purushothaman@ikigai-steel.com": {
+    "name": "Purushothaman Asokan",
+    "email": "purushothaman@ikigai-steel.com",
+    "project_role": "member",
+    "role_assigned_method": "direct",
+    "tags": [
+      {
+        "documentTableId": "4826a078-5331-4c29-a404-a2d374affaa3",
+        "projectPublicId": "406ed81a-5e01-47df-b8e4-f0ddbf474d8a",
+        "publicId": "94565a44-a232-400b-82d3-a84a8b9bf9d4",
+        "referencePublicId": "table/4826a078-5331-4c29-a404-a2d374affaa3/1dc34972-ab60-4eda-8e0d-cb8286821eab/de3d73b2-e59e-4027-a882-31f016683d62",
+        "value": "IKIGAI Steel Products Installation LLC-PS04-Structural Steel Works"
+      }
+    ],
+    "created_at": "2026-03-02T07:39:34.223967",
+    "public_id": "aa4d29aa-bb8a-48c8-8579-0ae93c66aea0"
+  },
+  "majidmohammed@voltas.com": {
+    "name": "Majid Ali Mohammed/EMD/DUBAI",
+    "email": "majidmohammed@voltas.com",
+    "project_role": "member",
+    "role_assigned_method": "direct",
+    "tags": [
+      {
+        "documentTableId": "4826a078-5331-4c29-a404-a2d374affaa3",
+        "projectPublicId": "406ed81a-5e01-47df-b8e4-f0ddbf474d8a",
+        "publicId": "e2e4cd5a-e6a5-47f9-a2ec-f69b99d1733e",
+        "referencePublicId": "table/4826a078-5331-4c29-a404-a2d374affaa3/1dc34972-ab60-4eda-8e0d-cb8286821eab/1892fdaf-e15e-459d-b00e-02882734ef54",
+        "value": "Voltas Limited-PS05-Main MEP Works "
+      }
+    ],
+    "created_at": "2026-03-31T11:02:30.021130",
+    "public_id": "661850ba-9e6c-49d8-ab84-2ff68c9e5c10"
+  },
+  "mfarag@alec.ae": {
+    "name": "Mina Maher Farag",
+    "email": "mfarag@alec.ae",
+    "project_role": "member",
+    "role_assigned_method": "direct",
+    "tags": [
+      {
+        "documentTableId": "4826a078-5331-4c29-a404-a2d374affaa3",
+        "projectPublicId": "406ed81a-5e01-47df-b8e4-f0ddbf474d8a",
+        "publicId": "c41e5c6b-5e81-4b41-8159-c3a274ae4bd1",
+        "referencePublicId": "table/4826a078-5331-4c29-a404-a2d374affaa3/1dc34972-ab60-4eda-8e0d-cb8286821eab/0bda778b-64d2-41e7-a59c-655987a01680",
+        "value": "ALEC-MC01-Design & Engineering"
+      }
+    ],
+    "created_at": "2026-04-15T07:11:00.127788",
+    "public_id": "e6265405-3702-48bb-aab7-7e9f2df72a5f"
+  },
+  "service-account-3173f367-352f-479d-821b-0515a52d7daa@morta.io": {
+    "name": "ALEC Service Account",
+    "email": "service-account-3173f367-352f-479d-821b-0515a52d7daa@morta.io",
+    "project_role": "owner",
+    "role_assigned_method": "organisation",
+    "tags": [],
+    "created_at": "2024-12-09T04:26:14.654275",
+    "public_id": "d269545b-80d7-4ff5-b36c-112d36c6e4d8"
+  },
+  "aboutle@alec.ae": {
+    "name": "Andy Boutle",
+    "email": "aboutle@alec.ae",
+    "project_role": "owner",
+    "role_assigned_method": "organisation",
+    "tags": [
+      {
+        "documentTableId": "4826a078-5331-4c29-a404-a2d374affaa3",
+        "projectPublicId": "406ed81a-5e01-47df-b8e4-f0ddbf474d8a",
+        "publicId": "557d604c-d6a6-4a43-803a-b4b73cb17430",
+        "referencePublicId": "table/4826a078-5331-4c29-a404-a2d374affaa3/1dc34972-ab60-4eda-8e0d-cb8286821eab/5ecc85dd-1d42-44ab-aac8-ef719c05f27f",
+        "value": "ALEC-MC01-Digital Construction"
+      }
+    ],
+    "created_at": "2024-12-09T04:26:14.654275",
+    "public_id": "5d18c084-7ffc-4464-bf04-c36bc04f687f"
+  }
+}

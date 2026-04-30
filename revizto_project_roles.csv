@@ -1,0 +1,13 @@
+id,uuid,name
+256973,fed35d5a-af87-41f9-a52b-5411fbf0d7c4,Owner
+256974,ae911640-cd56-432a-a83c-03b1502fd0d7,License administrator
+256975,9b5764c9-7214-48d3-8844-496a9e56a581,06_Viewer
+256976,42f2b1d8-82ae-4268-8451-e0b66c6f3f3b,05_Commentator
+256977,0d1131e6-0f84-4134-b404-7234bdc096ed,04_BIM Technician
+256978,5b04050b-231d-4e39-992a-a4e83b432426,03_BIM Coordinator
+256979,5fcc3ec9-eee3-4b80-a76e-05f373c0c589,02_BIM Manager
+256980,2438281c-8539-451e-b41e-781f5333c332,01_Project Administrator
+256981,e0cfb9d4-b784-4d53-93de-728a0aaac13b,Edit content and collaborate (Tender Projects Workspace)
+256982,f4c05b00-87fb-485d-a0c7-190ab949099b,Edit content and collaborate - Estimation Technical (Tender Projects Workspace)
+257045,bdae6f2b-329a-4c15-ac3b-0e8e870b1f0c,View and collaborate (Non-BIM Users)
+257046,4cd87e13-9c7c-4013-b677-6e624abe5172,View and collaborate + Viewpoints (Non-BIM Users)

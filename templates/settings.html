@@ -1,0 +1,169 @@
+{% extends "base.html" %}
+
+{% block title %}Settings — Digital Construction Cockpit{% endblock %}
+
+{% block page_title %}Settings{% endblock %}
+{% block page_subtitle %}Admin-level credentials and platform configuration — these rarely change{% endblock %}
+
+{% block content %}
+{% if message %}
+<div class="alert alert-{{ message_type or 'success' }}">
+    {{ message }}
+</div>
+{% endif %}
+
+<form method="POST" action="/settings">
+
+    <!-- Morta -->
+    <div class="card" style="margin-bottom: 24px;">
+        <div class="card-header">
+            <span class="card-title"><span class="platform-tag morta">Morta</span> Configuration</span>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label>API Key</label>
+                <input type="password" name="morta_api_key" value="{{ config.morta.api_key or '' }}" placeholder="Enter Morta API key">
+            </div>
+        </div>
+        <p style="font-size:var(--fs-xs); color:var(--text-dark-muted); margin-top:-4px;">
+            Hub selection is managed from the sidebar context selector.
+        </p>
+    </div>
+
+    <!-- Revizto -->
+    <div class="card" style="margin-bottom: 24px;">
+        <div class="card-header">
+            <span class="card-title"><span class="platform-tag revizto">Revizto</span> Configuration</span>
+        </div>
+
+        <div class="revizto-tabs">
+            <button type="button" class="revizto-tab active" onclick="switchReviztoTab('dubai', this)">Dubai (ME)</button>
+            <button type="button" class="revizto-tab" onclick="switchReviztoTab('ireland', this)">Ireland (EU)</button>
+        </div>
+
+        <!-- Dubai -->
+        <div id="revizto-tab-dubai" class="revizto-tab-content">
+            <div class="form-row" style="margin-top:16px;">
+                <div class="form-group">
+                    <label>Default License Role</label>
+                    <select name="revizto_dubai_default_role">
+                        <option value="1" {{ 'selected' if config.revizto_dubai.default_license_role == 1 }}>Guest</option>
+                        <option value="2" {{ 'selected' if config.revizto_dubai.default_license_role == 2 }}>Collaborator</option>
+                        <option value="3" {{ 'selected' if config.revizto_dubai.default_license_role == 3 }}>Content Creator</option>
+                        <option value="4" {{ 'selected' if config.revizto_dubai.default_license_role == 4 }}>License Admin</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Access Code</label>
+                    <input type="password" name="revizto_dubai_access_code" value="{{ config.revizto_dubai.access_code or '' }}" placeholder="Paste access code from Revizto">
+                </div>
+            </div>
+            <p style="font-size:var(--fs-xs); color:var(--text-dark-muted); margin-top:-8px;">
+                Generate at: <a href="https://ws.revizto.com/login?request=accessCode" target="_blank" style="color:var(--accent);">ws.revizto.com/login?request=accessCode</a>
+            </p>
+        </div>
+
+        <!-- Ireland -->
+        <div id="revizto-tab-ireland" class="revizto-tab-content" style="display:none;">
+            <div class="form-row" style="margin-top:16px;">
+                <div class="form-group">
+                    <label>Default License Role</label>
+                    <select name="revizto_ireland_default_role">
+                        <option value="1" {{ 'selected' if config.revizto_ireland.default_license_role == 1 }}>Guest</option>
+                        <option value="2" {{ 'selected' if config.revizto_ireland.default_license_role == 2 }}>Collaborator</option>
+                        <option value="3" {{ 'selected' if config.revizto_ireland.default_license_role == 3 }}>Content Creator</option>
+                        <option value="4" {{ 'selected' if config.revizto_ireland.default_license_role == 4 }}>License Admin</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Access Code</label>
+                    <input type="password" name="revizto_ireland_access_code" value="{{ config.revizto_ireland.access_code or '' }}" placeholder="Paste access code from Revizto">
+                </div>
+            </div>
+            <p style="font-size:var(--fs-xs); color:var(--text-dark-muted); margin-top:-8px;">
+                Generate at: <a href="https://ws.revizto.com/login?request=accessCode" target="_blank" style="color:var(--accent);">ws.revizto.com/login?request=accessCode</a>
+            </p>
+        </div>
+    </div>
+
+    <!-- Forma / ACC -->
+    <div class="card" style="margin-bottom: 24px;">
+        <div class="card-header">
+            <span class="card-title"><span class="platform-tag forma">Forma / ACC</span> Configuration</span>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label>Client ID (2-legged)</label>
+                <input type="password" name="forma_client_id" value="{{ config.forma.client_id or '' }}" placeholder="APS Client ID">
+            </div>
+            <div class="form-group">
+                <label>Client Secret (2-legged)</label>
+                <input type="password" name="forma_client_secret" value="{{ config.forma.client_secret or '' }}" placeholder="APS Client Secret">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label>Client ID (3-legged)</label>
+                <input type="password" name="forma_client_id_3l" value="{{ config.forma.client_id_3l or '' }}" placeholder="3-legged Client ID">
+            </div>
+            <div class="form-group">
+                <label>Client Secret (3-legged)</label>
+                <input type="password" name="forma_client_secret_3l" value="{{ config.forma.client_secret_3l or '' }}" placeholder="3-legged Client Secret">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label>Account ID</label>
+                <input type="text" name="forma_account_id" value="{{ config.forma.account_id or '' }}" placeholder="Hub ID (without b. prefix)">
+            </div>
+            <div class="form-group">
+                <label>Admin User ID</label>
+                <input type="text" name="forma_admin_user_id" value="{{ config.forma.admin_user_id or '' }}" placeholder="Your Autodesk user ID">
+            </div>
+        </div>
+        <p style="font-size:var(--fs-xs); color:var(--text-dark-muted); margin-top:-4px;">
+            Project selection is managed from the sidebar context selector.
+        </p>
+    </div>
+
+    <div style="display:flex; gap:12px; justify-content:flex-end;">
+        <button type="button" class="btn btn-secondary" onclick="window.location.reload()">Reset</button>
+        <button type="submit" class="btn btn-primary">Save Settings</button>
+    </div>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<style>
+.revizto-tabs {
+    display: flex;
+    gap: 4px;
+    border-bottom: 1px solid var(--border-cream);
+    margin-bottom: 4px;
+}
+.revizto-tab {
+    padding: 7px 16px;
+    font-family: var(--font);
+    font-size: var(--fs-sm);
+    font-weight: 600;
+    border: none;
+    background: none;
+    color: var(--text-dark-muted);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    transition: all var(--transition);
+    border-radius: var(--radius) var(--radius) 0 0;
+}
+.revizto-tab:hover { color: var(--navy); background: var(--cream-mid); }
+.revizto-tab.active { color: var(--navy); border-bottom-color: var(--navy); }
+</style>
+<script>
+function switchReviztoTab(region, btn) {
+    document.querySelectorAll('.revizto-tab-content').forEach(el => el.style.display = 'none');
+    document.querySelectorAll('.revizto-tab').forEach(el => el.classList.remove('active'));
+    document.getElementById('revizto-tab-' + region).style.display = 'block';
+    btn.classList.add('active');
+}
+</script>
+{% endblock %}

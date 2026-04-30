@@ -1,0 +1,120 @@
+id,name,email,role,status,company_name,last_sign_in
+3196fac5-b289-4a0f-aa48-f7a81287a163,Nehal Hosny,n.hosny@saudilandscape.com,account_user,not_invited,,
+a462e9c5-591b-4906-a10a-173bac29390e,Balaji T,balaji.t@jesbim.com,project_user,active,,
+a7c09fd0-deb2-40eb-b050-5fb6b4e9a796,PROJECTS CCTS GROUP,projects@cctsgroup.com,project_user,active,,
+2a9f02a7-b299-48c8-8943-484793a04048,Vimal Lalloo,vimal.lalloo@zutari.com,project_user,active,,
+e8c0e019-0273-49d7-820d-301d962e4a2e,Raghavan L,raghavan@josephgroup.ae,project_user,active,,
+682403a9-c7bd-49a7-a9eb-2352eb42b339,design design,design@raghav-group.com,project_user,active,,
+273ba37a-511d-456f-a8bc-3fb9bf426e0e,Thushar Eljo,bim3@eljosolutions.com,project_user,active,,
+35ab1997-82f5-4ddb-b13a-7a379dc4b148,SINCY BRI,sincy@brisigns.com,project_user,active,,
+052e65b6-707b-49e9-8185-c111731b7217,Anas Rahman,anas@nextepgroup.com,project_user,active,,
+23b03a20-df4f-4f83-8ade-06c67e75c60c,Neerkathalingam palraj,npalraj@alemco.ae,project_user,active,,
+6f018f6b-59e4-45a2-b883-3b70fb6859d1,Mariselvam Palraj,mpalraj@alemco.ae,project_user,active,,
+7cb61d0a-1d70-4e2f-951b-76648bb1e32a,Mohsen Ahmed,mohsen.rimal@alkuhaimi.ae,project_user,active,RIMAL,2021-02-25T13:59:59.000Z
+3d581332-965d-406d-9ee0-52f55f8931bc,snehal shete,snehal.shete@neilsoft.com,project_user,active,,
+139c0a8a-2351-4250-a84a-2868ad036778,vignesh J,vignesh@jseeng.in,project_user,active,,
+a3329115-9ea1-4976-8a42-65ca437eeb31,Thabo Mthonti,lmthonti@alec.sa,project_admin,active,,
+2c691881-9009-4e3e-8251-3e3bfa52b48d,Jafar Moidu,jafar.rimal@alkuhaimi.ae,project_user,active,,
+05570731-0ec2-42e7-8cb0-2272f9127f63,ABDUL NISAR,apeedika@alec.sa,project_admin,active,,
+07a55e0a-e516-4ddc-b6fd-eae05541fa1c,Yokesh Raam,yraam@keesafety.com,project_user,active,,2026-03-01T09:43:58.000Z
+6672c01b-7bea-4332-9025-cbfc35e9af60,Sahaya Cruz Nelson,sahaya.nelson@depa.com,project_user,active,,
+f6dda777-82ed-4221-bb00-1de744785980,Ritesh Patil,ritesh.patil@neilsoft.com,project_user,active,,
+f2fd3d1b-44f4-488d-ad25-2faad25a7db1,Abdul Shafin,ashamsudeen@alemco.ae,project_user,active,,
+546b22f4-738f-4f6d-ad8f-6c00a0a5919b,nitin kshirsagar,nitin.kshirsagar@neilsoft.com,project_user,active,,2025-09-26T12:42:06.000Z
+317c7c86-7da8-48c1-8c4f-4b7def846449,Janarthanan Alagarsamy,jalagarsamy@alec.ae,project_user,active,,2025-10-20T06:22:17.000Z
+e60a318b-22e6-4e58-95b6-5ca4293410e9,Bim Ten,bim10@dgp.pinnaclecad.com,project_user,active,,
+626abcad-53c8-44af-b442-e642c58d9071,Singaraja M,singaraja.murugan@jesbim.com,project_user,active,,
+d3febb46-7d32-4ad4-95b8-f374c0c29c2b,Pradeep Jacob,pjacob@alec.ae,project_user,active,,2026-01-15T13:58:15.000Z
+dc693ec5-0898-4756-8c71-4d1e8bf86f8a,Abdul Saleem,abdul.saleem@extraco.ae,project_user,active,,
+e72bac33-e213-4db2-81f0-6e999ab7e827,Joel Johnson,jjohnson@alemco.ae,project_admin,active,,2025-07-15T11:57:58.000Z
+c4644a02-212d-4287-a68f-f2044d6aadfe,KEROLOUS MELAD,nxt.arch.008@outlook.com,project_user,active,,
+88c5f5a1-4c28-4c60-875a-b169ad3877e2,bunyamin ozdemir,bunyamin@apdfacades.com,project_user,active,,
+ca3c343e-0db0-444c-8ec6-7d38a34893b5,Easwar Sivakumar,esivakumar@alemco.ae,project_user,active,,
+04044424-0cc3-43c4-8c0b-2a91a5bacd70,Sabbria Sultana,sabbria@ccu.360bimsolutions.com,project_user,active,,
+39a22811-28f8-49ff-9996-14db40229221,Manikandan D,manikandan@jesbim.com,project_user,active,,
+280d54c0-941a-416b-8d89-5ed415205b2d,Raffy Viesca,raviesca@alemco.ae,project_user,active,,
+00833bb5-89a2-4f82-b963-8db855b1550f,Kartheeswaran Srinivasan,karsrinivasan@alecdcsolutions.com,project_user,active,,
+342e1c98-4e48-4b11-9599-0decf8790593,selvaganesan ALMBLR,sgunasekaran@alemco.ae,project_user,active,,
+6e852e17-5c8a-4023-86b4-b655e7c788af,Younus U,younus.uddin@bimdubai.com,account_user,not_invited,,
+d60a1988-f860-43f2-9495-090d6fd0d664,bandanaramadevi bandanaramadevi,bandanaramadevi@jseeng.net,project_user,active,,
+ea497b14-f64e-465a-84d5-4acfeee458ce,Michael D,michaeld@jseeng.in,project_user,active,JSE Engineering,
+a336ec17-3dd2-4a20-a03d-c0bdcc7a20dc,Vijayakumar Elamurugan,velamurugan@alemco.ae,project_user,active,,2025-04-28T07:30:03.000Z
+ff495ac5-b41b-48ab-bd38-55e2fe172fdd,Shaylin Ranjith,shaylin.ranjith@zutari.com,project_user,active,,
+41154d6f-1cc8-4928-83c9-08c175f9418e,Vedafrancis Arockia Samy,vsamy@alemco.ae,project_user,active,,2025-03-21T03:43:14.000Z
+30e645ba-2e81-4c24-8b96-2be2ce705ed6,Venkatesh A,venkatesh.arivazhagan@jesbim.com,project_user,active,,
+eb5fe3cd-3e1b-472f-a1e4-820ee8f6306c,Mohammad Taqui,mtaqui@alec.ae,project_admin,active,,2026-04-25T05:12:53.000Z
+dcf2656f-cca8-46ec-a36f-cae33de83bee,Bipin B,bipin@jesbim.com,project_user,active,,
+df9b1fae-1852-453a-8ad1-a701a8f4d277,Sarah Sakr,ssakr@alec.sa,project_admin,active,,
+6e517214-46f4-46b0-8305-1fad71aec24c,yuvarajupoojari yuvarajupoojari,yuvarajupoojari@jseeng.in,project_user,active,,
+b62558b0-181c-418f-8830-73dca52decf8,Mehadees Ramesh,mramesh@alemco.ae,project_user,active,,
+4d468418-45b7-41f8-8b7f-4aaad340c5ef,Aktham Emad,aktham@maisinteriordesign.ae,project_user,active,,
+d80abe22-751f-461d-b1cc-4a5ac57783cd,Farhat Ullah Khan,farhat.khan@dormakaba.com,project_user,active,,
+c7ec2dfa-e2bd-457a-9fcc-71c923df30a0,raju dulla,raju.dulla@proscapeuae.com,project_user,active,,
+075f3104-4856-4ced-87fc-a5ab6c890aef,Suhail Rahim,suhailrahim@voltas.com,project_user,active,,
+d2e31e64-52f5-4531-ba59-13c24c63cfb1,Mohammed Bilal,mohammedbilal@jseeng.in,project_user,active,,
+71d2cc8b-de09-473a-8ad7-2217023ad06a,Alwin Jijo,ajijo@alecdcsolutions.com,project_user,active,,
+24ec77c2-c008-463a-89dd-a7c374a0d6d2,Kazi Abdus Salam,kazi.salam@ccu.360bimsolutions.com,account_user,not_invited,,
+ca6d40fc-c94f-453d-ad79-ce34f4b7eb9d,Dave Erskine,dave.erskine@zutari.com,project_user,active,,
+c9ca9041-ea5a-4700-8ea0-e73adc00a9a1,Paolo Odorico,podorico@alec.ae,project_user,active,,
+d01c3b01-6abc-4143-9c4f-e1833949e7a9,Bim Five,bim5@dgp.pinnaclecad.com,project_user,active,,
+959ad086-b723-495d-abd8-0861aa2743a9,Ashith Kumar,ashith.kumar@autodesk.com,project_admin,active,,
+6e23411b-e081-4ea1-8207-691751e30109,tdayi tdayi,tdayi@alecdcsolutions.com,project_user,active,,
+290ba8f3-41ed-49c0-9020-e8a987b6c4f9,Ravi Kumar,ravi.kumar1@autodesk.com,account_admin,active,Autodesk Support,
+17f11d60-9e53-45df-9a63-527782e5456f,sarathkumar sarathkumar,sarathkumar.1@comfotec-global.com,project_user,active,ALEMCO,2025-10-22T09:30:10.000Z
+ec3f401b-3c25-4dd5-9185-94b1f2e5fada,Taufiq Ahmed,taufiqahmed@voltas.com,project_user,active,,
+7cc59c4e-2082-4071-8b9b-2aefff5c0806,muhamedkhalid muhamedkhalid,muhamedkhalid@voltas.com,project_user,active,,
+245cff2c-6d0f-4028-a16c-7c7bd83b70ea,Mallika Harshavardhan,mharshavardhan@alemco.ae,project_user,active,,
+b8158ed9-75d2-4502-b891-980a6d06197a,Thangeswaran Ganesan,tganesan@alectechnologies.com,project_user,active,,
+55f9f716-57d5-4446-9ee4-2af3cc3d4c57,nandhini jes,nandhini@jesbim.com,project_user,active,,
+bdbabb9d-141a-4e37-b891-10e58337888e,Majid Ali Mohammed,majidmohammed@voltas.com,project_user,active,,
+71d7dae8-1b5b-4c0c-9d07-6f0cd9a90dc1,Sibi surendran,sisurendran@alemco.ae,project_user,active,,
+9f1fcb32-395e-4775-af5f-d0cd39bef6c1,Elangovan one,elangovan.1@comfotec-global.com,project_user,active,,
+155bf705-b5e7-4ed8-a834-e5464e71e4c4,Dharmaseelan Selvam,dselvam@alec.ae,project_user,active,,
+a3a4f26b-48f0-424a-a6ca-a193b2f0ae97,Sadek Kamal Al Din,skamalaldin@syska.com,project_user,active,,2025-08-27T07:46:06.000Z
+364efc6d-57e8-416d-b9c6-9db42868c285,Naeemudeen A,naeemudeen.a@comfotec.net,project_user,active,,2026-04-24T13:10:43.000Z
+52212079-68a4-4814-aca8-7c5172f9ecc1,Mahalingam Venkadasalam,mvenkadasalam@alemco.ae,project_user,active,,
+e811297d-1945-4653-aba8-e147e20dba5e,varatharajan s,varatharajan@jseeng.in,project_user,active,,
+80e26e6d-cb83-4d1e-88a7-b0dbe567cc13,Umar Farook,ufarook@alemco.ae,project_user,active,,
+22eedf3a-6912-4be3-b07c-62fe1890cb70,KIRAN KUMAR K M,kirankumar@sbebim.com,project_user,active,,
+8925b69b-dd62-4a85-9892-7d4f7e290713,Dinesh R,dinesh.rajendran@jesbim.com,project_user,active,,
+02ea5f82-cf1f-446f-b20d-64b9ef34152b,nauman borkar,naumanborkar@voltas.com,project_user,active,,
+4e52836f-b88a-4619-b55d-5429a35c9c0f,Selva Ganapathi,selvaganapathi@jseeng.in,project_user,active,,
+b16db383-36c9-4402-a1f8-05dadcc09663,Sayed Diaa,sayed.diaa@ikkgroup.com,project_user,active,,
+5d1e88bb-39f9-450b-8703-fb204f243513,Ranshika Peiris,rpeiris@alemco.ae,project_user,active,,2024-07-03T04:47:08.000Z
+d473f1d9-f9b2-4509-8970-d73ab5997040,apaulpandi apaulpandi,apaulpandi@alemco.ae,project_user,active,,
+51168392-ce63-425f-b877-fd19b5845457,Mohanasundar M,mohanasundarm@jseeng.in,project_user,active,JSE Engineering,
+f3bc054c-2c17-4591-9843-ae7f1c05223b,Bim Four,bim4@dgp.pinnaclecad.com,project_user,active,,
+f9123f61-bb83-431e-a887-478d97d3ddb7,Malexander malexander,malexander@alecdcsolutions.com,project_user,active,,
+913ff423-34fd-476e-9b86-1e04b922ce9f,Satyanarayana Kolupoti,satyanarayanak@voltas.com,project_user,active,,
+2429f6b0-3074-4431-84bb-6f88d6c70af6,Akhil Viswanath,aviswanath@alec.ae,project_user,active,,
+1efbbbb0-75ae-4c74-a206-0e659ac291e0,Yahiya Puthiya Thoppilakam,ythoppil@alemco.ae,project_user,active,ALEMCO,2024-05-27T03:48:55.000Z
+794bb798-da3a-4a50-9522-db2fbf8d7140,Manura Gamage,mgamage@alemco.ae,project_user,active,,
+9017d7cb-67ac-43a1-bd8f-6f10c4f089e4,Jerald Castelino,jcastelino@alemco.ae,project_user,active,,2021-06-09T09:12:56.000Z
+15ce0cca-2107-4bbd-af44-81d01ecd58c2,SELVARATHINAM POUSUDAIYAN,selvarathinam.p@extraco.ae,project_user,active,,2026-04-23T12:53:50.000Z
+5aa0f50f-b67a-45d7-97bf-c1ecf4a54027,Chandru Ravi,chandru.ravi@innolinkdigitalservices.com,project_user,active,,
+05bdee2d-ea04-485f-9119-6c7fb035b104,Angel Pestano,angel.pestano.autodesk@maisinteriordesign.ae,project_user,active,,
+4b00ced0-efda-4ad2-a458-e38cfcb5bca9,Dhivakar m,dhivakar.m@proscapeuae.com,project_user,active,,
+2fc79a97-9e56-4d61-b500-dcfeea03d7dd,Viswanathan Veeravel,vveeravel@alemco.ae,project_user,active,,2026-04-25T09:13:39.000Z
+76146d09-063a-4979-8777-036a05c50059,Sibusiso Mnyameni,smnyameni@alecdcsolutions.com,project_user,active,,
+52a71d8a-4e28-40c0-9150-b03df5a2c822,Gopinath Sellappan,gsellappan@alemco.ae,project_admin,active,ALEMCO,2025-08-01T06:39:57.000Z
+cf2c8d80-8e7a-4e28-8212-c2f25f00f2f4,SHAHBAZ AHAMED,shahbaza@alecdcsolutions.com,project_user,active,,
+4eeb7176-86f9-4b26-a48c-520c7747a53b,Abdullah Kazi,abdullahkazi.idc@gmail.com,project_user,active,,
+a88efd38-acc6-40d7-b7b6-b6f5be7b4ba0,Krishna kumar Subbiah,krishnakumar@deemahstone.com,project_user,active,,2025-03-26T09:15:12.000Z
+56f23157-6ed6-4aec-8456-e4d32a65333b,Hazim Hyder,hazim@chabllc.com,project_user,active,,
+c9d89b72-35c3-492d-b234-367884344ffd,Jayakrishna Das,jayakrishna@desertrockcraft.me,project_user,active,,
+296f520b-ba7f-4e4f-bda7-774a3a9a0f07,Rakesh Kumar,rraj@alec.ae,project_user,active,,2025-12-09T04:36:37.000Z
+aab6687f-26b4-4451-b8f2-2232d04aea1c,Bjohny bjohny,bjohny@alecdcsolutions.com,project_user,active,,
+4abea475-3648-4be7-aca3-fab1d5437cdf,Mohammed Nassar,monassar@alec.ae,project_user,active,,2026-04-25T06:40:46.000Z
+8afe2c30-fe1a-48be-91b1-cc1a80119ae3,mohamed mirshad,mthayyil@alec.ae,project_user,active,ALEC Engineering and Contracting LLC,2026-03-05T04:34:21.000Z
+8ec7fd32-4e40-4e9a-869f-58cea542a8e8,JA BIM,bimdept@josephgroup.ae,project_user,active,,
+816cfd69-0e7a-44ed-b84a-402a22112ce9,Sundareswari S,sundareswari.s@innolinkdigitalservices.com,project_user,active,,
+d98744c5-6f85-441e-a66a-f0c8d26f273f,Simon Pollock,simon.pollock@zutari.com,project_user,active,,
+4fe60cef-d269-4154-a675-c76f3032f483,Teja Appala,teja.appala@innovogroup.com,project_user,active,,2025-08-21T07:07:30.000Z
+d5ffda4c-7d35-45e4-82b7-9f8295f338e4,Manikandan Muniyandi,mamuniyandi@alemco.ae,project_user,active,,
+308f3c03-0bf6-448c-a8f6-eaaf8cb4f85a,Design OsrC,design.osr3@access1c.com,project_user,active,,
+14df9465-39b3-43a9-b489-844535659371,MOHAMED SAJATH,sajath@alrawdauae.org,project_user,active,,
+fb8b76e7-88c4-4639-a329-9793e5cf25b6,Anugrahith TM,anugrahith.tm@rdsind.co,account_user,not_invited,,
+eada459f-e34a-40b9-b596-4f48d144dcec,Krepke De Vera,krepke.devera@techtradedoors-uae.com,project_user,active,,
+8d4283e4-5de7-4fdd-addd-4d7c95e31382,Selvakumar s,selvakumar.s@innolinkdigitalservices.com,project_user,active,,
+66b671c6-bd31-4658-b586-d35c4b9604bc,Nijin Kottackakathu Jain,nijain@alecdcsolutions.com,project_user,active,,
+1c73c0c2-c4bf-4011-8323-ec570b2a981b,Shabna Shifana,shabna@maisinteriordesign.ae,project_user,active,,

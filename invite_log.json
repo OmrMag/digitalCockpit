@@ -1,0 +1,14 @@
+[
+  {
+    "date": "2026-04-27 11:27:55",
+    "mode": "bulk",
+    "email": "majidmohammed@voltas.com",
+    "first_name": "Majid Ali",
+    "last_name": "Mohammed",
+    "company": "Voltas Limited",
+    "department": "BIM",
+    "morta_status": "error",
+    "revizto_status": "skipped",
+    "forma_status": "success"
+  }
+]

@@ -1,0 +1,492 @@
+{% extends "base.html" %}
+
+{% block title %}Extractions — Digital Construction Cockpit{% endblock %}
+
+{% block page_title %}Extractions{% endblock %}
+{% block page_subtitle %}Run data extractions instantly — reads active context from the sidebar{% endblock %}
+
+{% block content %}
+
+<!-- Platform Tabs -->
+<div class="ext-tabs">
+    <button class="ext-tab active" onclick="switchTab('revizto', this)">
+        <span style="width:7px;height:7px;border-radius:50%;background:var(--revizto);display:inline-block;flex-shrink:0;"></span>
+        Revizto
+    </button>
+    <button class="ext-tab" onclick="switchTab('morta', this)">
+        <span style="width:7px;height:7px;border-radius:50%;background:var(--accent);display:inline-block;flex-shrink:0;"></span>
+        Morta
+    </button>
+    <button class="ext-tab" onclick="switchTab('forma', this)">
+        <span style="width:7px;height:7px;border-radius:50%;background:var(--forma);display:inline-block;flex-shrink:0;"></span>
+        Forma / ACC
+    </button>
+</div>
+
+<!-- ── REVIZTO TAB ─────────────────────────────────────────────── -->
+<div id="tab-revizto" class="tab-content">
+
+    <div class="ext-level-header">
+        <span class="ext-level-badge l1">L1</span>
+        License Level — no project required
+    </div>
+    <div class="ext-grid">
+        <div class="extractor-card" data-script="Revizto_GET_License_Projects" data-level="1" data-platform="revizto">
+            <div class="ext-header"><div class="ext-title">License Projects</div><span class="ext-badge revizto">L1</span></div>
+            <div class="ext-desc">All projects under the configured license UUID.</div>
+            <div class="ext-footer"><span class="ext-output">→ revizto_license_projects.csv</span><button class="btn btn-sm btn-primary" onclick="runExtractor(this)">Run</button></div>
+        </div>
+        <div class="extractor-card" data-script="Revizto_GET_License_Members" data-level="1" data-platform="revizto">
+            <div class="ext-header"><div class="ext-title">License Members</div><span class="ext-badge revizto">L1</span></div>
+            <div class="ext-desc">All members across the license with roles and status.</div>
+            <div class="ext-footer"><span class="ext-output">→ revizto_license_members.csv</span><button class="btn btn-sm btn-primary" onclick="runExtractor(this)">Run</button></div>
+        </div>
+        <div class="extractor-card" data-script="Revizto_GET_User_Licenses" data-level="1" data-platform="revizto">
+            <div class="ext-header"><div class="ext-title">User Licenses</div><span class="ext-badge revizto">L1</span></div>
+            <div class="ext-desc">Licenses available to the authenticated user.</div>
+            <div class="ext-footer"><span class="ext-output">→ revizto_user_licenses.csv</span><button class="btn btn-sm btn-primary" onclick="runExtractor(this)">Run</button></div>
+        </div>
+    </div>
+
+    <div class="ext-level-header">
+        <span class="ext-level-badge l2">L2</span>
+        Project Level — requires active project from sidebar
+    </div>
+    <div class="ext-grid">
+        <div class="extractor-card disabled" data-script="Revizto_GET_Clash_Tests" data-level="2" data-platform="revizto">
+            <div class="ext-header"><div class="ext-title">Clash Tests</div><span class="ext-badge revizto">L2</span></div>
+            <div class="ext-desc">All clash tests with group and clash counts.</div>
+            <div class="ext-footer"><span class="ext-output">→ revizto_clash_tests.csv</span><button class="btn btn-sm btn-primary" onclick="runExtractor(this)">Run</button></div>
+        </div>
+        <div class="extractor-card disabled" data-script="Revizto_GET_Project_Members" data-level="2" data-platform="revizto">
+            <div class="ext-header"><div class="ext-title">Project Members</div><span class="ext-badge revizto">L2</span></div>
+            <div class="ext-desc">Members and roles within the selected project.</div>
+            <div class="ext-footer"><span class="ext-output">→ revizto_project_members.csv</span><button class="btn btn-sm btn-primary" onclick="runExtractor(this)">Run</button></div>
+        </div>
+        <div class="extractor-card disabled" data-script="Revizto_GET_Project_Roles" data-level="2" data-platform="revizto">
+            <div class="ext-header"><div class="ext-title">Project Roles</div><span class="ext-badge revizto">L2</span></div>
+            <div class="ext-desc">All defined roles within the selected project.</div>
+            <div class="ext-footer"><span class="ext-output">→ revizto_project_roles.csv</span><button class="btn btn-sm btn-primary" onclick="runExtractor(this)">Run</button></div>
+        </div>
+        <div class="extractor-card disabled" data-script="Revizto_GET_Scenes_and_Models_with_Properties" data-level="2" data-platform="revizto">
+            <div class="ext-header"><div class="ext-title">Scenes & Models</div><span class="ext-badge revizto">L2</span></div>
+            <div class="ext-desc">Scenes and models with properties for the selected project.</div>
+            <div class="ext-footer"><span class="ext-output">→ revizto_scenes_models.csv</span><button class="btn btn-sm btn-primary" onclick="runExtractor(this)">Run</button></div>
+        </div>
+    </div>
+
+    <div class="ext-level-header">
+        <span class="ext-level-badge l3">L3</span>
+        Model Level — requires active project + model from Scenes &amp; Models
+    </div>
+    <div class="ext-model-bar" id="revizto-model-bar" style="display:none;">
+        <span class="ctx-bar-label">Active Model</span>
+        <select id="reviztoModelSelect" onchange="saveReviztoModel()" class="model-select">
+            <option value="">— run Scenes &amp; Models first —</option>
+        </select>
+    </div>
+    <div class="ext-grid">
+        <div class="extractor-card disabled" data-script="Revizto_GET_Object_Tree_With_Properties" data-level="3" data-platform="revizto">
+            <div class="ext-header"><div class="ext-title">Object Tree</div><span class="ext-badge revizto">L3</span></div>
+            <div class="ext-desc">Full object tree with properties. Large export — may take time.</div>
+            <div class="ext-footer"><span class="ext-output">→ revizto_object_tree.csv</span><button class="btn btn-sm btn-primary" onclick="runExtractor(this)">Run</button></div>
+        </div>
+    </div>
+</div>
+
+<!-- ── MORTA TAB ──────────────────────────────────────────────── -->
+<div id="tab-morta" class="tab-content" style="display:none;">
+
+    <div class="ext-level-header">
+        <span class="ext-level-badge l1">L1</span>
+        Hub Level — no project required
+    </div>
+    <div class="ext-grid">
+        <div class="extractor-card" data-script="Morta_GET_members" data-level="1" data-platform="morta">
+            <div class="ext-header"><div class="ext-title">Hub Members</div><span class="ext-badge morta">L1</span></div>
+            <div class="ext-desc">All members in the configured Morta hub with tags and roles.</div>
+            <div class="ext-footer"><span class="ext-output">→ morta_members.csv</span><button class="btn btn-sm btn-primary" onclick="runExtractor(this)">Run</button></div>
+        </div>
+        <div class="extractor-card" data-script="Morta_GET_Tags" data-level="1" data-platform="morta">
+            <div class="ext-header"><div class="ext-title">Tags</div><span class="ext-badge morta">L1</span></div>
+            <div class="ext-desc">All tags defined in the Morta hub.</div>
+            <div class="ext-footer"><span class="ext-output">→ morta_tags.csv</span><button class="btn btn-sm btn-primary" onclick="runExtractor(this)">Run</button></div>
+        </div>
+        <div class="extractor-card" data-script="Morta_GET_Admin" data-level="1" data-platform="morta">
+            <div class="ext-header"><div class="ext-title">Admins</div><span class="ext-badge morta">L1</span></div>
+            <div class="ext-desc">Admin users in the configured Morta hub.</div>
+            <div class="ext-footer"><span class="ext-output">→ morta_admins.csv</span><button class="btn btn-sm btn-primary" onclick="runExtractor(this)">Run</button></div>
+        </div>
+        <div class="extractor-card" data-script="Morta_GET_User" data-level="1" data-platform="morta">
+            <div class="ext-header"><div class="ext-title">User Details</div><span class="ext-badge morta">L1</span></div>
+            <div class="ext-desc">Detailed user information from the Morta hub.</div>
+            <div class="ext-footer"><span class="ext-output">→ morta_users.csv</span><button class="btn btn-sm btn-primary" onclick="runExtractor(this)">Run</button></div>
+        </div>
+    </div>
+</div>
+
+<!-- ── FORMA TAB ──────────────────────────────────────────────── -->
+<div id="tab-forma" class="tab-content" style="display:none;">
+
+    <div class="ext-level-header">
+        <span class="ext-level-badge l1">L1</span>
+        Account Level — no project required
+    </div>
+    <div class="ext-grid">
+        <div class="extractor-card" data-script="Forma_GET_Account_Projects" data-level="1" data-platform="forma">
+            <div class="ext-header"><div class="ext-title">Account Projects</div><span class="ext-badge forma">L1</span></div>
+            <div class="ext-desc">All active projects under the configured ACC account.</div>
+            <div class="ext-footer"><span class="ext-output">→ forma_account_projects.csv</span><button class="btn btn-sm btn-primary" onclick="runExtractor(this)">Run</button></div>
+        </div>
+        <div class="extractor-card" data-script="Forma_GET_Hub_Users" data-level="1" data-platform="forma">
+            <div class="ext-header"><div class="ext-title">Hub Users</div><span class="ext-badge forma">L1</span></div>
+            <div class="ext-desc">All users in the ACC hub with roles and status.</div>
+            <div class="ext-footer"><span class="ext-output">→ forma_hub_users.csv</span><button class="btn btn-sm btn-primary" onclick="runExtractor(this)">Run</button></div>
+        </div>
+        <div class="extractor-card" data-script="Forma_GET_2L_Status" data-level="1" data-platform="forma">
+            <div class="ext-header"><div class="ext-title">2-Legged Token Status</div><span class="ext-badge forma">L1</span></div>
+            <div class="ext-desc">Validates and returns current 2-legged OAuth token status.</div>
+            <div class="ext-footer"><span class="ext-output">→ forma_2l_status.csv</span><button class="btn btn-sm btn-primary" onclick="runExtractor(this)">Run</button></div>
+        </div>
+        <div class="extractor-card" data-script="Forma_GET_3L_Status" data-level="1" data-platform="forma">
+            <div class="ext-header"><div class="ext-title">3-Legged Token Status</div><span class="ext-badge forma">L1</span></div>
+            <div class="ext-desc">Validates and returns current 3-legged OAuth token status.</div>
+            <div class="ext-footer"><span class="ext-output">→ forma_3l_status.csv</span><button class="btn btn-sm btn-primary" onclick="runExtractor(this)">Run</button></div>
+        </div>
+    </div>
+
+    <div class="ext-level-header">
+        <span class="ext-level-badge l2">L2</span>
+        Project Level — requires active project from sidebar
+    </div>
+    <div class="ext-grid">
+        <div class="extractor-card disabled" data-script="Forma_GET_Project_Files" data-level="2" data-platform="forma">
+            <div class="ext-header"><div class="ext-title">Project Files</div><span class="ext-badge forma">L2</span></div>
+            <div class="ext-desc">Files and folders within the selected ACC project.</div>
+            <div class="ext-footer"><span class="ext-output">→ forma_project_files.csv</span><button class="btn btn-sm btn-primary" onclick="runExtractor(this)">Run</button></div>
+        </div>
+        <div class="extractor-card disabled" data-script="Forma_GET_Project_Models" data-level="2" data-platform="forma">
+            <div class="ext-header"><div class="ext-title">Project Models</div><span class="ext-badge forma">L2</span></div>
+            <div class="ext-desc">BIM models in the selected ACC project.</div>
+            <div class="ext-footer"><span class="ext-output">→ forma_project_models.csv</span><button class="btn btn-sm btn-primary" onclick="runExtractor(this)">Run</button></div>
+        </div>
+        <div class="extractor-card disabled" data-script="Forma_GET_Projects_Users" data-level="2" data-platform="forma">
+            <div class="ext-header"><div class="ext-title">Project Users</div><span class="ext-badge forma">L2</span></div>
+            <div class="ext-desc">Users assigned to the selected ACC project with access levels.</div>
+            <div class="ext-footer"><span class="ext-output">→ forma_project_users.csv</span><button class="btn btn-sm btn-primary" onclick="runExtractor(this)">Run</button></div>
+        </div>
+    </div>
+
+    <div class="ext-level-header">
+        <span class="ext-level-badge l3">L3</span>
+        Model Level — requires active project + model selected below
+    </div>
+    <div class="ext-model-bar" id="forma-model-bar" style="display:none;">
+        <span class="ctx-bar-label">Active Model</span>
+        <div style="display:flex; align-items:center; gap:8px; flex:1;">
+            <select id="formaModelSelect" onchange="saveModelToConfig()" class="model-select">
+                <option value="">— fetch models first —</option>
+            </select>
+            <button class="btn btn-sm btn-secondary" onclick="fetchFormaModels(true)">
+                <svg id="fetchModelsIcon" xmlns="http://www.w3.org/2000/svg" width="11" height="11" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                </svg>
+                Fetch Models
+            </button>
+        </div>
+    </div>
+    <div class="ext-grid">
+        <div class="extractor-card disabled" data-script="Forma_GET_Model_Properties" data-level="3" data-platform="forma">
+            <div class="ext-header"><div class="ext-title">Model Properties</div><span class="ext-badge forma">L3</span></div>
+            <div class="ext-desc">Extracted model properties from the selected model. Large export — may take time.</div>
+            <div class="ext-footer"><span class="ext-output">→ forma_model_properties.csv</span><button class="btn btn-sm btn-primary" onclick="runExtractor(this)">Run</button></div>
+        </div>
+        <div class="extractor-card disabled" data-script="Proccesed_Model_Properties" data-level="3" data-platform="forma">
+            <div class="ext-header"><div class="ext-title">Model Health Report</div><span class="ext-badge forma">L3</span></div>
+            <div class="ext-desc">Physical elements, quality flags, worksets and model health summary. Requires Model Properties to be run first.</div>
+            <div class="ext-footer"><span class="ext-output">→ forma_model_report.csv</span><button class="btn btn-sm btn-primary" onclick="runExtractor(this)">Run</button></div>
+        </div>
+    </div>
+</div>
+
+<!-- ── Run Output Modal ───────────────────────────────────────── -->
+<div id="runModalOverlay" style="display:none; position:fixed; inset:0; background:rgba(15,27,45,0.55); z-index:200; align-items:center; justify-content:center;">
+    <div style="background:white; border-radius:var(--radius-lg); border:1px solid var(--border-cream); width:560px; max-width:95vw; box-shadow:var(--shadow-lg);">
+        <div style="display:flex; align-items:center; justify-content:space-between; padding:16px 20px; border-bottom:1px solid var(--border-cream);">
+            <span style="font-size:var(--fs-xs); font-weight:600; text-transform:uppercase; letter-spacing:1px; color:var(--navy);" id="runModalTitle">Running</span>
+            <div style="display:flex; align-items:center; gap:10px;">
+                <span id="runModalStatus" class="card-badge" style="display:none;"></span>
+                <button onclick="closeRunModal()" style="background:none; border:none; cursor:pointer; color:var(--text-dark-muted); font-size:18px; line-height:1; padding:0 4px;">&times;</button>
+            </div>
+        </div>
+        <div style="padding:20px;">
+            <div style="margin-bottom:16px;">
+                <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">
+                    <div id="runSpinner" style="width:14px; height:14px; border:2px solid var(--border-cream); border-top-color:var(--accent); border-radius:50%; animation:spin 0.7s linear infinite;"></div>
+                    <span id="runStatusText" style="font-size:var(--fs-sm); color:var(--text-dark-muted);">Starting...</span>
+                </div>
+                <div style="height:3px; background:var(--cream-dark); border-radius:2px; overflow:hidden;">
+                    <div id="runProgressBar" style="height:100%; width:0%; background:var(--accent); border-radius:2px; transition:width 0.4s ease;"></div>
+                </div>
+            </div>
+            <div style="background:var(--navy); border-radius:var(--radius); padding:12px 14px; font-family:var(--font); font-size:var(--fs-xs); color:#8899aa; min-height:120px; max-height:200px; overflow-y:auto;" id="runOutput">
+                <span style="opacity:0.4;">Waiting for output...</span>
+            </div>
+            <div id="runResult" style="display:none; margin-top:14px; padding:10px 14px; border-radius:var(--radius); font-size:var(--fs-sm);"></div>
+        </div>
+        <div style="padding:12px 20px; border-top:1px solid var(--border-cream); display:flex; justify-content:flex-end;">
+            <button onclick="closeRunModal()" class="btn btn-secondary btn-sm">Close</button>
+        </div>
+    </div>
+</div>
+
+<style>
+:root {
+    --revizto: #e05a5a;
+    --forma:   #2563a8;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.ext-tabs { display:flex; gap:4px; border-bottom:1px solid var(--border-cream); margin-bottom:24px; }
+.ext-tab { display:inline-flex; align-items:center; gap:7px; padding:9px 20px; font-family:var(--font); font-size:var(--fs-sm); font-weight:600; border:none; background:none; color:var(--text-dark-muted); cursor:pointer; border-bottom:2px solid transparent; margin-bottom:-1px; transition:all var(--transition); border-radius:var(--radius) var(--radius) 0 0; }
+.ext-tab:hover { color:var(--navy); background:var(--cream-mid); }
+.ext-tab.active { color:var(--navy); border-bottom-color:var(--navy); }
+.ext-level-header { display:flex; align-items:center; gap:10px; font-size:var(--fs-xs); text-transform:uppercase; letter-spacing:1px; color:var(--text-dark-muted); font-weight:600; margin:20px 0 10px; }
+.ext-level-badge { display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; border-radius:4px; font-size:var(--fs-xs); font-weight:700; flex-shrink:0; background:rgba(0,0,0,0.06); color:var(--text-dark-muted); }
+.ext-model-bar { background:white; border:1px solid var(--border-cream); border-radius:var(--radius-lg); padding:10px 16px; margin-bottom:12px; display:flex; align-items:center; gap:12px; }
+.ctx-bar-label { font-size:var(--fs-xs); text-transform:uppercase; letter-spacing:0.5px; color:var(--text-dark-muted); font-weight:600; white-space:nowrap; }
+.model-select { padding:5px 8px; border:1px solid var(--border-cream); border-radius:var(--radius); font-family:var(--font); font-size:var(--fs-xs); color:var(--text-dark); flex:1; min-width:200px; }
+.ext-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(260px, 1fr)); gap:12px; margin-bottom:4px; }
+.extractor-card { background:white; border-radius:var(--radius-lg); border:1px solid var(--border-cream); padding:14px 16px; box-shadow:var(--shadow); display:flex; flex-direction:column; gap:8px; transition:box-shadow var(--transition), opacity var(--transition); }
+.extractor-card:hover { box-shadow:var(--shadow-lg); }
+.extractor-card.disabled { opacity:0.4; pointer-events:none; }
+.ext-header { display:flex; align-items:flex-start; justify-content:space-between; gap:8px; }
+.ext-title { font-size:var(--fs-sm); font-weight:600; color:var(--navy); }
+.ext-desc { font-size:var(--fs-xs); color:var(--text-dark-muted); line-height:1.5; flex:1; }
+.ext-footer { display:flex; align-items:center; justify-content:space-between; margin-top:4px; }
+.ext-output { font-size:var(--fs-xs); color:var(--text-dark-muted); font-style:italic; }
+.ext-badge { font-size:var(--fs-xs); padding:2px 7px; border-radius:3px; font-weight:600; flex-shrink:0; }
+.ext-badge.revizto { background:rgba(224,90,90,0.1); color:var(--revizto); }
+.ext-badge.morta    { background:rgba(74,158,255,0.1); color:var(--accent); }
+.ext-badge.forma    { background:rgba(37,99,168,0.1); color:var(--forma); }
+</style>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+let isRunning = false;
+let activeCtx = {};
+
+function switchTab(name, btn) {
+    document.querySelectorAll('.tab-content').forEach(t => t.style.display = 'none');
+    document.querySelectorAll('.ext-tab').forEach(t => t.classList.remove('active'));
+    document.getElementById('tab-' + name).style.display = 'block';
+    btn.classList.add('active');
+}
+
+async function loadActiveContext() {
+    try {
+        const res = await fetch('/api/context');
+        activeCtx = await res.json();
+
+        // Revizto — L2 enabled when project active, L3 always starts disabled
+        const revName = activeCtx.revizto_project_name || '';
+        document.querySelectorAll('#tab-revizto .extractor-card[data-level="2"]').forEach(c => {
+            c.classList.toggle('disabled', !revName);
+        });
+        document.querySelectorAll('#tab-revizto .extractor-card[data-level="3"]').forEach(c => {
+            c.classList.add('disabled');
+        });
+        document.getElementById('revizto-model-bar').style.display = revName ? 'flex' : 'none';
+
+        // Forma — L2 enabled when project active, L3 starts disabled until model selected
+        const formaName = activeCtx.forma_project_name || '';
+        document.querySelectorAll('#tab-forma .extractor-card[data-level="2"]').forEach(c => {
+            c.classList.toggle('disabled', !formaName);
+        });
+        document.querySelectorAll('#tab-forma .extractor-card[data-level="3"]').forEach(c => {
+            c.classList.add('disabled');
+        });
+        document.getElementById('forma-model-bar').style.display = formaName ? 'flex' : 'none';
+        if (formaName) fetchFormaModels(false);
+
+    } catch(e) { console.error('Failed to load context', e); }
+}
+
+// ── Revizto model selector — populated from scenes_models.csv after L2 run ──
+function populateReviztoModels(models) {
+    const sel = document.getElementById('reviztoModelSelect');
+    sel.innerHTML = '<option value="">— select a model —</option>';
+    models.forEach(m => {
+        const opt = document.createElement('option');
+        opt.value       = JSON.stringify({ sceneId: m.sceneReviztoId, modelId: m.modelReviztoId });
+        opt.textContent = m.modelName;
+        sel.appendChild(opt);
+    });
+    document.getElementById('revizto-model-bar').style.display = 'flex';
+}
+
+function saveReviztoModel() {
+    const sel = document.getElementById('reviztoModelSelect');
+    const val = sel.value;
+    const hasModel = !!val;
+    document.querySelectorAll('#tab-revizto .extractor-card[data-level="3"]').forEach(c => {
+        c.classList.toggle('disabled', !hasModel);
+    });
+    // Store selected scene/model IDs in activeCtx for runExtractor to pass along
+    if (hasModel) {
+        try { activeCtx._revizto_model = JSON.parse(val); } catch {}
+    }
+}
+
+// ── Forma model fetch & select ────────────────────────────────────────────
+async function fetchFormaModels(force = false) {
+    const icon = document.getElementById('fetchModelsIcon');
+    icon.style.animation = 'spin 0.8s linear infinite';
+    const sel = document.getElementById('formaModelSelect');
+    sel.innerHTML = '<option value="">Fetching...</option>';
+    try {
+        const res  = await fetch('/api/forma/models', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ project_id: activeCtx.forma_project_id, force_refresh: force })
+        });
+        const data = await res.json();
+        if (data.error) { sel.innerHTML = `<option value="">${data.error}</option>`; return; }
+        sel.innerHTML = '<option value="">— select a model —</option>';
+        (data.models || []).forEach(m => {
+            const opt = document.createElement('option');
+            opt.value = m.id;
+            opt.textContent = m.name;
+            opt.dataset.name = m.name;
+            sel.appendChild(opt);
+        });
+        if (!data.models?.length) { sel.innerHTML = '<option value="">No models found</option>'; return; }
+        const cached = data.models.find(m => m.id === activeCtx.forma_model_item_id);
+        if (cached) sel.value = cached.id;
+        document.querySelectorAll('#tab-forma .extractor-card[data-level="3"]').forEach(c => {
+            c.classList.toggle('disabled', !sel.value);
+        });
+    } catch(e) {
+        sel.innerHTML = '<option value="">Failed to fetch</option>';
+        console.error(e);
+    } finally {
+        icon.style.animation = '';
+    }
+}
+
+async function saveModelToConfig() {
+    const sel  = document.getElementById('formaModelSelect');
+    const id   = sel.value;
+    const name = sel.options[sel.selectedIndex]?.dataset.name || '';
+    document.querySelectorAll('#tab-forma .extractor-card[data-level="3"]').forEach(c => {
+        c.classList.toggle('disabled', !id);
+    });
+    if (!id) return;
+    await fetch('/api/context/model', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project_id: activeCtx.forma_project_id, model_item_id: id, model_name: name })
+    });
+}
+
+// ── Run extractor ─────────────────────────────────────────────────────────
+async function runExtractor(btn) {
+    if (isRunning) return;
+    const card   = btn.closest('.extractor-card');
+    const script = card.dataset.script;
+    const title  = card.querySelector('.ext-title').textContent;
+    isRunning = true;
+    openRunModal(title);
+    try {
+        setProgress(20, 'Sending request...');
+        const res = await fetch('/api/extract', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                script,
+                project_uuid: activeCtx.revizto_project_uuid || activeCtx.forma_project_id || activeCtx.morta_hub_id || null,
+                project_name: activeCtx.revizto_project_name || activeCtx.forma_project_name || activeCtx.morta_hub_name || null,
+            })
+        });
+        setProgress(60, 'Script running...');
+        const data = await res.json();
+        setProgress(100, 'Done.');
+        showOutput((data.output || []).slice(0, 10), data.status === 'success');
+        showResult(data);
+        // After Scenes & Models run, try to load model list from the output CSV
+        if (script === 'Revizto_GET_Scenes_and_Models_with_Properties' && data.status === 'success') {
+            loadReviztoModelsFromExport();
+        }
+    } catch(e) {
+        setProgress(100, 'Request failed.');
+        showOutput([`Error: ${e.message}`], false);
+        showResult({ status: 'error', message: e.message });
+    } finally {
+        isRunning = false;
+        document.getElementById('runSpinner').style.display = 'none';
+    }
+}
+
+async function loadReviztoModelsFromExport() {
+    try {
+        const res  = await fetch('/api/exports/revizto_scenes_models.json');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (Array.isArray(data) && data.length) populateReviztoModels(data);
+    } catch(e) { console.warn('Could not load Revizto models from export', e); }
+}
+
+function openRunModal(title) {
+    document.getElementById('runModalTitle').textContent = title;
+    document.getElementById('runModalStatus').style.display = 'none';
+    document.getElementById('runOutput').innerHTML = '<span style="opacity:0.4;">Waiting for output...</span>';
+    document.getElementById('runResult').style.display = 'none';
+    document.getElementById('runProgressBar').style.width = '0%';
+    document.getElementById('runStatusText').textContent = 'Starting...';
+    document.getElementById('runSpinner').style.display = 'inline-block';
+    document.getElementById('runModalOverlay').style.display = 'flex';
+}
+
+function closeRunModal() {
+    if (isRunning) return;
+    document.getElementById('runModalOverlay').style.display = 'none';
+}
+
+function setProgress(pct, text) {
+    document.getElementById('runProgressBar').style.width = pct + '%';
+    document.getElementById('runStatusText').textContent = text;
+}
+
+function showOutput(lines, success) {
+    const out = document.getElementById('runOutput');
+    if (!lines.length) { out.innerHTML = '<span style="opacity:0.4;">No output returned.</span>'; return; }
+    out.innerHTML = lines.map(l => {
+        const color = l.toLowerCase().includes('error') ? '#f87171'
+                    : l.toLowerCase().includes('saved') ? '#34d399' : '#c8d8e8';
+        return `<div style="color:${color}; margin-bottom:3px;">${l.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>`;
+    }).join('');
+    if (lines.length === 10) out.innerHTML += `<div style="opacity:0.4; margin-top:6px;">… full output saved to exports/</div>`;
+}
+
+function showResult(data) {
+    const el    = document.getElementById('runResult');
+    const badge = document.getElementById('runModalStatus');
+    const ok    = data.status === 'success';
+    el.style.display    = 'block';
+    el.style.background = ok ? 'rgba(52,211,153,0.08)' : 'rgba(248,113,113,0.08)';
+    el.style.border     = ok ? '1px solid rgba(52,211,153,0.2)' : '1px solid rgba(248,113,113,0.2)';
+    el.style.color      = ok ? '#065f46' : '#991b1b';
+    el.textContent      = data.message || (ok ? 'Extraction complete.' : 'Extraction failed.');
+    badge.style.display = 'inline-block';
+    badge.className     = `card-badge ${ok ? 'success' : 'error'}`;
+    badge.textContent   = ok ? 'Success' : 'Failed';
+}
+
+document.getElementById('runModalOverlay').addEventListener('click', function(e) {
+    if (e.target === this && !isRunning) closeRunModal();
+});
+
+loadActiveContext();
+</script>
+{% endblock %}
