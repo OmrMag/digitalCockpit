@@ -10,5 +10,19 @@
     "morta_status": "error",
     "revizto_status": "skipped",
     "forma_status": "success"
+  },
+  {
+    "date": "2026-04-30 15:41:17",
+    "mode": "single",
+    "email": "omr.mag@gmail.com",
+    "first_name": "Majid Ali",
+    "last_name": "Mohammed",
+    "company": "Voltas Limited",
+    "department": "BIM",
+    "morta_status": "success",
+    "revizto_status": "skipped",
+    "forma_status": "success",
+    "revizto_project": "",
+    "forma_project": ""
   }
 ]

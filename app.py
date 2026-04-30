@@ -850,6 +850,239 @@ async def home(request: Request, user: str = Depends(require_user)):
         "current_user": user,
     })
 
+
+# ── Portal — public, no login required ───────────────────────────────────
+
+@app.get("/portal/platformAccess", response_class=HTMLResponse)
+async def portal_page(request: Request):
+    return templates.TemplateResponse(request=request, name="portal.html", context={})
+
+
+@app.post("/portal/platformAccess/submit")
+async def portal_submit(
+    request: Request,
+    submitter_name:  str = Form(""),
+    submitter_email: str = Form(""),
+    project_id:      str = Form(""),
+    project_name:    str = Form(""),
+    file: UploadFile = File(...),
+):
+    import pandas as pd
+
+    contents = await file.read()
+    try:
+        if file.filename.endswith(".csv"):
+            df = pd.read_csv(io.BytesIO(contents))
+        else:
+            df = pd.read_excel(io.BytesIO(contents), header=1)
+        df.columns = df.columns.str.strip()
+    except Exception as e:
+        return JSONResponse({"status": "error", "detail": str(e)}, status_code=400)
+
+    users = []
+    for _, row in df.iterrows():
+        email = str(row.get("Email", "")).strip()
+        if not email or email.lower() == "nan":
+            continue
+        def clean(val):
+            s = str(val).strip()
+            return "" if s == "nan" else s
+        users.append({
+            "email":               email,
+            "first_name":          clean(row.get("First Name", "")),
+            "last_name":           clean(row.get("Last  Name", row.get("Last Name", ""))),
+            "company":             clean(row.get("Company", "")),
+            "department":          clean(row.get("Department", "")),
+            "morta":               clean(row.get("Morta Access",   "")).upper() == "YES",
+            "revizto":             clean(row.get("Revizto Access", "")).upper() == "YES",
+            "forma":               clean(row.get("ACC Access",     "")).upper() == "YES",
+            "project_id":          project_id,
+            "project_name":        project_name,
+            "submitted_by_name":   submitter_name,
+            "submitted_by_email":  submitter_email,
+            "submitted_at":        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "status":              "pending",
+        })
+
+    if not users:
+        return JSONResponse({"status": "error", "detail": "No valid users found in file."}, status_code=400)
+
+    pending_file = BASE_DIR / "portal_requests.json"
+    existing = {}
+    if pending_file.exists():
+        with open(pending_file) as f:
+            loaded = json.load(f)
+        # Migrate old flat list format to new dict format
+        existing = loaded if isinstance(loaded, dict) else {}
+    # Group by project_id
+    key = project_id or "unassigned"
+    if key not in existing:
+        existing[key] = {
+            "project_id":   project_id,
+            "project_name": project_name,
+            "submissions":  []
+        }
+    existing[key]["submissions"].append({
+        "submitted_by_name":  submitter_name,
+        "submitted_by_email": submitter_email,
+        "submitted_at":       datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "users":              users,
+    })
+    with open(pending_file, "w") as f:
+        json.dump(existing, f, indent=2)
+
+    return JSONResponse({"status": "success", "total": len(users)})
+
+
+@app.get("/api/portal/link")
+async def api_portal_link(request: Request, user: str = Depends(require_user)):
+    """Generate a portal link for the active project."""
+    config       = load_config()
+    ctx          = config.get("active_context", {})
+    project_id   = ctx.get("forma_project_id") or ctx.get("morta_hub_id") or ctx.get("revizto_project_uuid") or ""
+    project_name = ctx.get("forma_project_name") or ctx.get("morta_hub_name") or ctx.get("revizto_project_name") or ""
+    base_url     = str(request.base_url).rstrip("/")
+    if not project_id:
+        return JSONResponse({"status": "error", "detail": "No active project selected in sidebar."})
+    from urllib.parse import quote
+    link = f"{base_url}/portal/platformAccess?pid={project_id}&project={quote(project_name)}"
+    return JSONResponse({"status": "ok", "link": link, "project_id": project_id, "project_name": project_name})
+
+
+# ── Pending submissions API ───────────────────────────────────────────────
+
+def _load_portal_requests() -> dict:
+    p = BASE_DIR / "portal_requests.json"
+    if not p.exists():
+        return {}
+    with open(p) as f:
+        return json.load(f)
+
+def _save_portal_requests(data: dict):
+    with open(BASE_DIR / "portal_requests.json", "w") as f:
+        json.dump(data, f, indent=2)
+
+
+@app.get("/api/pending")
+async def api_pending_list(user: str = Depends(require_user)):
+    """Return flat list of all submissions across all projects."""
+    data = _load_portal_requests()
+    submissions = []
+    for key, project in data.items():
+        for idx, sub in enumerate(project.get("submissions", [])):
+            users = sub.get("users", [])
+            pending_users = [u for u in users if u.get("status") == "pending"]
+            submissions.append({
+                "_key":           key,
+                "_idx":           idx,
+                "project_id":     project.get("project_id", key),
+                "project_name":   project.get("project_name", ""),
+                "submitter_name":  sub.get("submitted_by_name", ""),
+                "submitter_email": sub.get("submitted_by_email", ""),
+                "submitted_at":    sub.get("submitted_at", ""),
+                "total":           len(users),
+                "status":          "pending" if any(u.get("status","pending") == "pending" for u in users) else "processed",
+            })
+    # Sort by submitted_at descending
+    submissions.sort(key=lambda s: s.get("submitted_at",""), reverse=True)
+    return JSONResponse({"submissions": submissions})
+
+
+@app.get("/api/pending/{project_key}/{sub_idx}")
+async def api_pending_get(project_key: str, sub_idx: int, user: str = Depends(require_user)):
+    """Get a specific submission for review."""
+    data = _load_portal_requests()
+    project = data.get(project_key)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    subs = project.get("submissions", [])
+    if sub_idx >= len(subs):
+        raise HTTPException(status_code=404, detail="Submission not found")
+    sub = subs[sub_idx]
+    users = sub.get("users", [])
+    # Add approved flag for frontend (default True for pending users)
+    for u in users:
+        if "approved" not in u:
+            u["approved"] = u.get("status", "pending") == "pending"
+    return JSONResponse({
+        "project_id":      project.get("project_id", project_key),
+        "project_name":    project.get("project_name", ""),
+        "submitter_name":  sub.get("submitted_by_name", ""),
+        "submitter_email": sub.get("submitted_by_email", ""),
+        "submitted_at":    sub.get("submitted_at", ""),
+        "total":           len(users),
+        "users":           users,
+    })
+
+
+@app.post("/api/pending/{project_key}/{sub_idx}/process")
+async def api_pending_process(project_key: str, sub_idx: int, request: Request, user: str = Depends(require_user)):
+    """Process approved users from a submission — invite them to all requested platforms."""
+    body = await request.json()
+    users = body.get("users", [])
+
+    success = 0; errors = 0; rejected = 0
+    config = load_config()
+
+    for u in users:
+        if not u.get("approved", True):
+            rejected += 1
+            u["status"] = "rejected"
+            continue
+        try:
+            # Build invite payload matching existing /api/invite/single format
+            payload = {
+                "email":      u.get("email",""),
+                "first_name": u.get("first_name",""),
+                "last_name":  u.get("last_name",""),
+                "company":    u.get("company",""),
+                "department": u.get("department",""),
+                "morta":      u.get("morta", False),
+                "revizto":    u.get("revizto", False),
+                "forma":      u.get("forma", False),
+                "revizto_project_uuid": u.get("project_id",""),
+                "forma_project_id":     u.get("project_id",""),
+            }
+            import httpx
+            async with httpx.AsyncClient() as client:
+                res = await client.post(
+                    str(request.base_url).rstrip("/") + "/api/invite/single",
+                    json=payload,
+                    cookies={"session": request.cookies.get("session","")},
+                    timeout=60,
+                )
+            if res.status_code == 200:
+                u["status"] = "processed"; success += 1
+            else:
+                u["status"] = "error"; errors += 1
+        except Exception as e:
+            u["status"] = "error"; errors += 1
+
+    # Save updated statuses back to portal_requests.json
+    data = _load_portal_requests()
+    if project_key in data and sub_idx < len(data[project_key].get("submissions",[])):
+        data[project_key]["submissions"][sub_idx]["users"] = users
+    _save_portal_requests(data)
+
+    return JSONResponse({"success": success, "errors": errors, "rejected": rejected})
+
+
+@app.delete("/api/pending/{project_key}/{sub_idx}")
+async def api_pending_delete(project_key: str, sub_idx: int, user: str = Depends(require_user)):
+    """Delete a submission."""
+    data = _load_portal_requests()
+    if project_key in data:
+        subs = data[project_key].get("submissions", [])
+        if sub_idx < len(subs):
+            subs.pop(sub_idx)
+        if not subs:
+            del data[project_key]
+        else:
+            data[project_key]["submissions"] = subs
+    _save_portal_requests(data)
+    return JSONResponse({"status": "ok"})
+
+
 @app.get("/info", response_class=HTMLResponse)
 async def info_page(request: Request, user: str = Depends(require_user)):
     return templates.TemplateResponse(request=request, name="info.html", context={
@@ -1248,140 +1481,6 @@ async def api_user_search(email: str, user: str = Depends(require_user)):
         if r and r.get("name"): name = r["name"]; break
     return JSONResponse({"found": found, "name": name, "email": email,
                          "morta": morta_result, "revizto": revizto_result, "forma": forma_result})
-
-
-# Public portal — no login required
-@app.get("/portal/platformAccess", response_class=HTMLResponse)
-async def portal_page(request: Request):
-    return templates.TemplateResponse(request=request, name="portal.html", context={})
-
-# Portal submission endpoint — no login required
-@app.post("/portal/platformAccess/submit")
-async def portal_submit(
-    request: Request,
-    submitter_name: str = Form(""),
-    submitter_email: str = Form(""),
-    file: UploadFile = File(...)
-):
-    import pandas as pd
-    contents = await file.read()
-    try:
-        if file.filename.endswith(".csv"):
-            df = pd.read_csv(io.BytesIO(contents))
-        else:
-            df = pd.read_excel(io.BytesIO(contents), header=1)
-        df.columns = df.columns.str.strip()
-    except Exception as e:
-        return JSONResponse({"status": "error", "detail": str(e)}, status_code=400)
-
-    users = []
-    for _, row in df.iterrows():
-        email = str(row.get("Email", "")).strip()
-        if not email or email == "nan":
-            continue
-        fn = str(row.get("First Name", "")).strip()
-        ln = str(row.get("Last  Name", row.get("Last Name", ""))).strip()
-        co = str(row.get("Company", "")).strip()
-        dp = str(row.get("Department", "")).strip()
-        users.append({
-            "email":      email,
-            "first_name": "" if fn == "nan" else fn,
-            "last_name":  "" if ln == "nan" else ln,
-            "company":    "" if co == "nan" else co,
-            "department": "" if dp == "nan" else dp,
-            "morta":   str(row.get("Morta Access",   "")).strip().upper() == "YES",
-            "revizto": str(row.get("Revizto Access", "")).strip().upper() == "YES",
-            "forma":   str(row.get("ACC Access",     "")).strip().upper() == "YES",
-            "submitted_by_name":  submitter_name,
-            "submitted_by_email": submitter_email,
-            "submitted_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "status": "pending",
-        })
-
-    if not users:
-        return JSONResponse({"status": "error", "detail": "No valid users found in file."}, status_code=400)
-
-    # Save to a pending requests file
-    pending_file = BASE_DIR / "portal_requests.json"
-    existing = []
-    if pending_file.exists():
-        with open(pending_file) as f:
-            existing = json.load(f)
-    existing.extend(users)
-    with open(pending_file, "w") as f:
-        json.dump(existing, f, indent=2)
-
-    return JSONResponse({"status": "success", "total": len(users)})
-
-
-# ---------------------------------------------------------------------------
-# Public portal — no login required
-# ---------------------------------------------------------------------------
-
-@app.get("/portal/platformAccess", response_class=HTMLResponse)
-async def portal_page(request: Request):
-    return templates.TemplateResponse(request=request, name="portal.html", context={})
-
-# ---------------------------------------------------------------------------
-# Portal submission endpoint — no login required
-# ---------------------------------------------------------------------------
-
-@app.post("/portal/platformAccess/submit")
-async def portal_submit(
-    request: Request,
-    submitter_name: str = Form(""),
-    submitter_email: str = Form(""),
-    file: UploadFile = File(...)
-):
-    import pandas as pd
-    contents = await file.read()
-    try:
-        if file.filename.endswith(".csv"):
-            df = pd.read_csv(io.BytesIO(contents))
-        else:
-            df = pd.read_excel(io.BytesIO(contents), header=1)
-        df.columns = df.columns.str.strip()
-    except Exception as e:
-        return JSONResponse({"status": "error", "detail": str(e)}, status_code=400)
-
-    users = []
-    for _, row in df.iterrows():
-        email = str(row.get("Email", "")).strip()
-        if not email or email == "nan":
-            continue
-        fn = str(row.get("First Name", "")).strip()
-        ln = str(row.get("Last  Name", row.get("Last Name", ""))).strip()
-        co = str(row.get("Company", "")).strip()
-        dp = str(row.get("Department", "")).strip()
-        users.append({
-            "email":      email,
-            "first_name": "" if fn == "nan" else fn,
-            "last_name":  "" if ln == "nan" else ln,
-            "company":    "" if co == "nan" else co,
-            "department": "" if dp == "nan" else dp,
-            "morta":   str(row.get("Morta Access",   "")).strip().upper() == "YES",
-            "revizto": str(row.get("Revizto Access", "")).strip().upper() == "YES",
-            "forma":   str(row.get("ACC Access",     "")).strip().upper() == "YES",
-            "submitted_by_name":  submitter_name,
-            "submitted_by_email": submitter_email,
-            "submitted_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "status": "pending",
-        })
-
-    if not users:
-        return JSONResponse({"status": "error", "detail": "No valid users found in file."}, status_code=400)
-
-    # Save to a pending requests file
-    pending_file = BASE_DIR / "portal_requests.json"
-    existing = []
-    if pending_file.exists():
-        with open(pending_file) as f:
-            existing = json.load(f)
-    existing.extend(users)
-    with open(pending_file, "w") as f:
-        json.dump(existing, f, indent=2)
-
-    return JSONResponse({"status": "success", "total": len(users)})
 
 # ---------------------------------------------------------------------------
 # Run

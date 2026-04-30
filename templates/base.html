@@ -68,11 +68,18 @@
             <!-- ── Active Context ───────────────────────────────────── -->
             <div class="nav-section" style="margin-top:8px; display:flex; align-items:center; justify-content:space-between;">
                 <span>Active Context</span>
-                <button id="refreshProjectsBtn" onclick="fetchAllProjects()" title="Refresh projects from all platforms" style="background:none; border:none; cursor:pointer; color:var(--text-muted); padding:0; line-height:1; transition:color 0.2s;">
-                    <svg id="refreshIcon" xmlns="http://www.w3.org/2000/svg" width="11" height="11" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
-                    </svg>
-                </button>
+                <div style="display:flex; align-items:center; gap:6px;">
+                    <button id="copyLinkBtn" onclick="copyPortalLink()" title="Copy portal link for active project" style="background:none; border:none; cursor:pointer; color:var(--text-muted); padding:0; line-height:1; transition:color 0.2s;">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/>
+                        </svg>
+                    </button>
+                    <button id="refreshProjectsBtn" onclick="fetchAllProjects()" title="Refresh projects from all platforms" style="background:none; border:none; cursor:pointer; color:var(--text-muted); padding:0; line-height:1; transition:color 0.2s;">
+                        <svg id="refreshIcon" xmlns="http://www.w3.org/2000/svg" width="11" height="11" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                        </svg>
+                    </button>
+                </div>
             </div>
 
             <!-- Revizto -->
@@ -199,6 +206,24 @@
 
     <script src="/static/utils.js"></script>
     <script>
+    // ── Copy portal link for active project ──────────────────────
+    async function copyPortalLink() {
+        const btn = document.getElementById('copyLinkBtn');
+        try {
+            const res  = await fetch('/api/portal/link');
+            const data = await res.json();
+            if (data.status !== 'ok') {
+                alert(data.detail || 'No active project selected.');
+                return;
+            }
+            await navigator.clipboard.writeText(data.link);
+            btn.style.color = 'var(--success)';
+            setTimeout(() => { btn.style.color = ''; }, 2000);
+        } catch(e) {
+            console.error('Failed to copy portal link', e);
+        }
+    }
+
     // ── Instant nav ───────────────────────────────────────────────
     document.querySelectorAll('.sidebar-nav a').forEach(link => {
         link.addEventListener('click', function(e) {
