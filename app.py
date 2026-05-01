@@ -107,23 +107,29 @@ ACS_CONNECTION_STRING = os.environ.get("AZURE_COMMUNICATION_CONNECTION_STRING", 
 EMAIL_FROM            = os.environ.get("EMAIL_FROM", "DoNotReply@azurecomm.net")
 EMAIL_FROM_NAME       = "Digital Construction Cockpit"
 
+try:
+    from azure.communication.email import EmailClient as _ACSEmailClient
+    ACS_EMAIL_AVAILABLE = True
+except ImportError:
+    _ACSEmailClient     = None
+    ACS_EMAIL_AVAILABLE = False
+    print("[Email] azure-communication-email not installed — email disabled.")
+
 def send_email(to_emails: list, subject: str, html_body: str) -> bool:
     """Send email via Azure Communication Services. Returns True on success."""
     print(f"[Email] Attempting to send to {to_emails}, subject: {subject}")
-    print(f"[Email] ACS_CONNECTION_STRING set: {bool(ACS_CONNECTION_STRING)}")
-    print(f"[Email] EMAIL_FROM: {EMAIL_FROM}")
-    if not ACS_CONNECTION_STRING or not to_emails:
-        print("[Email] ACS connection string not configured or no recipients.")
+    print(f"[Email] ACS available: {ACS_EMAIL_AVAILABLE}, connection string set: {bool(ACS_CONNECTION_STRING)}, from: {EMAIL_FROM}")
+    if not ACS_EMAIL_AVAILABLE or not ACS_CONNECTION_STRING or not to_emails:
+        print("[Email] Not configured or unavailable — skipping.")
         return False
     try:
-        from azure.communication.email import EmailClient
-        client  = EmailClient.from_connection_string(ACS_CONNECTION_STRING)
+        client  = _ACSEmailClient.from_connection_string(ACS_CONNECTION_STRING)
         message = {
             "senderAddress": EMAIL_FROM,
             "recipients":    {"to": [{"address": e} for e in to_emails]},
             "content":       {"subject": subject, "html": html_body},
         }
-        print(f"[Email] Sending message: {message['senderAddress']} → {[r['address'] for r in message['recipients']['to']]}")
+        print(f"[Email] Sending: {EMAIL_FROM} → {[r['address'] for r in message['recipients']['to']]}")
         poller = client.begin_send(message)
         result = poller.result()
         print(f"[Email] Result: {result}")
