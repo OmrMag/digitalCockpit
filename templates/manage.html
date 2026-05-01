@@ -220,7 +220,7 @@
    PENDING SUBMISSIONS — expand-in-place
 ═══════════════════════════════════════════════════ */
 let _allSubs  = [];
-let _registry = {};
+let _subRegistry = {};
 let _subData  = {}; // loaded full sub data keyed by "key/idx"
 let _access   = {}; // per-user access keyed by "key/idx/uIdx"
 
@@ -228,13 +228,13 @@ async function loadPending() {
     try {
         const [sr, rr] = await Promise.all([fetch('/api/pending'), fetch('/api/registry')]);
         const sd = await sr.json();
-        _registry = rr.ok ? await rr.json() : {};
+        _subRegistry = rr.ok ? await rr.json() : {};
         _allSubs  = sd.submissions || [];
         renderPendingList();
         document.getElementById('pendingRefreshLabel').textContent =
             'Updated ' + new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
         const hasPending = _allSubs.some(s => s.status === 'pending');
-        document.getElementById('syncBtn').style.display = Object.keys(_registry).length ? 'inline-flex' : 'none';
+        document.getElementById('syncBtn').style.display = Object.keys(_subRegistry).length ? 'inline-flex' : 'none';
     } catch(e) { console.error('pending load', e); }
 }
 
@@ -316,7 +316,7 @@ async function togglePanel(key, idx, card, panelId) {
 function renderExpandPanel(key, idx, panel) {
     const cacheKey = `${key}/${idx}`;
     const sub      = _subData[cacheKey];
-    const reg      = _registry[key] || {};
+    const reg      = _subRegistry[key] || {};
     const plat     = reg.platforms  || {};
     const tags     = plat.morta?.tags      || [];
     const revRoles = plat.revizto?.roles   || [];
@@ -527,7 +527,7 @@ async function syncPendingProjects() {
     }
     // Reload registry + clear sub cache to get fresh dropdowns
     const rr = await fetch('/api/registry');
-    _registry = rr.ok ? await rr.json() : _registry;
+    _subRegistry = rr.ok ? await rr.json() : _subRegistry;
     Object.keys(_subData).forEach(k => delete _subData[k]);
     renderPendingList();
 
