@@ -1569,6 +1569,15 @@ async def api_pending_list(user: str = Depends(require_user)):
             continue
         for idx, sub in enumerate(project.get("submissions", [])):
             users = sub.get("users", [])
+            statuses = [u.get("status", "pending") for u in users]
+            if any(s == "pending" for s in statuses):
+                status = "pending"
+            elif all(s == "rejected" for s in statuses):
+                status = "rejected"
+            elif any(s == "error" for s in statuses):
+                status = "partial"
+            else:
+                status = "processed"
             submissions.append({
                 "_key":            key,
                 "_idx":            idx,
@@ -1578,7 +1587,7 @@ async def api_pending_list(user: str = Depends(require_user)):
                 "submitter_email": sub.get("submitted_by_email", ""),
                 "submitted_at":    sub.get("submitted_at", ""),
                 "total":           len(users),
-                "status":          "pending" if any(u.get("status","pending") == "pending" for u in users) else "processed",
+                "status":          status,
             })
     submissions.sort(key=lambda s: s.get("submitted_at",""), reverse=True)
     return JSONResponse({"submissions": submissions})

@@ -21,6 +21,8 @@
     .sm-status{font-size:var(--fs-xs);font-weight:500;padding:2px 7px;border-radius:3px;flex-shrink:0;}
     .sm-status.pending{background:rgba(251,191,36,0.1);color:var(--warning);}
     .sm-status.processed{background:rgba(52,211,153,0.1);color:var(--success);}
+    .sm-status.warning{background:rgba(248,113,113,0.1);color:var(--error);}
+    .sm-status.partial{background:rgba(251,191,36,0.1);color:var(--warning);}
     /* expand panel */
     .expand-panel{display:none;border:1px solid var(--accent);border-top:none;border-radius:0 0 var(--radius-lg) var(--radius-lg);background:white;margin-bottom:8px;overflow:hidden;}
     .expand-panel.open{display:block;}
@@ -233,7 +235,6 @@ async function loadPending() {
         renderPendingList();
         document.getElementById('pendingRefreshLabel').textContent =
             'Updated ' + new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
-        const hasPending = _allSubs.some(s => s.status === 'pending');
         document.getElementById('syncBtn').style.display = Object.keys(_subRegistry).length ? 'inline-flex' : 'none';
     } catch(e) { console.error('pending load', e); }
 }
@@ -244,22 +245,33 @@ function renderPendingList() {
     const badge = document.getElementById('pendingBadge');
     list.innerHTML = '';
 
-    const pc = _allSubs.filter(s => s.status === 'pending').length;
+    // Filter to active project if one is selected
+    const activeKey = activeCtx.active_project_key || '';
+    const subs = activeKey ? _allSubs.filter(s => s._key === activeKey) : _allSubs;
+
+    const pc = subs.filter(s => s.status === 'pending').length;
     badge.textContent = pc;
     badge.style.display = pc ? 'inline-block' : 'none';
 
-    if (!_allSubs.length) { empty.style.display = 'block'; return; }
+    if (!subs.length) {
+        empty.style.display = 'block';
+        empty.querySelector('h3').textContent = activeKey ? 'No submissions for this project' : 'No pending submissions';
+        empty.querySelector('p').textContent  = activeKey ? 'Portal submissions for this project appear here.' : 'Portal submissions appear here for review.';
+        return;
+    }
     empty.style.display = 'none';
 
-    _allSubs.forEach(s => {
-        const isPending = s.status === 'pending';
-        const cardId    = `card-${s._key}-${s._idx}`;
-        const panelId   = `panel-${s._key}-${s._idx}`;
+    // Status badge colours
+    const statusClass = { pending: 'pending', processed: 'processed', rejected: 'warning', partial: 'warning' };
 
-        // Card
+    subs.forEach(s => {
+        const isActionable = s.status === 'pending';
+        const cardId  = `card-${s._key}-${s._idx}`;
+        const panelId = `panel-${s._key}-${s._idx}`;
+
         const card = document.createElement('div');
         card.id        = cardId;
-        card.className = `submission-card ${s.status}`;
+        card.className = `submission-card ${isActionable ? '' : 'processed'}`;
         card.innerHTML = `
             <div style="flex:1;min-width:0;">
                 <div class="sub-name">${esc(s.submitter_name)}
@@ -271,13 +283,13 @@ function renderPendingList() {
                 <div class="sub-count">${s.total}</div>
                 <div class="sub-count-label">users</div>
             </div>
-            <span class="sm-status ${s.status}">${s.status}</span>
-            ${isPending ? '<svg style="width:12px;height:12px;color:var(--text-dark-muted);flex-shrink:0;" id="chevron-'+cardId+'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg>' : ''}`;
-        if (isPending) card.addEventListener('click', () => togglePanel(s._key, s._idx, card, panelId));
+            <span class="sm-status ${statusClass[s.status] || 'processed'}">${s.status}</span>
+            ${isActionable ? '<svg style="width:12px;height:12px;color:var(--text-dark-muted);flex-shrink:0;" id="chevron-'+cardId+'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg>' : ''}`;
+        if (isActionable) card.addEventListener('click', () => togglePanel(s._key, s._idx, card, panelId));
         list.appendChild(card);
 
-        // Expand panel (only for pending)
-        if (isPending) {
+        // Expand panel only for pending
+        if (isActionable) {
             const panel = document.createElement('div');
             panel.id        = panelId;
             panel.className = 'expand-panel';
@@ -570,6 +582,7 @@ window.addEventListener('cockpit:projectChanged', (e) => {
     projectData.revizto_project_uuid = e.detail.revizto_uuid || '';
     projectData.morta_hub_id         = e.detail.morta_hub_id || '';
     projectData.forma_project_id     = e.detail.forma_id     || '';
+    renderPendingList();  // re-filter pending to new active project
     loadInviteLog(e.detail.key || null);
 });
 
