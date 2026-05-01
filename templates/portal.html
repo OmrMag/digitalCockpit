@@ -549,9 +549,9 @@
 
   // ── Single user submit ───────────────────────────────────────────────────
   async function submitSingle() {
-    const submitterName  = document.getElementById('submitter_name').value.trim();
-    const submitterEmail = document.getElementById('submitter_email').value.trim();
-    const email          = document.getElementById('s_email').value.trim();
+    const email     = document.getElementById('s_email').value.trim();
+    const firstName = document.getElementById('s_first_name').value.trim();
+    const lastName  = document.getElementById('s_last_name').value.trim();
 
     if (!email) {
       document.getElementById('alertErrorSub').textContent = 'Email is required.';
@@ -566,13 +566,13 @@
     document.getElementById('submitSingleBtn').disabled = true;
 
     const payload = {
-      submitter_name:  submitterName,
-      submitter_email: submitterEmail,
+      submitter_name:  (firstName + ' ' + lastName).trim() || email,
+      submitter_email: email,
       project_id:      projectId,
       project_name:    projectName,
       email:           email,
-      first_name:      document.getElementById('s_first_name').value.trim(),
-      last_name:       document.getElementById('s_last_name').value.trim(),
+      first_name:      firstName,
+      last_name:       lastName,
       company:         document.getElementById('s_company').value.trim(),
       department:      document.getElementById('s_department').value.trim(),
       morta:           document.getElementById('s_morta').checked,
