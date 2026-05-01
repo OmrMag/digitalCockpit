@@ -101,6 +101,12 @@
   <a href="#s-auth">Auth</a>
   <a href="#s-webapp">Web App</a>
   <a href="#s-platforms">Platforms</a>
+  <a href="#s-hierarchy">Platform Hierarchy</a>
+  <a href="#s-revizto-auth">Revizto Auth</a>
+  <a href="#s-forma-auth">Forma OAuth</a>
+  <a href="#s-cred-tree">Credential Tree</a>
+  <a href="#s-frontend">Frontend Events</a>
+  <a href="#s-blob-schema">Blob Schema</a>
   <a href="#s-scripts">Scripts</a>
   <a href="#s-flows">Data Flows</a>
   <a href="#s-files">File Map</a>
@@ -855,6 +861,805 @@
 <span class="doc-note-label n">Deploy</span>
 <span><code>git add -A &amp;&amp; git commit -m "message" &amp;&amp; git archive --format=zip --output=deploy.zip HEAD &amp;&amp; az webapp deploy --resource-group digitalcockpit-rg --name digitalcockpit-alec --src-path deploy.zip --type zip</code></span>
 </div>
+
+</div>
+</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     12  PLATFORM HIERARCHY
+══════════════════════════════════════════════════════════════════ -->
+<div class="doc-section" id="s-hierarchy">
+<div class="doc-section-inner">
+<div class="doc-num">12<br>Hierarchy</div>
+<div class="doc-body">
+<h2>Platform Access Hierarchy</h2>
+<p>Each platform organises access in a hierarchy of levels. A user must have membership at the top level before they can be assigned to levels below it. The Cockpit manages membership at each level independently — the invite flow lets the admin choose which levels to provision in a single operation.</p>
+
+<div class="diagram-wrap">
+<svg viewBox="0 0 760 400" xmlns="http://www.w3.org/2000/svg" font-family="'JetBrains Mono',monospace">
+  <defs>
+    <marker id="hda" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L6,3 Z" fill="rgba(255,255,255,0.2)"/>
+    </marker>
+    <marker id="hdr" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L6,3 Z" fill="rgba(224,90,90,0.5)"/>
+    </marker>
+    <marker id="hdb" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L6,3 Z" fill="rgba(74,158,255,0.5)"/>
+    </marker>
+    <marker id="hdbl" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L6,3 Z" fill="rgba(100,150,220,0.5)"/>
+    </marker>
+  </defs>
+
+  <!-- Column headers -->
+  <text x="125" y="22" font-size="9" fill="#e05a5a" font-weight="700" text-anchor="middle" letter-spacing="1">REVIZTO</text>
+  <text x="385" y="22" font-size="9" fill="#4a9eff" font-weight="700" text-anchor="middle" letter-spacing="1">MORTA</text>
+  <text x="630" y="22" font-size="9" fill="#7aa7e0" font-weight="700" text-anchor="middle" letter-spacing="1">FORMA / ACC</text>
+  <line x1="20" y1="30" x2="245" y2="30" stroke="rgba(224,90,90,0.3)" stroke-width="1"/>
+  <line x1="265" y1="30" x2="510" y2="30" stroke="rgba(74,158,255,0.3)" stroke-width="1"/>
+  <line x1="520" y1="30" x2="750" y2="30" stroke="rgba(100,150,220,0.3)" stroke-width="1"/>
+
+  <!-- ─── REVIZTO COLUMN ─── -->
+  <!-- License Level -->
+  <rect x="30" y="45" width="190" height="64" rx="6" fill="rgba(224,90,90,0.12)" stroke="rgba(224,90,90,0.4)" stroke-width="1.5"/>
+  <text x="125" y="64" font-size="9" fill="#e05a5a" font-weight="700" text-anchor="middle">License Level</text>
+  <text x="125" y="77" font-size="8" fill="rgba(232,237,242,0.5)" text-anchor="middle">Guest / Collaborator /</text>
+  <text x="125" y="88" font-size="8" fill="rgba(232,237,242,0.5)" text-anchor="middle">Content Creator</text>
+  <text x="125" y="101" font-size="7.5" fill="rgba(232,237,242,0.3)" text-anchor="middle">POST /license/{uuid}/member/invite</text>
+
+  <line x1="125" y1="109" x2="125" y2="140" stroke="rgba(224,90,90,0.3)" stroke-width="1" marker-end="url(#hdr)"/>
+  <text x="140" y="128" font-size="7.5" fill="rgba(224,90,90,0.4)">prerequisite</text>
+
+  <!-- Project Level -->
+  <rect x="30" y="142" width="190" height="64" rx="6" fill="rgba(224,90,90,0.08)" stroke="rgba(224,90,90,0.25)" stroke-width="1.5"/>
+  <text x="125" y="161" font-size="9" fill="#e05a5a" font-weight="700" text-anchor="middle">Project Level</text>
+  <text x="125" y="174" font-size="8" fill="rgba(232,237,242,0.5)" text-anchor="middle">Custom project roles</text>
+  <text x="125" y="185" font-size="8" fill="rgba(232,237,242,0.5)" text-anchor="middle">synced from registry</text>
+  <text x="125" y="198" font-size="7.5" fill="rgba(232,237,242,0.3)" text-anchor="middle">POST /project/{uuid}/role/member/invite</text>
+
+  <line x1="125" y1="206" x2="125" y2="237" stroke="rgba(224,90,90,0.3)" stroke-width="1" marker-end="url(#hdr)"/>
+  <text x="140" y="225" font-size="7.5" fill="rgba(224,90,90,0.4)">prerequisite</text>
+
+  <!-- Clash / Scene Level -->
+  <rect x="30" y="239" width="190" height="64" rx="6" fill="rgba(224,90,90,0.05)" stroke="rgba(224,90,90,0.15)" stroke-width="1"/>
+  <text x="125" y="258" font-size="9" fill="rgba(224,90,90,0.7)" font-weight="700" text-anchor="middle">Data Level</text>
+  <text x="125" y="271" font-size="8" fill="rgba(232,237,242,0.4)" text-anchor="middle">Clash tests · scenes</text>
+  <text x="125" y="282" font-size="8" fill="rgba(232,237,242,0.4)" text-anchor="middle">model objects</text>
+  <text x="125" y="295" font-size="7.5" fill="rgba(232,237,242,0.25)" text-anchor="middle">read-only extraction only</text>
+
+  <!-- Cockpit manages -->
+  <rect x="30" y="330" width="190" height="48" rx="5" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+  <text x="125" y="348" font-size="8" fill="rgba(232,237,242,0.5)" font-weight="700" text-anchor="middle">Cockpit manages</text>
+  <text x="125" y="360" font-size="7.5" fill="rgba(224,90,90,0.6)" text-anchor="middle">License invite toggle</text>
+  <text x="125" y="371" font-size="7.5" fill="rgba(224,90,90,0.45)" text-anchor="middle">Project role toggle — both in one call</text>
+
+  <!-- ─── MORTA COLUMN ─── -->
+  <!-- Hub Level -->
+  <rect x="285" y="45" width="200" height="64" rx="6" fill="rgba(74,158,255,0.12)" stroke="rgba(74,158,255,0.4)" stroke-width="1.5"/>
+  <text x="385" y="64" font-size="9" fill="#4a9eff" font-weight="700" text-anchor="middle">Hub Level</text>
+  <text x="385" y="77" font-size="8" fill="rgba(232,237,242,0.5)" text-anchor="middle">Hub member · permission tag</text>
+  <text x="385" y="88" font-size="8" fill="rgba(232,237,242,0.5)" text-anchor="middle">assigned at invite time</text>
+  <text x="385" y="101" font-size="7.5" fill="rgba(232,237,242,0.3)" text-anchor="middle">POST /hub/{hub_id}/member/invite</text>
+
+  <line x1="385" y1="109" x2="385" y2="140" stroke="rgba(74,158,255,0.3)" stroke-width="1" marker-end="url(#hdb)"/>
+  <text x="400" y="128" font-size="7.5" fill="rgba(74,158,255,0.4)">grants access to</text>
+
+  <!-- Table Level -->
+  <rect x="285" y="142" width="200" height="64" rx="6" fill="rgba(74,158,255,0.08)" stroke="rgba(74,158,255,0.25)" stroke-width="1.5"/>
+  <text x="385" y="161" font-size="9" fill="#4a9eff" font-weight="700" text-anchor="middle">Table / Sheet Level</text>
+  <text x="385" y="174" font-size="8" fill="rgba(232,237,242,0.5)" text-anchor="middle">Access determined by</text>
+  <text x="385" y="185" font-size="8" fill="rgba(232,237,242,0.5)" text-anchor="middle">permission tag assigned at hub</text>
+  <text x="385" y="198" font-size="7.5" fill="rgba(232,237,242,0.3)" text-anchor="middle">tag_reference_id controls visibility</text>
+
+  <line x1="385" y1="206" x2="385" y2="237" stroke="rgba(74,158,255,0.3)" stroke-width="1" marker-end="url(#hdb)"/>
+
+  <!-- Row Level -->
+  <rect x="285" y="239" width="200" height="64" rx="6" fill="rgba(74,158,255,0.05)" stroke="rgba(74,158,255,0.15)" stroke-width="1"/>
+  <text x="385" y="258" font-size="9" fill="rgba(74,158,255,0.7)" font-weight="700" text-anchor="middle">Row / Record Level</text>
+  <text x="385" y="271" font-size="8" fill="rgba(232,237,242,0.4)" text-anchor="middle">Inherited from table permissions</text>
+  <text x="385" y="282" font-size="8" fill="rgba(232,237,242,0.4)" text-anchor="middle">managed inside Morta</text>
+  <text x="385" y="295" font-size="7.5" fill="rgba(232,237,242,0.25)" text-anchor="middle">not managed by Cockpit</text>
+
+  <!-- Cockpit manages -->
+  <rect x="285" y="330" width="200" height="48" rx="5" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+  <text x="385" y="348" font-size="8" fill="rgba(232,237,242,0.5)" font-weight="700" text-anchor="middle">Cockpit manages</text>
+  <text x="385" y="360" font-size="7.5" fill="rgba(74,158,255,0.6)" text-anchor="middle">Hub invite + tag assignment</text>
+  <text x="385" y="371" font-size="7.5" fill="rgba(74,158,255,0.45)" text-anchor="middle">Tag options from registry sync</text>
+
+  <!-- ─── FORMA COLUMN ─── -->
+  <!-- Account Level -->
+  <rect x="530" y="45" width="200" height="64" rx="6" fill="rgba(100,150,220,0.12)" stroke="rgba(100,150,220,0.4)" stroke-width="1.5"/>
+  <text x="630" y="64" font-size="9" fill="#7aa7e0" font-weight="700" text-anchor="middle">Account / Hub Level</text>
+  <text x="630" y="77" font-size="8" fill="rgba(232,237,242,0.5)" text-anchor="middle">Hub member · company · role</text>
+  <text x="630" y="88" font-size="8" fill="rgba(232,237,242,0.5)" text-anchor="middle">2-legged OAuth required</text>
+  <text x="630" y="101" font-size="7.5" fill="rgba(232,237,242,0.3)" text-anchor="middle">POST /hq/v1/accounts/{id}/users/import</text>
+
+  <line x1="630" y1="109" x2="630" y2="140" stroke="rgba(100,150,220,0.3)" stroke-width="1" marker-end="url(#hdbl)"/>
+  <text x="645" y="128" font-size="7.5" fill="rgba(100,150,220,0.4)">prerequisite</text>
+
+  <!-- Project Level -->
+  <rect x="530" y="142" width="200" height="64" rx="6" fill="rgba(100,150,220,0.08)" stroke="rgba(100,150,220,0.25)" stroke-width="1.5"/>
+  <text x="630" y="161" font-size="9" fill="#7aa7e0" font-weight="700" text-anchor="middle">Project Level</text>
+  <text x="630" y="174" font-size="8" fill="rgba(232,237,242,0.5)" text-anchor="middle">Project role · product access</text>
+  <text x="630" y="185" font-size="8" fill="rgba(232,237,242,0.5)" text-anchor="middle">Docs / Design / Model</text>
+  <text x="630" y="198" font-size="7.5" fill="rgba(232,237,242,0.3)" text-anchor="middle">POST /construction/admin/v1/projects/{id}/users</text>
+
+  <line x1="630" y1="206" x2="630" y2="237" stroke="rgba(100,150,220,0.3)" stroke-width="1" marker-end="url(#hdbl)"/>
+  <text x="645" y="225" font-size="7.5" fill="rgba(100,150,220,0.4)">grants access to</text>
+
+  <!-- Model Level -->
+  <rect x="530" y="239" width="200" height="64" rx="6" fill="rgba(100,150,220,0.05)" stroke="rgba(100,150,220,0.15)" stroke-width="1"/>
+  <text x="630" y="258" font-size="9" fill="rgba(100,150,220,0.7)" font-weight="700" text-anchor="middle">Model Level</text>
+  <text x="630" y="271" font-size="8" fill="rgba(232,237,242,0.4)" text-anchor="middle">Model files · element properties</text>
+  <text x="630" y="282" font-size="8" fill="rgba(232,237,242,0.4)" text-anchor="middle">3-legged OAuth required</text>
+  <text x="630" y="295" font-size="7.5" fill="rgba(232,237,242,0.25)" text-anchor="middle">extraction only via Forma_GET_Model_Properties</text>
+
+  <!-- Cockpit manages -->
+  <rect x="530" y="330" width="200" height="48" rx="5" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+  <text x="630" y="348" font-size="8" fill="rgba(232,237,242,0.5)" font-weight="700" text-anchor="middle">Cockpit manages</text>
+  <text x="630" y="360" font-size="7.5" fill="rgba(100,150,220,0.6)" text-anchor="middle">Account invite + project role + products</text>
+  <text x="630" y="371" font-size="7.5" fill="rgba(100,150,220,0.45)" text-anchor="middle">Companies/roles from registry sync</text>
+</svg>
+</div>
+
+<p>The dependency is strict — access at a lower level requires membership at the level above it. For Revizto, a user must be on the license before they can be assigned a project role. For Forma, a user must be an account/hub member before they can be given project-level product access. The Cockpit handles all levels in a single invite operation via sequential API calls.</p>
+
+</div>
+</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     13  REVIZTO AUTH FLOW
+══════════════════════════════════════════════════════════════════ -->
+<div class="doc-section" id="s-revizto-auth">
+<div class="doc-section-inner">
+<div class="doc-num">13<br>Revizto Auth</div>
+<div class="doc-body">
+<h2>Revizto Authentication Flow</h2>
+<p>Revizto uses an access code exchange model. Each admin generates their access code from <code>ws.revizto.com</code> and saves it in Settings. The Cockpit exchanges it for a bearer token and caches the result in blob storage, namespaced per admin and per region. Token refresh is handled automatically on expiry.</p>
+
+<div class="diagram-wrap">
+<svg viewBox="0 0 760 460" xmlns="http://www.w3.org/2000/svg" font-family="'JetBrains Mono',monospace">
+  <defs>
+    <marker id="ra" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L6,3 Z" fill="rgba(224,90,90,0.6)"/>
+    </marker>
+    <marker id="rw" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L6,3 Z" fill="rgba(52,211,153,0.5)"/>
+    </marker>
+    <marker id="rg" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L6,3 Z" fill="rgba(255,255,255,0.2)"/>
+    </marker>
+  </defs>
+
+  <!-- Actors -->
+  <!-- Admin -->
+  <rect x="20" y="20" width="110" height="36" rx="5" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.12)" stroke-width="1"/>
+  <text x="75" y="34" font-size="8.5" fill="rgba(232,237,242,0.7)" font-weight="700" text-anchor="middle">Admin (Settings)</text>
+  <text x="75" y="47" font-size="7.5" fill="rgba(232,237,242,0.3)" text-anchor="middle">saves access code</text>
+  <line x1="75" y1="56" x2="75" y2="440" stroke="rgba(255,255,255,0.06)" stroke-width="1" stroke-dasharray="2,4"/>
+
+  <!-- app.py -->
+  <rect x="190" y="20" width="110" height="36" rx="5" fill="rgba(74,158,255,0.1)" stroke="rgba(74,158,255,0.3)" stroke-width="1"/>
+  <text x="245" y="34" font-size="8.5" fill="#4a9eff" font-weight="700" text-anchor="middle">app.py</text>
+  <text x="245" y="47" font-size="7.5" fill="rgba(232,237,242,0.3)" text-anchor="middle">Cockpit server</text>
+  <line x1="245" y1="56" x2="245" y2="440" stroke="rgba(255,255,255,0.06)" stroke-width="1" stroke-dasharray="2,4"/>
+
+  <!-- Blob -->
+  <rect x="370" y="20" width="110" height="36" rx="5" fill="rgba(52,211,153,0.1)" stroke="rgba(52,211,153,0.3)" stroke-width="1"/>
+  <text x="425" y="34" font-size="8.5" fill="#34d399" font-weight="700" text-anchor="middle">Blob Storage</text>
+  <text x="425" y="47" font-size="7.5" fill="rgba(232,237,242,0.3)" text-anchor="middle">token cache</text>
+  <line x1="425" y1="56" x2="425" y2="440" stroke="rgba(255,255,255,0.06)" stroke-width="1" stroke-dasharray="2,4"/>
+
+  <!-- Revizto API -->
+  <rect x="560" y="20" width="160" height="36" rx="5" fill="rgba(224,90,90,0.1)" stroke="rgba(224,90,90,0.3)" stroke-width="1"/>
+  <text x="640" y="34" font-size="8.5" fill="#e05a5a" font-weight="700" text-anchor="middle">Revizto API</text>
+  <text x="640" y="47" font-size="7.5" fill="rgba(232,237,242,0.3)" text-anchor="middle">api.{region}.revizto.com/v5</text>
+  <line x1="640" y1="56" x2="640" y2="440" stroke="rgba(255,255,255,0.06)" stroke-width="1" stroke-dasharray="2,4"/>
+
+  <!-- Step labels on left -->
+  <text x="10" y="85" font-size="7" fill="rgba(232,237,242,0.2)" text-anchor="middle" transform="rotate(-90,10,85)"></text>
+
+  <!-- ── PHASE 1: First use / exchange ── -->
+  <rect x="8" y="68" width="740" height="14" rx="3" fill="rgba(255,255,255,0.02)"/>
+  <text x="378" y="78" font-size="7.5" fill="rgba(255,255,255,0.2)" text-anchor="middle" font-weight="700" letter-spacing="1">INITIAL EXCHANGE</text>
+
+  <!-- 1. Check blob for existing token -->
+  <line x1="245" y1="90" x2="427" y2="90" stroke="rgba(52,211,153,0.4)" stroke-width="1" marker-end="url(#rw)"/>
+  <text x="336" y="86" font-size="7.5" fill="rgba(52,211,153,0.5)" text-anchor="middle">check for cached token</text>
+
+  <!-- 2. No token found -->
+  <line x1="423" y1="103" x2="247" y2="103" stroke="rgba(255,255,255,0.15)" stroke-width="1" marker-end="url(#rg)"/>
+  <text x="335" y="99" font-size="7.5" fill="rgba(255,255,255,0.2)" text-anchor="middle">token absent / expired</text>
+
+  <!-- 3. Read access code from config -->
+  <line x1="77" y1="118" x2="243" y2="118" stroke="rgba(255,255,255,0.15)" stroke-width="1" marker-end="url(#rg)"/>
+  <text x="160" y="114" font-size="7.5" fill="rgba(255,255,255,0.2)" text-anchor="middle">read access_code from config</text>
+
+  <!-- 4. POST to /oauth/access-code/token -->
+  <line x1="247" y1="133" x2="638" y2="133" stroke="rgba(224,90,90,0.5)" stroke-width="1.5" marker-end="url(#ra)"/>
+  <text x="442" y="129" font-size="7.5" fill="rgba(224,90,90,0.6)" text-anchor="middle">POST /oauth/access-code/token</text>
+
+  <!-- 5. Returns access_token + refresh_token -->
+  <line x1="636" y1="148" x2="249" y2="148" stroke="rgba(224,90,90,0.3)" stroke-width="1" marker-end="url(#rg)"/>
+  <text x="442" y="144" font-size="7.5" fill="rgba(224,90,90,0.4)" text-anchor="middle">access_token + refresh_token + expires_in</text>
+
+  <!-- 6. Resolve license -->
+  <line x1="247" y1="163" x2="638" y2="163" stroke="rgba(224,90,90,0.4)" stroke-width="1" marker-end="url(#ra)"/>
+  <text x="442" y="159" font-size="7.5" fill="rgba(224,90,90,0.5)" text-anchor="middle">GET /user/licenses  →  resolve license_uuid</text>
+
+  <line x1="636" y1="178" x2="249" y2="178" stroke="rgba(224,90,90,0.25)" stroke-width="1" marker-end="url(#rg)"/>
+  <text x="442" y="174" font-size="7.5" fill="rgba(224,90,90,0.35)" text-anchor="middle">license_uuid  ·  auth_method</text>
+
+  <!-- 7. Write token to blob -->
+  <line x1="247" y1="193" x2="423" y2="193" stroke="rgba(52,211,153,0.5)" stroke-width="1.5" marker-end="url(#rw)"/>
+  <text x="335" y="189" font-size="7.5" fill="rgba(52,211,153,0.55)" text-anchor="middle">write revizto_tokens_{region}_{email}.json</text>
+
+  <!-- ── PHASE 2: Cached use ── -->
+  <rect x="8" y="210" width="740" height="14" rx="3" fill="rgba(255,255,255,0.02)"/>
+  <text x="378" y="220" font-size="7.5" fill="rgba(255,255,255,0.2)" text-anchor="middle" font-weight="700" letter-spacing="1">SUBSEQUENT REQUESTS (TOKEN VALID)</text>
+
+  <!-- Check blob — token found -->
+  <line x1="245" y1="232" x2="427" y2="232" stroke="rgba(52,211,153,0.4)" stroke-width="1" marker-end="url(#rw)"/>
+  <text x="336" y="228" font-size="7.5" fill="rgba(52,211,153,0.5)" text-anchor="middle">check for cached token</text>
+  <line x1="423" y1="245" x2="247" y2="245" stroke="rgba(52,211,153,0.35)" stroke-width="1" marker-end="url(#rg)"/>
+  <text x="335" y="241" font-size="7.5" fill="rgba(52,211,153,0.45)" text-anchor="middle">token valid — return access_token</text>
+
+  <!-- Use token for API call -->
+  <line x1="247" y1="260" x2="638" y2="260" stroke="rgba(224,90,90,0.5)" stroke-width="1.5" marker-end="url(#ra)"/>
+  <text x="442" y="256" font-size="7.5" fill="rgba(224,90,90,0.6)" text-anchor="middle">Bearer {access_token}  →  any API call</text>
+  <line x1="636" y1="275" x2="249" y2="275" stroke="rgba(224,90,90,0.25)" stroke-width="1" marker-end="url(#rg)"/>
+  <text x="442" y="271" font-size="7.5" fill="rgba(224,90,90,0.35)" text-anchor="middle">200 response data</text>
+
+  <!-- ── PHASE 3: Token refresh ── -->
+  <rect x="8" y="292" width="740" height="14" rx="3" fill="rgba(255,255,255,0.02)"/>
+  <text x="378" y="302" font-size="7.5" fill="rgba(255,255,255,0.2)" text-anchor="middle" font-weight="700" letter-spacing="1">TOKEN EXPIRED — AUTO REFRESH</text>
+
+  <!-- API returns 401 -->
+  <line x1="247" y1="315" x2="638" y2="315" stroke="rgba(224,90,90,0.4)" stroke-width="1" marker-end="url(#ra)"/>
+  <text x="442" y="311" font-size="7.5" fill="rgba(224,90,90,0.5)" text-anchor="middle">Bearer {expired_token}  →  API call</text>
+  <line x1="636" y1="328" x2="249" y2="328" stroke="rgba(248,113,113,0.4)" stroke-width="1" marker-end="url(#rg)"/>
+  <text x="442" y="324" font-size="7.5" fill="rgba(248,113,113,0.5)" text-anchor="middle">401 Unauthorized</text>
+
+  <!-- Refresh token exchange -->
+  <line x1="247" y1="343" x2="638" y2="343" stroke="rgba(224,90,90,0.5)" stroke-width="1.5" marker-end="url(#ra)"/>
+  <text x="442" y="339" font-size="7.5" fill="rgba(224,90,90,0.6)" text-anchor="middle">POST /oauth/token  {grant_type: refresh_token}</text>
+  <line x1="636" y1="358" x2="249" y2="358" stroke="rgba(224,90,90,0.3)" stroke-width="1" marker-end="url(#rg)"/>
+  <text x="442" y="354" font-size="7.5" fill="rgba(224,90,90,0.4)" text-anchor="middle">new access_token + refresh_token</text>
+
+  <!-- Write refreshed token -->
+  <line x1="247" y1="373" x2="423" y2="373" stroke="rgba(52,211,153,0.5)" stroke-width="1.5" marker-end="url(#rw)"/>
+  <text x="335" y="369" font-size="7.5" fill="rgba(52,211,153,0.55)" text-anchor="middle">update blob — new tokens written</text>
+
+  <!-- Retry original call -->
+  <line x1="247" y1="388" x2="638" y2="388" stroke="rgba(224,90,90,0.5)" stroke-width="1.5" marker-end="url(#ra)"/>
+  <text x="442" y="384" font-size="7.5" fill="rgba(224,90,90,0.6)" text-anchor="middle">retry original API call with new token</text>
+  <line x1="636" y1="403" x2="249" y2="403" stroke="rgba(52,211,153,0.4)" stroke-width="1" marker-end="url(#rg)"/>
+  <text x="442" y="399" font-size="7.5" fill="rgba(52,211,153,0.5)" text-anchor="middle">200 — response returned to caller</text>
+
+  <!-- Blob namespacing note -->
+  <rect x="350" y="420" width="230" height="28" rx="4" fill="rgba(52,211,153,0.07)" stroke="rgba(52,211,153,0.2)" stroke-width="1"/>
+  <text x="465" y="433" font-size="7.5" fill="rgba(52,211,153,0.6)" text-anchor="middle" font-weight="700">Token cache key:</text>
+  <text x="465" y="443" font-size="7.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">revizto_tokens_{region}_{safe_email}.json</text>
+</svg>
+</div>
+
+<p>Token files are stored per-admin per-region in blob. The key function <code>revizto_get_token_for_region()</code> in <code>app.py</code> handles the full lifecycle — cache check, exchange, refresh, and retry — transparently to the rest of the codebase. Scripts access their token via <code>Revizto_MasterScript.py</code> which reads the same blob key using <code>COCKPIT_USER</code> to namespace correctly.</p>
+
+</div>
+</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     14  FORMA OAUTH — 2L vs 3L
+══════════════════════════════════════════════════════════════════ -->
+<div class="doc-section" id="s-forma-auth">
+<div class="doc-section-inner">
+<div class="doc-num">14<br>Forma OAuth</div>
+<div class="doc-body">
+<h2>Forma / ACC — Two-Legged vs Three-Legged OAuth</h2>
+<p>Autodesk Platform Services uses two distinct OAuth 2.0 flows depending on the operation. Two-legged (machine-to-machine) is used for all account and project administration — it does not require a user to be present. Three-legged (user-delegated) is used for operations that require a specific user's identity, such as reading model files and element properties from BIM 360/ACC.</p>
+
+<div class="diagram-wrap">
+<svg viewBox="0 0 760 500" xmlns="http://www.w3.org/2000/svg" font-family="'JetBrains Mono',monospace">
+  <defs>
+    <marker id="fla" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L6,3 Z" fill="rgba(100,150,220,0.6)"/>
+    </marker>
+    <marker id="flg" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L6,3 Z" fill="rgba(52,211,153,0.5)"/>
+    </marker>
+    <marker id="flw" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L6,3 Z" fill="rgba(255,255,255,0.2)"/>
+    </marker>
+  </defs>
+
+  <!-- Section headers -->
+  <rect x="8" y="8" width="365" height="18" rx="3" fill="rgba(100,150,220,0.08)"/>
+  <text x="190" y="20" font-size="8" fill="rgba(100,150,220,0.7)" font-weight="700" text-anchor="middle" letter-spacing="1">2-LEGGED (MACHINE TO MACHINE)  —  client_credentials</text>
+  <rect x="383" y="8" width="370" height="18" rx="3" fill="rgba(251,191,36,0.06)"/>
+  <text x="568" y="20" font-size="8" fill="rgba(251,191,36,0.6)" font-weight="700" text-anchor="middle" letter-spacing="1">3-LEGGED (USER DELEGATED)  —  authorization_code</text>
+
+  <!-- 2L actors -->
+  <rect x="20" y="36" width="90" height="32" rx="4" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>
+  <text x="65" y="50" font-size="8" fill="rgba(232,237,242,0.6)" font-weight="700" text-anchor="middle">app.py</text>
+  <text x="65" y="61" font-size="7" fill="rgba(232,237,242,0.3)" text-anchor="middle">Cockpit server</text>
+  <line x1="65" y1="68" x2="65" y2="390" stroke="rgba(255,255,255,0.05)" stroke-width="1" stroke-dasharray="2,4"/>
+
+  <rect x="130" y="36" width="90" height="32" rx="4" fill="rgba(52,211,153,0.08)" stroke="rgba(52,211,153,0.25)" stroke-width="1"/>
+  <text x="175" y="50" font-size="8" fill="#34d399" font-weight="700" text-anchor="middle">Blob</text>
+  <text x="175" y="61" font-size="7" fill="rgba(232,237,242,0.3)" text-anchor="middle">forma_tokens.json</text>
+  <line x1="175" y1="68" x2="175" y2="390" stroke="rgba(255,255,255,0.05)" stroke-width="1" stroke-dasharray="2,4"/>
+
+  <rect x="248" y="36" width="112" height="32" rx="4" fill="rgba(100,150,220,0.1)" stroke="rgba(100,150,220,0.3)" stroke-width="1"/>
+  <text x="304" y="50" font-size="8" fill="#7aa7e0" font-weight="700" text-anchor="middle">Autodesk APS</text>
+  <text x="304" y="61" font-size="7" fill="rgba(232,237,242,0.3)" text-anchor="middle">developer.api.autodesk.com</text>
+  <line x1="304" y1="68" x2="304" y2="390" stroke="rgba(255,255,255,0.05)" stroke-width="1" stroke-dasharray="2,4"/>
+
+  <!-- 2L flow -->
+  <text x="13" y="88" font-size="7.5" fill="rgba(255,255,255,0.15)">1</text>
+  <line x1="67" y1="84" x2="173" y2="84" stroke="rgba(52,211,153,0.35)" stroke-width="1" marker-end="url(#flg)"/>
+  <text x="120" y="80" font-size="7" fill="rgba(52,211,153,0.45)" text-anchor="middle">check forma_tokens.json</text>
+
+  <text x="13" y="103" font-size="7.5" fill="rgba(255,255,255,0.15)">2</text>
+  <line x1="173" y1="99" x2="69" y2="99" stroke="rgba(255,255,255,0.15)" stroke-width="1" marker-end="url(#flw)"/>
+  <text x="120" y="95" font-size="7" fill="rgba(255,255,255,0.2)" text-anchor="middle">token absent / expired</text>
+
+  <text x="13" y="120" font-size="7.5" fill="rgba(255,255,255,0.15)">3</text>
+  <line x1="67" y1="116" x2="302" y2="116" stroke="rgba(100,150,220,0.5)" stroke-width="1.5" marker-end="url(#fla)"/>
+  <text x="184" y="112" font-size="7" fill="rgba(100,150,220,0.6)" text-anchor="middle">POST /authentication/v2/token</text>
+
+  <text x="13" y="140" font-size="7.5" fill="rgba(255,255,255,0.15)">4</text>
+  <rect x="50" y="128" width="310" height="28" rx="3" fill="rgba(100,150,220,0.05)" stroke="rgba(100,150,220,0.15)" stroke-width="1"/>
+  <text x="205" y="140" font-size="7.5" fill="rgba(100,150,220,0.5)" text-anchor="middle">grant_type=client_credentials</text>
+  <text x="205" y="150" font-size="7" fill="rgba(232,237,242,0.3)" text-anchor="middle">client_id + client_secret (owner config)  ·  scope=data:read account:read</text>
+
+  <text x="13" y="172" font-size="7.5" fill="rgba(255,255,255,0.15)">5</text>
+  <line x1="300" y1="168" x2="69" y2="168" stroke="rgba(100,150,220,0.3)" stroke-width="1" marker-end="url(#flw)"/>
+  <text x="184" y="164" font-size="7" fill="rgba(100,150,220,0.4)" text-anchor="middle">access_token  ·  expires_in: 3600s</text>
+
+  <text x="13" y="188" font-size="7.5" fill="rgba(255,255,255,0.15)">6</text>
+  <line x1="67" y1="184" x2="173" y2="184" stroke="rgba(52,211,153,0.5)" stroke-width="1.5" marker-end="url(#flg)"/>
+  <text x="120" y="180" font-size="7" fill="rgba(52,211,153,0.55)" text-anchor="middle">write token + expiry to blob</text>
+
+  <text x="13" y="208" font-size="7.5" fill="rgba(255,255,255,0.15)">7</text>
+  <line x1="67" y1="204" x2="302" y2="204" stroke="rgba(100,150,220,0.5)" stroke-width="1.5" marker-end="url(#fla)"/>
+  <text x="184" y="200" font-size="7" fill="rgba(100,150,220,0.6)" text-anchor="middle">Bearer {access_token}  →  HQ / Construction Admin API</text>
+  <line x1="300" y1="218" x2="69" y2="218" stroke="rgba(100,150,220,0.25)" stroke-width="1" marker-end="url(#flw)"/>
+  <text x="184" y="214" font-size="7" fill="rgba(100,150,220,0.35)" text-anchor="middle">user data  ·  project data  ·  company data</text>
+
+  <!-- 2L usage box -->
+  <rect x="20" y="238" width="352" height="50" rx="5" fill="rgba(100,150,220,0.07)" stroke="rgba(100,150,220,0.2)" stroke-width="1"/>
+  <text x="196" y="253" font-size="8" fill="rgba(100,150,220,0.7)" font-weight="700" text-anchor="middle">Used for (2L)</text>
+  <text x="196" y="266" font-size="7.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">Hub user management  ·  Account projects list  ·  Company / role queries</text>
+  <text x="196" y="279" font-size="7.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">User invite  ·  Registry sync  ·  User search</text>
+
+  <!-- DIVIDER -->
+  <line x1="373" y1="36" x2="373" y2="400" stroke="rgba(255,255,255,0.06)" stroke-width="1"/>
+
+  <!-- 3L actors -->
+  <rect x="393" y="36" width="80" height="32" rx="4" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>
+  <text x="433" y="50" font-size="8" fill="rgba(232,237,242,0.6)" font-weight="700" text-anchor="middle">Admin</text>
+  <text x="433" y="61" font-size="7" fill="rgba(232,237,242,0.3)" text-anchor="middle">browser</text>
+  <line x1="433" y1="68" x2="433" y2="390" stroke="rgba(255,255,255,0.05)" stroke-width="1" stroke-dasharray="2,4"/>
+
+  <rect x="487" y="36" width="80" height="32" rx="4" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>
+  <text x="527" y="50" font-size="8" fill="rgba(232,237,242,0.6)" font-weight="700" text-anchor="middle">app.py</text>
+  <line x1="527" y1="68" x2="527" y2="390" stroke="rgba(255,255,255,0.05)" stroke-width="1" stroke-dasharray="2,4"/>
+
+  <rect x="580" y="36" width="160" height="32" rx="4" fill="rgba(251,191,36,0.08)" stroke="rgba(251,191,36,0.25)" stroke-width="1"/>
+  <text x="660" y="50" font-size="8" fill="rgba(251,191,36,0.7)" font-weight="700" text-anchor="middle">Autodesk Identity</text>
+  <text x="660" y="61" font-size="7" fill="rgba(232,237,242,0.3)" text-anchor="middle">accounts.autodesk.com</text>
+  <line x1="660" y1="68" x2="660" y2="390" stroke="rgba(255,255,255,0.05)" stroke-width="1" stroke-dasharray="2,4"/>
+
+  <!-- 3L flow -->
+  <text x="383" y="88" font-size="7.5" fill="rgba(255,255,255,0.15)">1</text>
+  <line x1="435" y1="84" x2="525" y2="84" stroke="rgba(251,191,36,0.35)" stroke-width="1" marker-end="url(#flw)"/>
+  <text x="480" y="80" font-size="7" fill="rgba(251,191,36,0.4)" text-anchor="middle">trigger Forma_GET_3L_Status</text>
+
+  <text x="383" y="103" font-size="7.5" fill="rgba(255,255,255,0.15)">2</text>
+  <line x1="529" y1="99" x2="658" y2="99" stroke="rgba(251,191,36,0.45)" stroke-width="1.5" marker-end="url(#flw)"/>
+  <text x="593" y="95" font-size="7" fill="rgba(251,191,36,0.5)" text-anchor="middle">GET /authentication/v2/authorize</text>
+
+  <text x="383" y="118" font-size="7.5" fill="rgba(255,255,255,0.15)">3</text>
+  <rect x="397" y="107" width="355" height="22" rx="3" fill="rgba(251,191,36,0.04)" stroke="rgba(251,191,36,0.12)" stroke-width="1"/>
+  <text x="574" y="116" font-size="7" fill="rgba(251,191,36,0.45)" text-anchor="middle">client_id  ·  redirect_uri  ·  scope=data:read  ·  response_type=code</text>
+  <text x="574" y="124" font-size="7" fill="rgba(232,237,242,0.25)" text-anchor="middle">admin redirected to Autodesk login page</text>
+
+  <text x="383" y="145" font-size="7.5" fill="rgba(255,255,255,0.15)">4</text>
+  <line x1="656" y1="141" x2="437" y2="141" stroke="rgba(251,191,36,0.3)" stroke-width="1" marker-end="url(#flw)"/>
+  <text x="546" y="137" font-size="7" fill="rgba(251,191,36,0.4)" text-anchor="middle">redirect back with ?code=AUTH_CODE</text>
+
+  <text x="383" y="160" font-size="7.5" fill="rgba(255,255,255,0.15)">5</text>
+  <line x1="435" y1="156" x2="525" y2="156" stroke="rgba(251,191,36,0.35)" stroke-width="1" marker-end="url(#flw)"/>
+  <text x="480" y="152" font-size="7" fill="rgba(251,191,36,0.4)" text-anchor="middle">callback delivers auth code</text>
+
+  <text x="383" y="176" font-size="7.5" fill="rgba(255,255,255,0.15)">6</text>
+  <line x1="529" y1="172" x2="658" y2="172" stroke="rgba(251,191,36,0.5)" stroke-width="1.5" marker-end="url(#flw)"/>
+  <text x="593" y="168" font-size="7" fill="rgba(251,191,36,0.55)" text-anchor="middle">POST /authentication/v2/token</text>
+  <rect x="397" y="179" width="355" height="16" rx="3" fill="rgba(251,191,36,0.04)" stroke="rgba(251,191,36,0.1)" stroke-width="1"/>
+  <text x="574" y="190" font-size="7" fill="rgba(251,191,36,0.4)" text-anchor="middle">grant_type=authorization_code  ·  code  ·  client_id  ·  client_secret</text>
+
+  <text x="383" y="210" font-size="7.5" fill="rgba(255,255,255,0.15)">7</text>
+  <line x1="656" y1="206" x2="531" y2="206" stroke="rgba(251,191,36,0.3)" stroke-width="1" marker-end="url(#flw)"/>
+  <text x="593" y="202" font-size="7" fill="rgba(251,191,36,0.4)" text-anchor="middle">access_token  ·  refresh_token</text>
+
+  <text x="383" y="226" font-size="7.5" fill="rgba(255,255,255,0.15)">8</text>
+  <line x1="529" y1="222" x2="658" y2="222" stroke="rgba(251,191,36,0.5)" stroke-width="1.5" marker-end="url(#flw)"/>
+  <text x="593" y="218" font-size="7" fill="rgba(251,191,36,0.55)" text-anchor="middle">Bearer {access_token}  →  model / file APIs</text>
+
+  <!-- 3L usage box -->
+  <rect x="393" y="238" width="355" height="50" rx="5" fill="rgba(251,191,36,0.06)" stroke="rgba(251,191,36,0.18)" stroke-width="1"/>
+  <text x="570" y="253" font-size="8" fill="rgba(251,191,36,0.65)" font-weight="700" text-anchor="middle">Used for (3L)</text>
+  <text x="570" y="266" font-size="7.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">Forma_GET_Model_Properties  ·  Forma_GET_Project_Files</text>
+  <text x="570" y="279" font-size="7.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">Any operation requiring the admin's personal Autodesk identity</text>
+
+  <!-- Comparison row -->
+  <rect x="8" y="306" width="740" height="80" rx="6" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.07)" stroke-width="1"/>
+  <text x="380" y="323" font-size="8" fill="rgba(232,237,242,0.4)" font-weight="700" text-anchor="middle" letter-spacing=".5">COMPARISON</text>
+  <line x1="373" y1="328" x2="373" y2="382" stroke="rgba(255,255,255,0.07)" stroke-width="1"/>
+
+  <text x="14" y="342" font-size="8" fill="rgba(100,150,220,0.7)" font-weight="700">2-Legged</text>
+  <text x="14" y="355" font-size="7.5" fill="rgba(232,237,242,0.35)">No user interaction required</text>
+  <text x="14" y="367" font-size="7.5" fill="rgba(232,237,242,0.35)">Token shared across all admins (owner creds)</text>
+  <text x="14" y="379" font-size="7.5" fill="rgba(232,237,242,0.35)">Cached as forma_tokens.json in blob · 1hr expiry</text>
+
+  <text x="379" y="342" font-size="8" fill="rgba(251,191,36,0.7)" font-weight="700">3-Legged</text>
+  <text x="379" y="355" font-size="7.5" fill="rgba(232,237,242,0.35)">Admin must authenticate via Autodesk browser login</text>
+  <text x="379" y="367" font-size="7.5" fill="rgba(232,237,242,0.35)">Token is per-admin — represents the user's identity</text>
+  <text x="379" y="379" font-size="7.5" fill="rgba(232,237,242,0.35)">Required only for BIM model and file-level data</text>
+
+  <!-- Shared credentials note -->
+  <rect x="8" y="400" width="740" height="30" rx="5" fill="rgba(100,150,220,0.06)" stroke="rgba(100,150,220,0.15)" stroke-width="1"/>
+  <text x="380" y="412" font-size="7.5" fill="rgba(100,150,220,0.55)" text-anchor="middle" font-weight="700">Shared credential model —</text>
+  <text x="380" y="424" font-size="7.5" fill="rgba(232,237,242,0.35)" text-anchor="middle">All 2L calls use the owner's client_id / client_secret. Non-owner admins never configure Forma credentials. The 2L token in forma_tokens.json is shared across all admin sessions.</text>
+</svg>
+</div>
+
+</div>
+</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     15  CREDENTIAL INHERITANCE TREE
+══════════════════════════════════════════════════════════════════ -->
+<div class="doc-section" id="s-cred-tree">
+<div class="doc-section-inner">
+<div class="doc-num">15<br>Credentials</div>
+<div class="doc-body">
+<h2>Credential Inheritance Tree</h2>
+<p>Not all credentials are created equal. Some belong to individual admins, some are shared from the owner, and some have no fallback at all. This diagram shows exactly what credential is used for each platform operation and what happens when a personal credential is absent.</p>
+
+<div class="diagram-wrap">
+<svg viewBox="0 0 760 380" xmlns="http://www.w3.org/2000/svg" font-family="'JetBrains Mono',monospace">
+  <defs>
+    <marker id="cta" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L6,3 Z" fill="rgba(255,255,255,0.2)"/>
+    </marker>
+    <marker id="ctg" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L6,3 Z" fill="rgba(52,211,153,0.5)"/>
+    </marker>
+    <marker id="ctr" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L6,3 Z" fill="rgba(248,113,113,0.5)"/>
+    </marker>
+    <marker id="cty" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L6,3 Z" fill="rgba(251,191,36,0.5)"/>
+    </marker>
+  </defs>
+
+  <!-- Owner config — root -->
+  <rect x="275" y="14" width="210" height="48" rx="6" fill="rgba(52,211,153,0.12)" stroke="rgba(52,211,153,0.4)" stroke-width="2"/>
+  <text x="380" y="33" font-size="9" fill="#34d399" font-weight="700" text-anchor="middle">Owner Config</text>
+  <text x="380" y="46" font-size="7.5" fill="rgba(232,237,242,0.5)" text-anchor="middle">config_oawad_at_alec_ae.json</text>
+  <text x="380" y="57" font-size="7.5" fill="rgba(232,237,242,0.35)" text-anchor="middle">morta.api_key  ·  revizto_*.access_code  ·  forma.*</text>
+
+  <!-- Branch lines from owner -->
+  <line x1="310" y1="62" x2="120" y2="110" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>
+  <line x1="380" y1="62" x2="380" y2="110" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>
+  <line x1="450" y1="62" x2="640" y2="110" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>
+
+  <!-- MORTA branch -->
+  <rect x="30" y="112" width="180" height="44" rx="5" fill="rgba(74,158,255,0.1)" stroke="rgba(74,158,255,0.3)" stroke-width="1.5"/>
+  <text x="120" y="129" font-size="8.5" fill="#4a9eff" font-weight="700" text-anchor="middle">Morta API Key</text>
+  <text x="120" y="142" font-size="7.5" fill="rgba(232,237,242,0.45)" text-anchor="middle">morta.api_key</text>
+  <text x="120" y="152" font-size="7" fill="rgba(232,237,242,0.25)" text-anchor="middle">per-admin · personal</text>
+
+  <!-- Morta — personal only, no fallback -->
+  <line x1="120" y1="156" x2="60" y2="200" stroke="rgba(74,158,255,0.3)" stroke-width="1" marker-end="url(#cta)"/>
+  <rect x="20" y="202" width="160" height="44" rx="5" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>
+  <text x="100" y="219" font-size="8" fill="rgba(232,237,242,0.6)" font-weight="700" text-anchor="middle">Admin uses own key</text>
+  <text x="100" y="231" font-size="7.5" fill="rgba(74,158,255,0.5)" text-anchor="middle">invite · search · extraction</text>
+  <text x="100" y="242" font-size="7" fill="rgba(232,237,242,0.25)" text-anchor="middle">No fallback exists</text>
+
+  <line x1="120" y1="156" x2="185" y2="200" stroke="rgba(248,113,113,0.3)" stroke-width="1" stroke-dasharray="3,3" marker-end="url(#ctr)"/>
+  <rect x="165" y="202" width="160" height="44" rx="5" fill="rgba(248,113,113,0.06)" stroke="rgba(248,113,113,0.2)" stroke-width="1"/>
+  <text x="245" y="219" font-size="8" fill="rgba(248,113,113,0.7)" font-weight="700" text-anchor="middle">No key configured</text>
+  <text x="245" y="231" font-size="7.5" fill="rgba(248,113,113,0.5)" text-anchor="middle">Morta features disabled</text>
+  <text x="245" y="242" font-size="7" fill="rgba(232,237,242,0.25)" text-anchor="middle">search returns nothing</text>
+
+  <!-- REVIZTO branch -->
+  <rect x="285" y="112" width="190" height="44" rx="5" fill="rgba(224,90,90,0.1)" stroke="rgba(224,90,90,0.3)" stroke-width="1.5"/>
+  <text x="380" y="129" font-size="8.5" fill="#e05a5a" font-weight="700" text-anchor="middle">Revizto Access Code</text>
+  <text x="380" y="142" font-size="7.5" fill="rgba(232,237,242,0.45)" text-anchor="middle">revizto_{region}.access_code</text>
+  <text x="380" y="152" font-size="7" fill="rgba(232,237,242,0.25)" text-anchor="middle">per-admin · per-region · personal</text>
+
+  <line x1="340" y1="156" x2="320" y2="200" stroke="rgba(224,90,90,0.3)" stroke-width="1" marker-end="url(#cta)"/>
+  <rect x="265" y="202" width="150" height="44" rx="5" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>
+  <text x="340" y="219" font-size="8" fill="rgba(232,237,242,0.6)" font-weight="700" text-anchor="middle">Token exchanged</text>
+  <text x="340" y="231" font-size="7.5" fill="rgba(224,90,90,0.5)" text-anchor="middle">invite · search · extraction</text>
+  <text x="340" y="242" font-size="7" fill="rgba(232,237,242,0.25)" text-anchor="middle">cached in blob per-admin</text>
+
+  <line x1="420" y1="156" x2="440" y2="200" stroke="rgba(248,113,113,0.3)" stroke-width="1" stroke-dasharray="3,3" marker-end="url(#ctr)"/>
+  <rect x="425" y="202" width="140" height="44" rx="5" fill="rgba(248,113,113,0.06)" stroke="rgba(248,113,113,0.2)" stroke-width="1"/>
+  <text x="495" y="219" font-size="8" fill="rgba(248,113,113,0.7)" font-weight="700" text-anchor="middle">No code configured</text>
+  <text x="495" y="231" font-size="7.5" fill="rgba(248,113,113,0.5)" text-anchor="middle">Revizto disabled</text>
+  <text x="495" y="242" font-size="7" fill="rgba(232,237,242,0.25)" text-anchor="middle">sync error reported</text>
+
+  <!-- FORMA branch -->
+  <rect x="555" y="112" width="175" height="44" rx="5" fill="rgba(100,150,220,0.1)" stroke="rgba(100,150,220,0.3)" stroke-width="1.5"/>
+  <text x="642" y="129" font-size="8.5" fill="#7aa7e0" font-weight="700" text-anchor="middle">Forma Credentials</text>
+  <text x="642" y="142" font-size="7.5" fill="rgba(232,237,242,0.45)" text-anchor="middle">forma.client_id / secret / account_id</text>
+  <text x="642" y="152" font-size="7" fill="rgba(232,237,242,0.25)" text-anchor="middle">owner config only · shared</text>
+
+  <line x1="610" y1="156" x2="580" y2="200" stroke="rgba(52,211,153,0.4)" stroke-width="1.5" marker-end="url(#ctg)"/>
+  <rect x="550" y="202" width="185" height="44" rx="5" fill="rgba(52,211,153,0.07)" stroke="rgba(52,211,153,0.2)" stroke-width="1.5"/>
+  <text x="642" y="219" font-size="8" fill="rgba(52,211,153,0.7)" font-weight="700" text-anchor="middle">All admins inherit</text>
+  <text x="642" y="231" font-size="7.5" fill="rgba(52,211,153,0.5)" text-anchor="middle">invite · search · sync · extraction</text>
+  <text x="642" y="242" font-size="7" fill="rgba(232,237,242,0.25)" text-anchor="middle">automatic — no config required</text>
+
+  <!-- Registry sync special case -->
+  <rect x="20" y="308" width="716" height="54" rx="6" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.07)" stroke-width="1"/>
+  <text x="378" y="325" font-size="8" fill="rgba(232,237,242,0.4)" font-weight="700" text-anchor="middle">Registry Sync — credential resolution</text>
+  <text x="378" y="339" font-size="7.5" fill="rgba(232,237,242,0.3)" text-anchor="middle">Morta sync: admin api_key  →  fallback: owner api_key  ·  if both absent: tags not synced</text>
+  <text x="378" y="351" font-size="7.5" fill="rgba(232,237,242,0.3)" text-anchor="middle">Revizto sync: admin token  →  if absent: license_roles written (hardcoded), project roles not fetched</text>
+  <text x="378" y="363" font-size="7.5" fill="rgba(232,237,242,0.3)" text-anchor="middle">Forma sync: always uses owner credentials  →  companies and roles always fetched</text>
+
+  <!-- Legend -->
+  <line x1="20" y1="292" x2="50" y2="292" stroke="rgba(255,255,255,0.2)" stroke-width="1"/>
+  <text x="54" y="296" font-size="7.5" fill="rgba(232,237,242,0.3)">credential used</text>
+  <line x1="160" y1="292" x2="190" y2="292" stroke="rgba(248,113,113,0.4)" stroke-width="1" stroke-dasharray="3,3"/>
+  <text x="194" y="296" font-size="7.5" fill="rgba(232,237,242,0.3)">absent / fallback path</text>
+  <line x1="320" y1="292" x2="350" y2="292" stroke="rgba(52,211,153,0.5)" stroke-width="1.5"/>
+  <text x="354" y="296" font-size="7.5" fill="rgba(232,237,242,0.3)">automatic inheritance</text>
+</svg>
+</div>
+
+</div>
+</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     16  FRONTEND EVENT MODEL
+══════════════════════════════════════════════════════════════════ -->
+<div class="doc-section" id="s-frontend">
+<div class="doc-section-inner">
+<div class="doc-num">16<br>Frontend</div>
+<div class="doc-body">
+<h2>Frontend Event Model</h2>
+<p>The frontend is server-rendered HTML with progressive JavaScript enhancement. There is no build step, bundler, or frontend framework. Pages are full page loads from Jinja2 templates. Within a page, dynamic updates are driven by a custom browser event system centred on the sidebar project selector in <code>base.html</code>.</p>
+
+<div class="diagram-wrap">
+<svg viewBox="0 0 760 360" xmlns="http://www.w3.org/2000/svg" font-family="'JetBrains Mono',monospace">
+  <defs>
+    <marker id="fea" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L6,3 Z" fill="rgba(255,255,255,0.25)"/>
+    </marker>
+    <marker id="feb" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L6,3 Z" fill="rgba(74,158,255,0.5)"/>
+    </marker>
+    <marker id="feg" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L6,3 Z" fill="rgba(52,211,153,0.5)"/>
+    </marker>
+  </defs>
+
+  <!-- base.html sidebar -->
+  <rect x="20" y="30" width="175" height="280" rx="8" fill="rgba(11,37,69,0.6)" stroke="rgba(255,255,255,0.12)" stroke-width="1.5"/>
+  <text x="107" y="52" font-size="8.5" fill="rgba(232,237,242,0.5)" font-weight="700" text-anchor="middle" letter-spacing=".5">base.html</text>
+  <text x="107" y="64" font-size="7.5" fill="rgba(232,237,242,0.25)" text-anchor="middle">sidebar · nav · project selector</text>
+  <line x1="40" y1="70" x2="195" y2="70" stroke="rgba(255,255,255,0.06)" stroke-width="1"/>
+
+  <rect x="35" y="80" width="145" height="36" rx="4" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>
+  <text x="107" y="95" font-size="7.5" fill="rgba(232,237,242,0.6)" font-weight="700" text-anchor="middle">Project Selector</text>
+  <text x="107" y="108" font-size="7" fill="rgba(232,237,242,0.3)" text-anchor="middle">&lt;select&gt; dropdown</text>
+
+  <rect x="35" y="130" width="145" height="52" rx="4" fill="rgba(74,158,255,0.1)" stroke="rgba(74,158,255,0.25)" stroke-width="1"/>
+  <text x="107" y="147" font-size="7.5" fill="#4a9eff" font-weight="700" text-anchor="middle">applyProject(key)</text>
+  <text x="107" y="159" font-size="7" fill="rgba(232,237,242,0.35)" text-anchor="middle">POST /api/context</text>
+  <text x="107" y="170" font-size="7" fill="rgba(232,237,242,0.35)" text-anchor="middle">saves to blob config</text>
+
+  <rect x="35" y="196" width="145" height="52" rx="4" fill="rgba(52,211,153,0.1)" stroke="rgba(52,211,153,0.25)" stroke-width="1"/>
+  <text x="107" y="213" font-size="7.5" fill="#34d399" font-weight="700" text-anchor="middle">dispatchEvent</text>
+  <text x="107" y="226" font-size="7" fill="rgba(232,237,242,0.35)" text-anchor="middle">cockpit:projectChanged</text>
+  <text x="107" y="237" font-size="7" fill="rgba(232,237,242,0.25)" text-anchor="middle">on window</text>
+
+  <rect x="35" y="262" width="145" height="36" rx="4" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+  <text x="107" y="277" font-size="7.5" fill="rgba(232,237,242,0.5)" font-weight="700" text-anchor="middle">Event detail payload</text>
+  <text x="107" y="289" font-size="7" fill="rgba(232,237,242,0.3)" text-anchor="middle">key · name · revizto_uuid</text>
+  <text x="107" y="298" font-size="7" fill="rgba(232,237,242,0.3)" text-anchor="middle">morta_hub_id · forma_id</text>
+
+  <!-- Event arrow -->
+  <line x1="197" y1="222" x2="258" y2="222" stroke="rgba(52,211,153,0.6)" stroke-width="2" marker-end="url(#feg)"/>
+  <text x="227" y="217" font-size="7.5" fill="rgba(52,211,153,0.6)" text-anchor="middle">event</text>
+  <text x="227" y="227" font-size="7.5" fill="rgba(52,211,153,0.4)" text-anchor="middle">broadcast</text>
+
+  <!-- window -->
+  <rect x="260" y="190" width="60" height="60" rx="5" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.12)" stroke-width="1.5"/>
+  <text x="290" y="213" font-size="8" fill="rgba(232,237,242,0.5)" font-weight="700" text-anchor="middle">window</text>
+  <text x="290" y="226" font-size="7" fill="rgba(232,237,242,0.25)" text-anchor="middle">browser</text>
+  <text x="290" y="239" font-size="7" fill="rgba(232,237,242,0.25)" text-anchor="middle">event bus</text>
+
+  <!-- Subscribers -->
+  <!-- manage.html -->
+  <line x1="320" y1="210" x2="390" y2="120" stroke="rgba(74,158,255,0.3)" stroke-width="1" marker-end="url(#feb)"/>
+  <rect x="390" y="80" width="170" height="80" rx="5" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>
+  <text x="475" y="98" font-size="8" fill="rgba(232,237,242,0.6)" font-weight="700" text-anchor="middle">manage.html</text>
+  <line x1="410" y1="103" x2="555" y2="103" stroke="rgba(255,255,255,0.06)" stroke-width="1"/>
+  <text x="475" y="116" font-size="7.5" fill="rgba(74,158,255,0.5)" text-anchor="middle">addEventListener</text>
+  <text x="475" y="128" font-size="7" fill="rgba(232,237,242,0.3)" text-anchor="middle">→ renderPendingList()</text>
+  <text x="475" y="140" font-size="7" fill="rgba(232,237,242,0.3)" text-anchor="middle">→ loadInviteLog(key)</text>
+  <text x="475" y="152" font-size="7" fill="rgba(232,237,242,0.3)" text-anchor="middle">→ update activeCtx + projectData</text>
+
+  <!-- extractions.html -->
+  <line x1="320" y1="220" x2="390" y2="220" stroke="rgba(74,158,255,0.3)" stroke-width="1" marker-end="url(#feb)"/>
+  <rect x="390" y="185" width="170" height="60" rx="5" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>
+  <text x="475" y="203" font-size="8" fill="rgba(232,237,242,0.6)" font-weight="700" text-anchor="middle">extractions.html</text>
+  <line x1="410" y1="208" x2="555" y2="208" stroke="rgba(255,255,255,0.06)" stroke-width="1"/>
+  <text x="475" y="222" font-size="7.5" fill="rgba(74,158,255,0.5)" text-anchor="middle">addEventListener</text>
+  <text x="475" y="234" font-size="7" fill="rgba(232,237,242,0.3)" text-anchor="middle">→ update activeCtx</text>
+
+  <!-- registry.html -->
+  <line x1="320" y1="235" x2="390" y2="300" stroke="rgba(74,158,255,0.3)" stroke-width="1" marker-end="url(#feb)"/>
+  <rect x="390" y="265" width="170" height="60" rx="5" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>
+  <text x="475" y="283" font-size="8" fill="rgba(232,237,242,0.6)" font-weight="700" text-anchor="middle">registry.html</text>
+  <line x1="410" y1="288" x2="555" y2="288" stroke="rgba(255,255,255,0.06)" stroke-width="1"/>
+  <text x="475" y="302" font-size="7.5" fill="rgba(74,158,255,0.5)" text-anchor="middle">addEventListener</text>
+  <text x="475" y="314" font-size="7" fill="rgba(232,237,242,0.3)" text-anchor="middle">→ highlight active project</text>
+
+  <!-- API context call label -->
+  <rect x="600" y="170" width="150" height="56" rx="5" fill="rgba(74,158,255,0.07)" stroke="rgba(74,158,255,0.18)" stroke-width="1"/>
+  <text x="675" y="187" font-size="7.5" fill="rgba(74,158,255,0.6)" font-weight="700" text-anchor="middle">POST /api/context</text>
+  <text x="675" y="200" font-size="7" fill="rgba(232,237,242,0.3)" text-anchor="middle">called by applyProject()</text>
+  <text x="675" y="212" font-size="7" fill="rgba(232,237,242,0.3)" text-anchor="middle">saves selection to blob</text>
+  <text x="675" y="224" font-size="7" fill="rgba(232,237,242,0.3)" text-anchor="middle">event fires after this resolves</text>
+
+  <!-- Page load -->
+  <rect x="20" y="328" width="730" height="24" rx="4" fill="rgba(255,255,255,0.02)" stroke="rgba(255,255,255,0.06)" stroke-width="1"/>
+  <text x="385" y="340" font-size="7.5" fill="rgba(232,237,242,0.3)" text-anchor="middle" font-weight="700">On page load —</text>
+  <text x="385" y="346" font-size="7.5" fill="rgba(232,237,242,0.25)" text-anchor="middle">each page calls GET /api/context independently and restores the active project state without relying on the event</text>
+</svg>
+</div>
+
+<p>Each child page calls <code>GET /api/context</code> independently on load to restore the active project state. The <code>cockpit:projectChanged</code> event is only dispatched on user-initiated changes within the same page session. This means state is always consistent across page navigations via the server-side blob config, and the event system only handles intra-session dynamic updates.</p>
+
+</div>
+</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     17  BLOB STORAGE SCHEMA
+══════════════════════════════════════════════════════════════════ -->
+<div class="doc-section" id="s-blob-schema">
+<div class="doc-section-inner">
+<div class="doc-num">17<br>Blob Schema</div>
+<div class="doc-body">
+<h2>Blob Storage — Data Schema</h2>
+<p>All runtime state lives in the <code>cockpit-data</code> blob container. The following describes every file, its key pattern, and its complete field structure.</p>
+
+<h3>users.json</h3>
+<div class="doc-code"><pre><span class="dc-w">[</span>
+  <span class="dc-w">{</span>
+    <span class="dc-g">"email"</span>:    <span class="dc-d">"admin@alec.ae"</span>,               <span class="dc-d">// login identity — must be @alec.ae</span>
+    <span class="dc-g">"password"</span>: <span class="dc-d">"$2b$12$..."</span>                 <span class="dc-d">// bcrypt hash, 12 rounds</span>
+  <span class="dc-w">}</span>
+<span class="dc-w">]</span></pre></div>
+
+<h3>config_{safe_email}.json — per admin</h3>
+<div class="doc-code"><pre><span class="dc-w">{</span>
+  <span class="dc-b">"morta"</span>: <span class="dc-w">{</span>
+    <span class="dc-g">"api_key"</span>: <span class="dc-d">"..."</span>,              <span class="dc-d">// personal — set in Settings</span>
+    <span class="dc-g">"hub_id"</span>:  <span class="dc-d">"..."</span>               <span class="dc-d">// legacy field, superseded by active_context</span>
+  <span class="dc-w">}</span>,
+  <span class="dc-r">"revizto_dubai"</span>: <span class="dc-w">{</span>
+    <span class="dc-g">"access_code"</span>:        <span class="dc-d">"..."</span>,    <span class="dc-d">// paste from ws.revizto.com — personal</span>
+    <span class="dc-g">"license_uuid"</span>:       <span class="dc-d">"..."</span>,    <span class="dc-d">// resolved on first token exchange, cached</span>
+    <span class="dc-g">"auth_method"</span>:        <span class="dc-d">"..."</span>,    <span class="dc-d">// resolved from /license/{uuid}/auth-methods</span>
+    <span class="dc-g">"default_license_role"</span>: 2       <span class="dc-d">// 1=Guest 2=Collaborator 3=Content Creator</span>
+  <span class="dc-w">}</span>,
+  <span class="dc-r">"revizto_ireland"</span>: <span class="dc-w">{</span> <span class="dc-d">/* same structure as revizto_dubai */</span> <span class="dc-w">}</span>,
+  <span class="dc-m">"forma"</span>: <span class="dc-w">{</span>
+    <span class="dc-g">"client_id"</span>:      <span class="dc-d">"..."</span>,          <span class="dc-d">// APS app client ID — owner config only</span>
+    <span class="dc-g">"client_secret"</span>:  <span class="dc-d">"..."</span>,          <span class="dc-d">// APS app secret — owner config only</span>
+    <span class="dc-g">"client_id_3l"</span>:   <span class="dc-d">"..."</span>,          <span class="dc-d">// 3-legged app client ID</span>
+    <span class="dc-g">"client_secret_3l"</span>: <span class="dc-d">"..."</span>,        <span class="dc-d">// 3-legged app secret</span>
+    <span class="dc-g">"account_id"</span>:     <span class="dc-d">"..."</span>,          <span class="dc-d">// ACC account UUID</span>
+    <span class="dc-g">"project_id"</span>:     <span class="dc-d">"..."</span>,          <span class="dc-d">// currently selected project</span>
+    <span class="dc-g">"admin_user_id"</span>:  <span class="dc-d">"..."</span>           <span class="dc-d">// ACC admin user UUID for 3L operations</span>
+  <span class="dc-w">}</span>,
+  <span class="dc-g">"projects"</span>: <span class="dc-w">{</span>
+    <span class="dc-g">"morta"</span>:   <span class="dc-d">[{ "id": "...", "name": "..." }, ...]</span>,    <span class="dc-d">// cached, registry-filtered</span>
+    <span class="dc-g">"revizto"</span>: <span class="dc-d">[{ "uuid": "...", "title": "..." }, ...]</span>,
+    <span class="dc-g">"forma"</span>:   <span class="dc-d">[{ "id": "...", "name": "...", "platform": "acc" }, ...]</span>
+  <span class="dc-w">}</span>,
+  <span class="dc-g">"active_context"</span>: <span class="dc-w">{</span>
+    <span class="dc-g">"active_project_key"</span>:   <span class="dc-d">"rak-central"</span>,      <span class="dc-d">// registry key</span>
+    <span class="dc-g">"active_project_name"</span>:  <span class="dc-d">"RAK Central"</span>,
+    <span class="dc-g">"morta_hub_id"</span>:         <span class="dc-d">"406ed81a-..."</span>,
+    <span class="dc-g">"morta_hub_name"</span>:        <span class="dc-d">"RAK Central"</span>,
+    <span class="dc-g">"revizto_project_uuid"</span>: <span class="dc-d">"1cc01307-..."</span>,
+    <span class="dc-g">"revizto_project_name"</span>: <span class="dc-d">"RAK Central"</span>,
+    <span class="dc-g">"revizto_region"</span>:       <span class="dc-d">"dubai"</span>,
+    <span class="dc-g">"forma_project_id"</span>:     <span class="dc-d">"6bf6b4f6-..."</span>,
+    <span class="dc-g">"forma_project_name"</span>:   <span class="dc-d">"RAK Central"</span>,
+    <span class="dc-g">"forma_platform"</span>:       <span class="dc-d">"acc"</span>
+  <span class="dc-w">}</span>
+<span class="dc-w">}</span></pre></div>
+
+<h3>invite_log.json</h3>
+<div class="doc-code"><pre><span class="dc-w">[</span>
+  <span class="dc-w">{</span>
+    <span class="dc-g">"date"</span>:            <span class="dc-d">"2026-05-01 14:30:00"</span>,
+    <span class="dc-g">"mode"</span>:            <span class="dc-d">"single"</span>,               <span class="dc-d">// "single" | "bulk"</span>
+    <span class="dc-g">"project_key"</span>:     <span class="dc-d">"rak-central"</span>,          <span class="dc-d">// registry key — used for scoping</span>
+    <span class="dc-g">"email"</span>:           <span class="dc-d">"user@company.com"</span>,
+    <span class="dc-g">"first_name"</span>:      <span class="dc-d">"John"</span>,
+    <span class="dc-g">"last_name"</span>:       <span class="dc-d">"Smith"</span>,
+    <span class="dc-g">"company"</span>:         <span class="dc-d">"VOLTAS"</span>,
+    <span class="dc-g">"morta_status"</span>:    <span class="dc-d">"success"</span>,              <span class="dc-d">// "success" | "skipped" | "error: ..."</span>
+    <span class="dc-g">"revizto_status"</span>:  <span class="dc-d">"success"</span>,
+    <span class="dc-g">"forma_status"</span>:    <span class="dc-d">"skipped"</span>,
+    <span class="dc-g">"revizto_project"</span>: <span class="dc-d">"RAK Central"</span>,
+    <span class="dc-g">"forma_project"</span>:   <span class="dc-d">"RAK Central"</span>
+  <span class="dc-w">}</span>
+<span class="dc-w">]</span></pre></div>
+
+<h3>portal_requests.json</h3>
+<div class="doc-code"><pre><span class="dc-w">{</span>
+  <span class="dc-g">"rak-central"</span>: <span class="dc-w">{</span>
+    <span class="dc-g">"project_id"</span>:   <span class="dc-d">"rak-central"</span>,
+    <span class="dc-g">"project_name"</span>: <span class="dc-d">"RAK Central"</span>,
+    <span class="dc-g">"submissions"</span>: <span class="dc-w">[</span>
+      <span class="dc-w">{</span>
+        <span class="dc-g">"submitted_by_name"</span>:  <span class="dc-d">"Omar Magdi"</span>,
+        <span class="dc-g">"submitted_by_email"</span>: <span class="dc-d">"omar@company.com"</span>,
+        <span class="dc-g">"submitted_at"</span>:       <span class="dc-d">"2026-05-01 09:00:00"</span>,
+        <span class="dc-g">"users"</span>: <span class="dc-w">[</span>
+          <span class="dc-w">{</span>
+            <span class="dc-g">"email"</span>:      <span class="dc-d">"user@company.com"</span>,
+            <span class="dc-g">"first_name"</span>: <span class="dc-d">"John"</span>,
+            <span class="dc-g">"last_name"</span>:  <span class="dc-d">"Smith"</span>,
+            <span class="dc-g">"company"</span>:    <span class="dc-d">"VOLTAS"</span>,
+            <span class="dc-g">"department"</span>: <span class="dc-d">"BIM"</span>,
+            <span class="dc-g">"morta"</span>:      <span class="dc-d">true</span>,
+            <span class="dc-g">"revizto"</span>:    <span class="dc-d">true</span>,
+            <span class="dc-g">"forma"</span>:      <span class="dc-d">false</span>,
+            <span class="dc-g">"status"</span>:     <span class="dc-d">"pending"</span>    <span class="dc-d">// "pending" | "processed" | "rejected"</span>
+          <span class="dc-w">}</span>
+        <span class="dc-w">]</span>
+      <span class="dc-w">}</span>
+    <span class="dc-w">]</span>
+  <span class="dc-w">}</span>
+<span class="dc-w">}</span></pre></div>
+
+<h3>revizto_tokens_{region}_{safe_email}.json</h3>
+<div class="doc-code"><pre><span class="dc-w">{</span>
+  <span class="dc-g">"access_token"</span>:  <span class="dc-d">"eyJ..."</span>,              <span class="dc-d">// JWT bearer token, ~1hr expiry</span>
+  <span class="dc-g">"refresh_token"</span>: <span class="dc-d">"..."</span>,                 <span class="dc-d">// used to obtain new access_token without access code</span>
+  <span class="dc-g">"token_type"</span>:    <span class="dc-d">"Bearer"</span>,
+  <span class="dc-g">"expires_in"</span>:    <span class="dc-d">3600</span>,
+  <span class="dc-g">"expires_at"</span>:    <span class="dc-d">1746187200.0</span>,          <span class="dc-d">// Unix timestamp — compared at check time</span>
+  <span class="dc-g">"license_uuid"</span>:  <span class="dc-d">"..."</span>,                 <span class="dc-d">// resolved and cached alongside token</span>
+  <span class="dc-g">"auth_method"</span>:   <span class="dc-d">"access_code"</span>
+<span class="dc-w">}</span></pre></div>
+
+<h3>forma_tokens.json — shared</h3>
+<div class="doc-code"><pre><span class="dc-w">{</span>
+  <span class="dc-g">"access_token"</span>: <span class="dc-d">"..."</span>,                   <span class="dc-d">// 2-legged token shared across all admins</span>
+  <span class="dc-g">"token_type"</span>:   <span class="dc-d">"Bearer"</span>,
+  <span class="dc-g">"expires_in"</span>:   <span class="dc-d">3600</span>,
+  <span class="dc-g">"expires_at"</span>:   <span class="dc-d">1746187200.0</span>            <span class="dc-d">// Unix timestamp</span>
+<span class="dc-w">}</span></pre></div>
 
 </div>
 </div>
