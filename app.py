@@ -102,38 +102,64 @@ def blob_delete(name: str):
 
 USE_BLOB = bool(AZURE_STORAGE_CONNECTION_STRING)
 
-# ── Email (Azure Communication Services) ───────────────────────────────────
+# ── Email (Azure Communication Services — REST) ─────────────────────────────
 ACS_CONNECTION_STRING = os.environ.get("AZURE_COMMUNICATION_CONNECTION_STRING", "")
 EMAIL_FROM            = os.environ.get("EMAIL_FROM", "DoNotReply@azurecomm.net")
 EMAIL_FROM_NAME       = "Digital Construction Cockpit"
 
-try:
-    from azure.communication.email import EmailClient as _ACSEmailClient
-    ACS_EMAIL_AVAILABLE = True
-except ImportError:
-    _ACSEmailClient     = None
-    ACS_EMAIL_AVAILABLE = False
-    print("[Email] azure-communication-email not installed — email disabled.")
+def _parse_acs_connection_string(conn_str: str):
+    """Parse ACS connection string into (endpoint, access_key)."""
+    parts = dict(p.split("=", 1) for p in conn_str.split(";") if "=" in p)
+    endpoint   = parts.get("endpoint", "")
+    access_key = parts.get("accesskey", "") or parts.get("accessKey", "")
+    return endpoint.rstrip("/"), access_key
 
 def send_email(to_emails: list, subject: str, html_body: str) -> bool:
-    """Send email via Azure Communication Services. Returns True on success."""
-    print(f"[Email] Attempting to send to {to_emails}, subject: {subject}")
-    print(f"[Email] ACS available: {ACS_EMAIL_AVAILABLE}, connection string set: {bool(ACS_CONNECTION_STRING)}, from: {EMAIL_FROM}")
-    if not ACS_EMAIL_AVAILABLE or not ACS_CONNECTION_STRING or not to_emails:
-        print("[Email] Not configured or unavailable — skipping.")
+    """Send email via ACS REST API. No SDK required."""
+    print(f"[Email] Attempting → {to_emails} | from: {EMAIL_FROM}")
+    if not ACS_CONNECTION_STRING or not to_emails:
+        print("[Email] Not configured — skipping.")
         return False
     try:
-        client  = _ACSEmailClient.from_connection_string(ACS_CONNECTION_STRING)
-        message = {
+        import hmac, hashlib, base64, uuid
+        from datetime import datetime, timezone
+
+        endpoint, access_key = _parse_acs_connection_string(ACS_CONNECTION_STRING)
+        if not endpoint or not access_key:
+            print("[Email] Could not parse ACS connection string.")
+            return False
+
+        url     = f"{endpoint}/emails:send?api-version=2023-03-31"
+        payload = {
             "senderAddress": EMAIL_FROM,
             "recipients":    {"to": [{"address": e} for e in to_emails]},
             "content":       {"subject": subject, "html": html_body},
         }
-        print(f"[Email] Sending: {EMAIL_FROM} → {[r['address'] for r in message['recipients']['to']]}")
-        poller = client.begin_send(message)
-        result = poller.result()
-        print(f"[Email] Result: {result}")
-        return True
+        body_bytes   = json.dumps(payload).encode("utf-8")
+        content_hash = base64.b64encode(hashlib.sha256(body_bytes).digest()).decode()
+        request_id   = str(uuid.uuid4())
+        date_str     = datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S GMT")
+
+        # Build the HMAC-SHA256 signature
+        host         = endpoint.replace("https://", "").replace("http://", "")
+        string_to_sign = f"POST\n/emails:send?api-version=2023-03-31\n{date_str};{host};{content_hash}"
+        decoded_key    = base64.b64decode(access_key)
+        signature      = base64.b64encode(
+            hmac.new(decoded_key, string_to_sign.encode("utf-8"), hashlib.sha256).digest()
+        ).decode()
+
+        headers = {
+            "Content-Type":          "application/json",
+            "x-ms-date":             date_str,
+            "x-ms-content-sha256":   content_hash,
+            "Authorization":         f"HMAC-SHA256 SignedHeaders=x-ms-date;host;x-ms-content-sha256&Signature={signature}",
+            "Operation-Id":          request_id,
+            "x-ms-client-request-id": request_id,
+        }
+
+        resp = http_requests.post(url, headers=headers, data=body_bytes, timeout=15)
+        print(f"[Email] Response: {resp.status_code} — {resp.text[:200]}")
+        return resp.status_code in (200, 202)
     except Exception as e:
         print(f"[Email] Send failed: {type(e).__name__}: {e}")
         return False
@@ -149,10 +175,10 @@ async def test_email(user: str = Depends(require_user)):
         "<p>If you receive this, Azure Communication Services email is working correctly.</p>"
     )
     return JSONResponse({
-        "status":     "sent" if success else "failed",
-        "to":         user,
+        "status":         "sent" if success else "failed",
+        "to":             user,
         "acs_configured": bool(ACS_CONNECTION_STRING),
-        "from":       EMAIL_FROM,
+        "from":           EMAIL_FROM,
     })
 
 # ── Project Registry helpers ───────────────────────────────────────────────

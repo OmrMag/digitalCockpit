@@ -7,5 +7,4 @@ bcrypt
 openpyxl
 pandas
 azure-storage-blob
-azure-communication-email
 httpx
