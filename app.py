@@ -102,29 +102,28 @@ def blob_delete(name: str):
 
 USE_BLOB = bool(AZURE_STORAGE_CONNECTION_STRING)
 
-# ── Email (SendGrid) ───────────────────────────────────────────────────────
-SENDGRID_API_KEY = os.environ.get("SENDGRID_API_KEY", "")
-EMAIL_FROM       = os.environ.get("EMAIL_FROM", "cockpit@alec.ae")
-EMAIL_FROM_NAME  = "Digital Construction Cockpit"
+# ── Email (Azure Communication Services) ───────────────────────────────────
+ACS_CONNECTION_STRING = os.environ.get("AZURE_COMMUNICATION_CONNECTION_STRING", "")
+EMAIL_FROM            = os.environ.get("EMAIL_FROM", "DoNotReply@azurecomm.net")
+EMAIL_FROM_NAME       = "Digital Construction Cockpit"
 
 def send_email(to_emails: list, subject: str, html_body: str) -> bool:
-    """Send email via SendGrid. Returns True on success."""
-    if not SENDGRID_API_KEY or not to_emails:
+    """Send email via Azure Communication Services. Returns True on success."""
+    if not ACS_CONNECTION_STRING or not to_emails:
+        print("[Email] ACS connection string not configured.")
         return False
-    payload = {
-        "personalizations": [{"to": [{"email": e} for e in to_emails]}],
-        "from": {"email": EMAIL_FROM, "name": EMAIL_FROM_NAME},
-        "subject": subject,
-        "content": [{"type": "text/html", "value": html_body}],
-    }
     try:
-        resp = http_requests.post(
-            "https://api.sendgrid.com/v3/mail/send",
-            headers={"Authorization": f"Bearer {SENDGRID_API_KEY}",
-                     "Content-Type": "application/json"},
-            json=payload, timeout=10
-        )
-        return resp.status_code in (200, 202)
+        from azure.communication.email import EmailClient
+        client  = EmailClient.from_connection_string(ACS_CONNECTION_STRING)
+        message = {
+            "senderAddress": EMAIL_FROM,
+            "recipients":    {"to": [{"address": e} for e in to_emails]},
+            "content":       {"subject": subject, "html": html_body},
+        }
+        poller = client.begin_send(message)
+        result = poller.result()
+        print(f"[Email] Sent to {to_emails} — status: {result.get('status')}")
+        return True
     except Exception as e:
         print(f"[Email] Send failed: {e}")
         return False
@@ -1465,9 +1464,9 @@ async def portal_submit(
     admin_emails = proj_entry.get("admins", [])
     proj_name    = reg_name or project_id
 
-    if admin_emails and SENDGRID_API_KEY:
-        portal_url  = f"/portal/platformAccess?pid={key}"
-        manage_url  = "/manage"
+    if admin_emails and ACS_CONNECTION_STRING:
+        base_url      = str(request.base_url).rstrip("/")
+        manage_url    = f"{base_url}/manage"
         morta_count   = sum(1 for u in users if u.get("morta"))
         revizto_count = sum(1 for u in users if u.get("revizto"))
         forma_count   = sum(1 for u in users if u.get("forma"))
@@ -1493,10 +1492,10 @@ async def portal_submit(
                     </tr>
                     <tr style="background:#f5f7fa;">
                         <td style="padding:10px 14px;font-size:12px;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;">Users requested</td>
-                        <td style="padding:10px 14px;font-size:14px;color:#0f1b2d;font-weight:500;">{len(users)} users</td>
+                        <td style="padding:10px 14px;font-size:14px;color:#0f1b2d;font-weight:500;">{len(users)} user(s)</td>
                     </tr>
                     <tr>
-                        <td style="padding:10px 14px;font-size:12px;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;">Platform breakdown</td>
+                        <td style="padding:10px 14px;font-size:12px;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;">Platforms</td>
                         <td style="padding:10px 14px;font-size:14px;color:#0f1b2d;">
                             {"<span style='background:#e8f0fe;color:#1a56db;padding:2px 8px;border-radius:3px;font-size:12px;margin-right:6px;'>Morta: " + str(morta_count) + "</span>" if morta_count else ""}
                             {"<span style='background:#e8f5e9;color:#1b7a34;padding:2px 8px;border-radius:3px;font-size:12px;margin-right:6px;'>Revizto: " + str(revizto_count) + "</span>" if revizto_count else ""}
@@ -1504,7 +1503,7 @@ async def portal_submit(
                         </td>
                     </tr>
                 </table>
-                <a href="{{manage_url}}" style="display:inline-block;background:#0f1b2d;color:#e8edf2;padding:12px 24px;border-radius:6px;text-decoration:none;font-size:14px;font-weight:600;">
+                <a href="{manage_url}" style="display:inline-block;background:#0f1b2d;color:#e8edf2;padding:12px 24px;border-radius:6px;text-decoration:none;font-size:14px;font-weight:600;">
                     Review in Cockpit →
                 </a>
                 <p style="color:#9ca3af;font-size:12px;margin-top:20px;margin-bottom:0;">
@@ -1512,14 +1511,121 @@ async def portal_submit(
                 </p>
             </div>
         </div>
-        """.replace("{manage_url}", manage_url)
+        """
 
         send_email(admin_emails, f"[Cockpit] New access request — {proj_name} ({len(users)} users)", html)
 
     return JSONResponse({"status": "success", "total": len(users)})
 
 
-@app.get("/api/portal/link")
+@app.post("/portal/platformAccess/submit/single")
+async def portal_submit_single(request: Request):
+    """Public endpoint — single user access request from the portal.
+    Saves into portal_requests.json as a pending submission (same structure as bulk)
+    so admins can review and process it through the same Manage Users flow.
+    """
+    body = await request.json()
+
+    submitter_name  = body.get("submitter_name", "").strip()
+    submitter_email = body.get("submitter_email", "").strip()
+    project_id      = body.get("project_id", "").strip()
+    email           = body.get("email", "").strip()
+
+    if not email:
+        return JSONResponse({"status": "error", "detail": "Email is required."}, status_code=400)
+    if not project_id:
+        return JSONResponse({"status": "error", "detail": "No project reference in link."}, status_code=400)
+
+    registry    = load_registry()
+    reg_project = registry.get(project_id, {})
+    reg_name    = reg_project.get("name", project_id)
+
+    user_entry = {
+        "email":               email,
+        "first_name":          body.get("first_name", "").strip(),
+        "last_name":           body.get("last_name", "").strip(),
+        "company":             body.get("company", "").strip(),
+        "department":          body.get("department", "").strip(),
+        "morta":               bool(body.get("morta", True)),
+        "revizto":             bool(body.get("revizto", True)),
+        "forma":               bool(body.get("forma", True)),
+        "project_id":          project_id,
+        "project_name":        reg_name,
+        "submitted_by_name":   submitter_name,
+        "submitted_by_email":  submitter_email,
+        "submitted_at":        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "status":              "pending",
+    }
+
+    existing = _load_portal_requests()
+    if project_id not in existing:
+        existing[project_id] = {
+            "project_id":   project_id,
+            "project_name": reg_name,
+            "submissions":  []
+        }
+    existing[project_id]["submissions"].append({
+        "submitted_by_name":  submitter_name,
+        "submitted_by_email": submitter_email,
+        "submitted_at":       datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "users":              [user_entry],
+    })
+    _save_portal_requests(existing)
+
+    # Email notification to project admins
+    admin_emails = reg_project.get("admins", [])
+    if admin_emails and ACS_CONNECTION_STRING:
+        base_url   = str(request.base_url).rstrip("/")
+        manage_url = f"{base_url}/manage"
+        platforms_html = "".join([
+            "<span style='background:#e8f0fe;color:#1a56db;padding:2px 8px;border-radius:3px;font-size:12px;margin-right:6px;'>Morta</span>" if user_entry["morta"] else "",
+            "<span style='background:#e8f5e9;color:#1b7a34;padding:2px 8px;border-radius:3px;font-size:12px;margin-right:6px;'>Revizto</span>" if user_entry["revizto"] else "",
+            "<span style='background:#fff3e0;color:#b45309;padding:2px 8px;border-radius:3px;font-size:12px;'>Forma</span>" if user_entry["forma"] else "",
+        ])
+        html = f"""
+        <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;">
+            <div style="background:#0f1b2d;padding:20px 24px;border-radius:8px 8px 0 0;">
+                <h2 style="color:#e8edf2;margin:0;font-size:18px;">New Platform Access Request</h2>
+                <p style="color:#8099b3;margin:4px 0 0;font-size:13px;">{reg_name}</p>
+            </div>
+            <div style="background:#fff;border:1px solid #e0e6ed;border-top:none;padding:24px;border-radius:0 0 8px 8px;">
+                <p style="color:#2d3748;font-size:14px;margin-top:0;">
+                    A new single-user access request has been submitted and requires your review.
+                </p>
+                <table style="width:100%;border-collapse:collapse;margin-bottom:20px;">
+                    <tr style="background:#f5f7fa;">
+                        <td style="padding:10px 14px;font-size:12px;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;">Submitted by</td>
+                        <td style="padding:10px 14px;font-size:14px;color:#0f1b2d;font-weight:500;">{submitter_name} &lt;{submitter_email}&gt;</td>
+                    </tr>
+                    <tr>
+                        <td style="padding:10px 14px;font-size:12px;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;">Project</td>
+                        <td style="padding:10px 14px;font-size:14px;color:#0f1b2d;font-weight:500;">{reg_name}</td>
+                    </tr>
+                    <tr style="background:#f5f7fa;">
+                        <td style="padding:10px 14px;font-size:12px;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;">User</td>
+                        <td style="padding:10px 14px;font-size:14px;color:#0f1b2d;font-weight:500;">{email}{f" ({user_entry['first_name']} {user_entry['last_name']})" if user_entry.get('first_name') else ""}</td>
+                    </tr>
+                    <tr>
+                        <td style="padding:10px 14px;font-size:12px;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;">Platforms</td>
+                        <td style="padding:10px 14px;font-size:14px;color:#0f1b2d;">{platforms_html}</td>
+                    </tr>
+                </table>
+                <a href="{manage_url}" style="display:inline-block;background:#0f1b2d;color:#e8edf2;padding:12px 24px;border-radius:6px;text-decoration:none;font-size:14px;font-weight:600;">
+                    Review in Cockpit →
+                </a>
+                <p style="color:#9ca3af;font-size:12px;margin-top:20px;margin-bottom:0;">
+                    Digital Construction Cockpit · ALEC Holdings
+                </p>
+            </div>
+        </div>
+        """
+        send_email(
+            admin_emails,
+            f"[Cockpit] New access request — {reg_name} (1 user)",
+            html,
+        )
+
+    return JSONResponse({"status": "success"})
 async def api_portal_link(request: Request, user: str = Depends(require_user)):
     """Generate a portal link using the registry project key."""
     config   = load_config(user)
@@ -1835,10 +1941,18 @@ async def api_registry_sync(key: str, request: Request, user: str = Depends(requ
     # ── Revizto project roles ─────────────────────────────────────────────
     rev_uuid   = platforms.get("revizto", {}).get("project_uuid", "")
     rev_region = platforms.get("revizto", {}).get("region", "dubai")
+    # Always store the safe license roles (no License Admin)
+    platforms.setdefault("revizto", {})["license_roles"] = [
+        {"id": 1, "name": "Guest"},
+        {"id": 2, "name": "Collaborator"},
+        {"id": 3, "name": "Content Creator"},
+    ]
     if rev_uuid:
         try:
             token = revizto_get_token_for_region(config, rev_region, email=user)
-            if token:
+            if not token:
+                results["revizto_error"] = f"No valid Revizto token for {rev_region} — enter your access code in Settings first"
+            else:
                 license_uuid, _ = revizto_resolve_license(config, rev_region, email=user)
                 base_url = f"https://api.{rev_region}.revizto.com/v5"
                 headers  = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
@@ -1856,13 +1970,8 @@ async def api_registry_sync(key: str, request: Request, user: str = Depends(requ
                         roles = [{"id": v.get("id"), "uuid": v.get("uuid",""), "name": v.get("name","")} for v in raw]
                     platforms["revizto"]["roles"] = roles
                     results["revizto_roles"] = len(roles)
-                # License member roles — License Admin excluded (too elevated)
-                license_roles = [
-                    {"id": 1, "name": "Guest"},
-                    {"id": 2, "name": "Collaborator"},
-                    {"id": 3, "name": "Content Creator"},
-                ]
-                platforms["revizto"]["license_roles"] = license_roles
+                else:
+                    results["revizto_roles_error"] = f"{r.status_code}: {r.text[:150]}"
         except Exception as e:
             results["revizto_error"] = str(e)
 
@@ -2117,9 +2226,12 @@ async def api_extract(request: Request, user: str = Depends(require_user)):
         ok     = result.returncode == 0 or saved
 
         # Collect any new files in the user's temp dir and build download links
+        # Exclude internal files (starting with _) like _cockpit_config.json
         files = []
         for ext in [".csv", ".json"]:
             for f in sorted(user_temp.glob(f"*{ext}")):
+                if f.name.startswith("_"):
+                    continue
                 files.append({
                     "filename": f.name,
                     "ext":      ext.lstrip("."),
@@ -2165,6 +2277,8 @@ async def api_extractions_files(user: str = Depends(require_user)):
     files = []
     for ext in [".csv", ".json"]:
         for f in sorted(user_temp.glob(f"*{ext}")):
+            if f.name.startswith("_"):
+                continue
             files.append({
                 "name":     f.stem,
                 "filename": f.name,
