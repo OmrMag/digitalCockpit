@@ -330,7 +330,7 @@
       <div class="portal-brand-divider"></div>
       <div>
         <div class="portal-brand-label">ALEC</div>
-        <div class="portal-brand-label" style="margin-top:4px; opacity:0.55;">Software Access Request Portal</div>
+        <div class="portal-brand-label" style="margin-top:4px; opacity:0.55; text-transform:none;">Platform Access Request Portal</div>
       </div>
     </div>
     <div>
@@ -344,39 +344,76 @@
     <div class="portal-card">
 
       <h1>Platform Access Request</h1>
-      <p class="sub">Submit your team's user list and we'll take it from there.</p>
+      <p class="sub">Submit your team's user list or add a single user.</p>
 
       <div class="project-badge" id="projectBadge">
         <span class="badge-dot"></span>
         <span id="projectRef">Loading...</span>
       </div>
 
-      <p class="fill-note">Please fill the below details</p>
-      <div class="form-row">
-        <div class="portal-field">
-          <input class="portal-input" type="text" id="submitter_name" placeholder="Your full name" autocomplete="name">
-        </div>
-        <div class="portal-field">
-          <input class="portal-input" type="email" id="submitter_email" placeholder="you@company.com" autocomplete="email">
-        </div>
+      <!-- Mode toggle -->
+      <div style="display:flex;background:rgba(11,37,69,0.06);border-radius:9px;padding:3px;margin-bottom:20px;">
+        <button id="btnModeBulk" onclick="setPortalMode('bulk')" style="flex:1;padding:7px 12px;border:none;border-radius:7px;font:inherit;font-size:12px;font-weight:600;cursor:pointer;background:#0b2545;color:#fff;transition:all .12s;">Bulk Upload</button>
+        <button id="btnModeSingle" onclick="setPortalMode('single')" style="flex:1;padding:7px 12px;border:none;border-radius:7px;font:inherit;font-size:12px;font-weight:600;cursor:pointer;background:transparent;color:#5b6473;transition:all .12s;">Single User</button>
       </div>
 
-      <div class="upload-field">
-        <div class="upload-area" id="dropZone">
-          <input type="file" id="fileInput" accept=".xlsx,.xls,.csv">
-          <span class="upload-plus">+</span>
-          <span class="upload-hint">Click to upload .xlsx file</span>
+      <!-- ── BULK MODE ── -->
+      <div id="bulkMode">
+        <p class="fill-note">Fill in your details and upload your team's Excel file.</p>
+        <div class="form-row">
+          <div class="portal-field">
+            <input class="portal-input" type="text" id="submitter_name" placeholder="Your full name" autocomplete="name">
+          </div>
+          <div class="portal-field">
+            <input class="portal-input" type="email" id="submitter_email" placeholder="you@company.com" autocomplete="email">
+          </div>
         </div>
-        <div class="file-chosen" id="fileChosen">
-          <span class="fname" id="fileName"></span>
-          <button class="file-remove" id="removeFile">Remove</button>
+
+        <div class="upload-field">
+          <div class="upload-area" id="dropZone">
+            <input type="file" id="fileInput" accept=".xlsx,.xls,.csv">
+            <span class="upload-plus">+</span>
+            <span class="upload-hint">Click to upload .xlsx file</span>
+          </div>
+          <div class="file-chosen" id="fileChosen">
+            <span class="fname" id="fileName"></span>
+            <button class="file-remove" id="removeFile">Remove</button>
+          </div>
         </div>
+
+        <button class="portal-btn" id="submitBtn" disabled>
+          <div class="spinner"></div>
+          <span class="btn-label">Submit Request →</span>
+        </button>
       </div>
 
-      <button class="portal-btn" id="submitBtn" disabled>
-        <div class="spinner"></div>
-        <span class="btn-label">Submit Request →</span>
-      </button>
+      <!-- ── SINGLE MODE ── -->
+      <div id="singleMode" style="display:none;">
+        <p class="fill-note">Enter your details below.</p>
+        <div class="portal-field">
+          <input class="portal-input" type="email" id="s_email" placeholder="user@company.com" style="margin-bottom:10px;">
+          <div class="form-row">
+            <input class="portal-input" type="text" id="s_first_name" placeholder="First name">
+            <input class="portal-input" type="text" id="s_last_name" placeholder="Last name">
+          </div>
+          <div class="form-row" style="margin-top:10px;">
+            <input class="portal-input" type="text" id="s_company" placeholder="Company">
+            <input class="portal-input" type="text" id="s_department" placeholder="Department">
+          </div>
+        </div>
+        <div class="portal-field" style="margin-top:14px;padding-top:14px;border-top:1px solid rgba(11,37,69,0.08);">
+          <label class="portal-label">Platforms Requested</label>
+          <div style="display:flex;gap:16px;margin-top:6px;">
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;"><input type="checkbox" id="s_morta" checked style="width:14px;height:14px;"> Morta</label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;"><input type="checkbox" id="s_revizto" checked style="width:14px;height:14px;"> Revizto</label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;"><input type="checkbox" id="s_forma" checked style="width:14px;height:14px;"> Forma / ACC</label>
+          </div>
+        </div>
+        <button class="portal-btn" id="submitSingleBtn" onclick="submitSingle()">
+          <div class="spinner" id="singleSpinner" style="display:none;"></div>
+          <span class="btn-label" id="singleBtnLabel">Submit Request →</span>
+        </button>
+      </div>
 
       <div class="portal-ok" id="alertSuccess">
         <div id="alertSuccessMsg"></div>
@@ -403,15 +440,40 @@
   const badgeEl     = document.getElementById('projectBadge');
   const refEl       = document.getElementById('projectRef');
 
-  if (projectName) {
-    refEl.textContent = projectName;
-  } else if (projectId) {
-    refEl.textContent = 'Ref: ' + projectId.substring(0, 8).toUpperCase();
+  // Resolve project name from registry
+  if (projectId) {
+    fetch('/api/registry')
+      .then(r => r.json())
+      .then(reg => {
+        const proj = reg[projectId];
+        if (proj) {
+          refEl.textContent = proj.name;
+        } else {
+          refEl.textContent = projectName || projectId;
+          badgeEl.classList.add('invalid');
+        }
+      }).catch(() => {
+        refEl.textContent = projectName || projectId;
+      });
   } else {
     refEl.textContent = 'No project reference — link may be invalid';
     badgeEl.classList.add('invalid');
   }
 
+  // ── Mode toggle ──────────────────────────────────────────────────────────
+  function setPortalMode(mode) {
+    const isBulk = mode === 'bulk';
+    document.getElementById('bulkMode').style.display   = isBulk ? 'block' : 'none';
+    document.getElementById('singleMode').style.display = isBulk ? 'none'  : 'block';
+    const btnBulk   = document.getElementById('btnModeBulk');
+    const btnSingle = document.getElementById('btnModeSingle');
+    btnBulk.style.background   = isBulk ? '#0b2545' : 'transparent';
+    btnBulk.style.color        = isBulk ? '#fff'    : '#5b6473';
+    btnSingle.style.background = isBulk ? 'transparent' : '#0b2545';
+    btnSingle.style.color      = isBulk ? '#5b6473' : '#fff';
+  }
+
+  // ── Bulk mode logic ──────────────────────────────────────────────────────
   const nameEl     = document.getElementById('submitter_name');
   const emailEl    = document.getElementById('submitter_email');
   const fileInput  = document.getElementById('fileInput');
@@ -484,6 +546,64 @@
     }
     submitBtn.classList.remove('loading');
   });
+
+  // ── Single user submit ───────────────────────────────────────────────────
+  async function submitSingle() {
+    const submitterName  = document.getElementById('submitter_name').value.trim();
+    const submitterEmail = document.getElementById('submitter_email').value.trim();
+    const email          = document.getElementById('s_email').value.trim();
+
+    if (!email) {
+      document.getElementById('alertErrorSub').textContent = 'Email is required.';
+      document.getElementById('alertError').style.display = 'block';
+      return;
+    }
+
+    document.getElementById('alertSuccess').style.display = 'none';
+    document.getElementById('alertError').style.display   = 'none';
+    document.getElementById('singleSpinner').style.display = 'inline-block';
+    document.getElementById('singleBtnLabel').style.display = 'none';
+    document.getElementById('submitSingleBtn').disabled = true;
+
+    const payload = {
+      submitter_name:  submitterName,
+      submitter_email: submitterEmail,
+      project_id:      projectId,
+      project_name:    projectName,
+      email:           email,
+      first_name:      document.getElementById('s_first_name').value.trim(),
+      last_name:       document.getElementById('s_last_name').value.trim(),
+      company:         document.getElementById('s_company').value.trim(),
+      department:      document.getElementById('s_department').value.trim(),
+      morta:           document.getElementById('s_morta').checked,
+      revizto:         document.getElementById('s_revizto').checked,
+      forma:           document.getElementById('s_forma').checked,
+    };
+
+    try {
+      const res  = await fetch('/portal/platformAccess/submit/single', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (res.ok && data.status === 'success') {
+        document.getElementById('alertSuccessMsg').textContent = 'Request submitted for ' + email + '. The team will review and provision access.';
+        document.getElementById('alertSuccess').style.display = 'block';
+        ['s_email','s_first_name','s_last_name','s_company','s_department'].forEach(id => document.getElementById(id).value = '');
+      } else {
+        document.getElementById('alertErrorSub').textContent = data.detail || 'Submission failed.';
+        document.getElementById('alertError').style.display = 'block';
+      }
+    } catch {
+      document.getElementById('alertErrorSub').textContent = 'Could not reach the server. Please try again.';
+      document.getElementById('alertError').style.display = 'block';
+    }
+
+    document.getElementById('singleSpinner').style.display = 'none';
+    document.getElementById('singleBtnLabel').style.display = 'inline';
+    document.getElementById('submitSingleBtn').disabled = false;
+  }
 </script>
 
 </body>
