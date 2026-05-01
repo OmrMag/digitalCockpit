@@ -1810,6 +1810,9 @@ async def api_registry_sync(key: str, request: Request, user: str = Depends(requ
     # ── Morta tags ────────────────────────────────────────────────────────
     hub_id  = platforms.get("morta", {}).get("hub_id", "")
     api_key = config["morta"]["api_key"]
+    # Fall back to owner's Morta key if this admin hasn't set theirs
+    if not api_key:
+        api_key = load_config(OWNER_EMAIL).get("morta", {}).get("api_key", "")
     if hub_id and api_key:
         try:
             headers  = {"Authorization": f"Bearer {api_key}"}
@@ -1853,12 +1856,11 @@ async def api_registry_sync(key: str, request: Request, user: str = Depends(requ
                         roles = [{"id": v.get("id"), "uuid": v.get("uuid",""), "name": v.get("name","")} for v in raw]
                     platforms["revizto"]["roles"] = roles
                     results["revizto_roles"] = len(roles)
-                # License member roles (for license invite)
+                # License member roles — License Admin excluded (too elevated)
                 license_roles = [
                     {"id": 1, "name": "Guest"},
                     {"id": 2, "name": "Collaborator"},
                     {"id": 3, "name": "Content Creator"},
-                    {"id": 4, "name": "License Admin"},
                 ]
                 platforms["revizto"]["license_roles"] = license_roles
         except Exception as e:
@@ -1867,6 +1869,10 @@ async def api_registry_sync(key: str, request: Request, user: str = Depends(requ
     # ── Forma companies + roles ───────────────────────────────────────────
     forma_pid  = platforms.get("forma", {}).get("project_id", "")
     account_id = config["forma"].get("account_id", "")
+    # Fall back to owner's Forma credentials if this admin has none
+    if not account_id:
+        owner_forma = load_config(OWNER_EMAIL).get("forma", {})
+        account_id  = owner_forma.get("account_id", "")
     if forma_pid and account_id:
         try:
             token   = forma_get_token(config)
@@ -2410,33 +2416,93 @@ async def api_invite_log(
     log = log[-limit:][::-1]
 
     return JSONResponse({"entries": log, "total": len(log), "project_key": project_key or "all"})
+
+@app.post("/api/invite/single")
 async def api_invite_single(request: Request, user: str = Depends(require_user)):
     data   = await request.json()
     config = load_config(user)
     email  = data.get("email", "").strip()
-    if not email: return JSONResponse({"status": "error", "detail": "Email is required"}, status_code=400)
+    if not email:
+        return JSONResponse({"status": "error", "detail": "Email is required"}, status_code=400)
+
+    ctx         = config.get("active_context", {})
+    project_key = ctx.get("active_project_key", "")
+
+    # Pull platform IDs from registry for the active project (single source of truth)
+    registry  = load_registry()
+    reg_proj  = registry.get(project_key, {})
+    platforms = reg_proj.get("platforms", {})
+
+    morta_hub_id     = platforms.get("morta", {}).get("hub_id", "") or ctx.get("morta_hub_id", "")
+    revizto_uuid     = platforms.get("revizto", {}).get("project_uuid", "") or data.get("revizto_project_uuid", "")
+    forma_project_id = platforms.get("forma", {}).get("project_id", "") or data.get("forma_project_id", "")
+
+    # Access parameters — same structure as pending process
+    morta_tag_id         = data.get("morta_tag_id", "")
+    revizto_license_role = int(data.get("revizto_license_role_id") or config.get(f"revizto_{ctx.get('revizto_region','dubai')}", {}).get("default_license_role", 2))
+    revizto_project_role = data.get("revizto_project_role_id") or None
+    revizto_to_license   = data.get("revizto_invite_license", True)
+    revizto_to_project   = data.get("revizto_invite_project", False)
+    forma_company_id     = data.get("forma_company_id", "")
+    forma_role_ids       = data.get("forma_role_ids", [])
+    forma_products_raw   = data.get("forma_products", [])
+    forma_products       = forma_products_raw if forma_products_raw else [{"key": "docs", "access": "member"}]
+
+    first_name = data.get("first_name", "")
+    last_name  = data.get("last_name", "")
+    company    = data.get("company", "")
+    department = data.get("department", "")
+
     result = {
-        "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "mode": "single", "email": email,
-        "first_name": data.get("first_name", ""), "last_name": data.get("last_name", ""),
-        "company": data.get("company", ""), "department": data.get("department", ""),
-        "morta_status": "skipped", "revizto_status": "skipped", "forma_status": "skipped",
-        "revizto_project": data.get("revizto_project_name", ""),
-        "forma_project":   data.get("forma_project_name", ""),
-        "project_key":     config.get("active_context", {}).get("active_project_key", ""),
+        "date":             datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "mode":             "single",
+        "email":            email,
+        "first_name":       first_name,
+        "last_name":        last_name,
+        "company":          company,
+        "department":       department,
+        "morta_status":     "skipped",
+        "revizto_status":   "skipped",
+        "forma_status":     "skipped",
+        "revizto_project":  reg_proj.get("name", ""),
+        "forma_project":    reg_proj.get("name", ""),
+        "project_key":      project_key,
     }
+
     if data.get("morta"):
-        r = morta_invite(email, config)
+        r = morta_invite(email, config, hub_id=morta_hub_id, tag_reference_id=morta_tag_id)
         result["morta_status"] = r["status"]
+        if r["status"] != "success":
+            result["morta_detail"] = r.get("detail", "")
+
     if data.get("revizto"):
-        r = revizto_invite(email, data.get("first_name", ""), data.get("last_name", ""),
-                          data.get("company", ""), data.get("department", ""), config,
-                          project_uuid=data.get("revizto_project_uuid"), admin_email=user)
+        r = revizto_invite(
+            email, first_name, last_name, company, department, config,
+            project_uuid=revizto_uuid,
+            license_role_id=revizto_license_role,
+            project_role_id=int(revizto_project_role) if revizto_project_role else None,
+            invite_to_license=revizto_to_license,
+            invite_to_project=revizto_to_project,
+            admin_email=user,
+        )
         result["revizto_status"] = r["status"]
+        if r["status"] != "success":
+            result["revizto_detail"] = r.get("detail", "")
+
     if data.get("forma"):
-        r = forma_invite(email, config, project_id=data.get("forma_project_id"))
+        r = forma_invite(
+            email, config,
+            project_id=forma_project_id,
+            company_id=forma_company_id or None,
+            role_ids=forma_role_ids if forma_role_ids else None,
+            products=forma_products,
+        )
         result["forma_status"] = r["status"]
+        if r["status"] != "success":
+            result["forma_detail"] = r.get("detail", "")
+
     append_invite_log([result])
-    has_error = any(result[k].startswith("error") for k in ["morta_status", "revizto_status", "forma_status"])
+    has_error = any(result[k].startswith("error") for k in ["morta_status", "revizto_status", "forma_status"] if result[k] != "skipped")
     return JSONResponse({"status": "success" if not has_error else "partial", "result": result})
 
 @app.post("/api/invite/preview")

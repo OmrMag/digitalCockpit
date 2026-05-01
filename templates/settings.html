@@ -45,19 +45,11 @@
         <div id="revizto-tab-dubai" class="revizto-tab-content">
             <div class="form-row" style="margin-top:16px;">
                 <div class="form-group">
-                    <label>Default License Role</label>
-                    <select name="revizto_dubai_default_role">
-                        <option value="1" {{ 'selected' if config.revizto_dubai.default_license_role == 1 }}>Guest</option>
-                        <option value="2" {{ 'selected' if config.revizto_dubai.default_license_role == 2 }}>Collaborator</option>
-                        <option value="3" {{ 'selected' if config.revizto_dubai.default_license_role == 3 }}>Content Creator</option>
-                        <option value="4" {{ 'selected' if config.revizto_dubai.default_license_role == 4 }}>License Admin</option>
-                    </select>
-                </div>
-                <div class="form-group">
                     <label>Access Code</label>
                     <input type="password" name="revizto_dubai_access_code" value="{{ config.revizto_dubai.access_code or '' }}" placeholder="Paste access code from Revizto">
                 </div>
             </div>
+            <input type="hidden" name="revizto_dubai_default_role" value="2">
             <p style="font-size:var(--fs-xs); color:var(--text-dark-muted); margin-top:-8px;">
                 Generate at: <a href="https://ws.revizto.com/login?request=accessCode" target="_blank" style="color:var(--accent);">ws.revizto.com/login?request=accessCode</a>
             </p>
@@ -67,19 +59,11 @@
         <div id="revizto-tab-ireland" class="revizto-tab-content" style="display:none;">
             <div class="form-row" style="margin-top:16px;">
                 <div class="form-group">
-                    <label>Default License Role</label>
-                    <select name="revizto_ireland_default_role">
-                        <option value="1" {{ 'selected' if config.revizto_ireland.default_license_role == 1 }}>Guest</option>
-                        <option value="2" {{ 'selected' if config.revizto_ireland.default_license_role == 2 }}>Collaborator</option>
-                        <option value="3" {{ 'selected' if config.revizto_ireland.default_license_role == 3 }}>Content Creator</option>
-                        <option value="4" {{ 'selected' if config.revizto_ireland.default_license_role == 4 }}>License Admin</option>
-                    </select>
-                </div>
-                <div class="form-group">
                     <label>Access Code</label>
                     <input type="password" name="revizto_ireland_access_code" value="{{ config.revizto_ireland.access_code or '' }}" placeholder="Paste access code from Revizto">
                 </div>
             </div>
+            <input type="hidden" name="revizto_ireland_default_role" value="2">
             <p style="font-size:var(--fs-xs); color:var(--text-dark-muted); margin-top:-8px;">
                 Generate at: <a href="https://ws.revizto.com/login?request=accessCode" target="_blank" style="color:var(--accent);">ws.revizto.com/login?request=accessCode</a>
             </p>
