@@ -1041,168 +1041,263 @@ def forma_invite(email, config, project_id=None, company_id: str = None,
 # ---------------------------------------------------------------------------
 
 def morta_search_user(email, config, allowed_hub_ids: list = None):
-    api_key = config["morta"]["api_key"]
-    if not api_key: return None
+    """Search for a user across the allowed Morta hubs.
 
-    # Determine which hubs to search
+    Uses the API key from the provided config (admin's own key).
+    allowed_hub_ids comes from the registry — only hubs the searching admin
+    is assigned to are searched. If no hub IDs or no API key, returns None.
+    """
+    api_key = config["morta"]["api_key"]
+    if not api_key:
+        return None  # Morta key is personal — no fallback to owner
+
+    # Strictly registry-scoped — if no allowed hubs, return nothing
     hub_ids = allowed_hub_ids if allowed_hub_ids else []
     if not hub_ids:
-        hub_id = config.get("active_context", {}).get("morta_hub_id") or config["morta"].get("hub_id", "")
-        if hub_id: hub_ids = [hub_id]
-    if not hub_ids: return None
+        return None
 
-    headers  = {"Authorization": f"Bearer {api_key}"}
-    matches  = []
+    headers = {"Authorization": f"Bearer {api_key}"}
+    matches = []
 
     for hub_id in hub_ids:
+        # Get hub name
         hub_name = hub_id
-        hub_resp = http_requests.get(f"https://api.morta.io/v1/hub/{hub_id}", headers=headers, timeout=10)
+        hub_resp = http_requests.get(
+            f"https://api.morta.io/v1/hub/{hub_id}",
+            headers=headers, timeout=10
+        )
         if hub_resp.status_code == 200:
             hub_name = hub_resp.json().get("data", {}).get("name", hub_id)
-        response = http_requests.get(f"https://api.morta.io/v1/hub/{hub_id}/members", headers=headers, timeout=15)
-        if response.status_code != 200: continue
+
+        # Search members of this hub
+        response = http_requests.get(
+            f"https://api.morta.io/v1/hub/{hub_id}/members",
+            headers=headers, timeout=15
+        )
+        if response.status_code != 200:
+            print(f"[Morta] Members fetch failed for hub {hub_id}: {response.status_code}")
+            continue
+
         for m in response.json().get("data", []):
             u = m.get("user", {})
             if u.get("email", "").lower() == email.lower():
-                tags = [{"name": t.get("value", ""), "publicId": t.get("publicId", "")} for t in u.get("tags", []) if isinstance(t, dict)]
+                tags = [
+                    {"name": t.get("value", ""), "publicId": t.get("publicId", "")}
+                    for t in u.get("tags", []) if isinstance(t, dict)
+                ]
                 matches.append({
-                    "hub_id": hub_id, "hub_name": hub_name,
-                    "name": u.get("name", ""), "email": u.get("email", ""),
-                    "role": m.get("projectRole", ""), "role_method": m.get("roleAssignedMethod", ""),
-                    "tags": tags, "joined": m.get("createdAt", ""), "public_id": u.get("publicId", ""),
+                    "hub_id":      hub_id,
+                    "hub_name":    hub_name,
+                    "name":        u.get("name", ""),
+                    "email":       u.get("email", ""),
+                    "role":        m.get("projectRole", ""),
+                    "role_method": m.get("roleAssignedMethod", ""),
+                    "tags":        tags,
+                    "joined":      m.get("createdAt", ""),
+                    "public_id":   u.get("publicId", ""),
                 })
-                break  # found in this hub, move to next hub
+                break  # found in this hub, move to next
 
-    if not matches: return None
-    # Return primary result with all hub memberships listed
+    if not matches:
+        return None
+
     primary = matches[0]
     return {
-        "found":    True,
-        "name":     primary["name"],
-        "email":    primary["email"],
-        "public_id": primary["public_id"],
-        "hub_id":   primary["hub_id"],
-        "hub_name": primary["hub_name"],
-        "role":     primary["role"],
+        "found":       True,
+        "name":        primary["name"],
+        "email":       primary["email"],
+        "public_id":   primary["public_id"],
+        "hub_id":      primary["hub_id"],
+        "hub_name":    primary["hub_name"],
+        "role":        primary["role"],
         "role_method": primary["role_method"],
-        "tags":     primary["tags"],
-        "joined":   primary["joined"],
-        "hubs":     matches,   # all hub memberships
+        "tags":        primary["tags"],
+        "joined":      primary["joined"],
+        "hubs":        matches,
     }
 
-def revizto_search_user(email, config, allowed_project_uuids: list = None, admin_email: str = None):
+def revizto_search_user(email, config, allowed_project_uuids: list = None, admin_email: str = None, registry_projects: dict = None):
+    """Search for a user in Revizto, scoped to the allowed project UUIDs from the registry.
+
+    Checks license-level membership using the admin's token, then checks
+    project-level membership only for registry-allowed projects.
+    If no allowed_project_uuids are provided, returns None (no scope = no results).
+    registry_projects: dict of {project_key: registry_entry} for the admin's allowed projects.
+    """
+    # Strictly registry-scoped
+    if not allowed_project_uuids:
+        return None
+
+    # Resolve region from registry projects if possible, else fall back to config/token detection
     region = config.get("active_context", {}).get("revizto_region", "")
+    if not region and registry_projects:
+        for rp in registry_projects.values():
+            r = rp.get("platforms", {}).get("revizto", {}).get("region", "")
+            if r:
+                region = r
+                break
     if not region:
         for r in ["dubai", "ireland"]:
             has_tokens = bool(load_revizto_tokens(r, admin_email)) if admin_email else (BASE_DIR / f"revizto_tokens_{r}.json").exists()
             if config.get(f"revizto_{r}", {}).get("access_code") or has_tokens:
                 region = r; break
-    if not region: return None
-
-    license_uuid, _ = revizto_resolve_license(config, region, email=admin_email)
-    if not license_uuid: return None
+    if not region:
+        return None
 
     token = revizto_get_token_for_region(config, region, email=admin_email)
-    if not token: return None
+    if not token:
+        return None
+
+    license_uuid, _ = revizto_resolve_license(config, region, email=admin_email)
+    if not license_uuid:
+        return None
+
     base_url = f"https://api.{region}.revizto.com/v5"
     headers  = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
 
-    response  = http_requests.get(f"{base_url}/license/{license_uuid}/member/list", headers=headers, timeout=15)
-    if response.status_code != 200: return None
+    # Check license-level membership
+    response = http_requests.get(
+        f"{base_url}/license/{license_uuid}/member/list",
+        headers=headers, timeout=15
+    )
+    if response.status_code != 200:
+        print(f"[Revizto] License member list failed: {response.status_code}")
+        return None
+
     data      = response.json().get("data", {})
     user_info = None
     if isinstance(data, dict):
         for mid, member in data.items():
             u = member.get("user", {})
             if u.get("email", "").lower() == email.lower():
-                role_map  = {0: "Owner", 1: "License Admin", 2: "Collaborator", 3: "Content Creator", 4: "Guest"}
-                user_info = {"found": True, "region": region, "license_uuid": license_uuid,
-                    "name": u.get("fullname", ""), "email": u.get("email", ""),
+                role_map = {0: "Owner", 1: "License Admin", 2: "Collaborator", 3: "Content Creator", 4: "Guest"}
+                user_info = {
+                    "found":        True,
+                    "region":       region,
+                    "license_uuid": license_uuid,
+                    "name":         u.get("fullname", ""),
+                    "email":        u.get("email", ""),
                     "license_role": role_map.get(member.get("role"), str(member.get("role", ""))),
-                    "status": "active" if member.get("activated") else "deactivated" if member.get("deactivated") else "pending",
-                    "company": member.get("company", ""), "department": member.get("department", ""),
-                    "invited_at": member.get("invitedAt", ""), "last_active": u.get("lastActive", ""),
-                    "user_uuid": u.get("uuid", ""), "projects": []}
+                    "status":       "active" if member.get("activated") else "deactivated" if member.get("deactivated") else "pending",
+                    "company":      member.get("company", ""),
+                    "department":   member.get("department", ""),
+                    "invited_at":   member.get("invitedAt", ""),
+                    "last_active":  u.get("lastActive", ""),
+                    "user_uuid":    u.get("uuid", ""),
+                    "projects":     [],
+                }
                 break
-    if not user_info: return None
 
-    response = http_requests.get(f"{base_url}/project/list/{license_uuid}/paged", headers=headers, timeout=15)
-    if response.status_code == 200:
-        all_projects = response.json().get("data", {}).get("data", [])
-        if allowed_project_uuids:
-            projects = [p for p in all_projects if p.get("uuid") in allowed_project_uuids]
-        else:
-            projects = all_projects
-        def check_project(project):
-            pr = http_requests.get(f"{base_url}/project/{project['uuid']}/role/member/list", headers=headers, timeout=10)
-            if pr.status_code == 200:
-                pm_data = pr.json().get("data", {})
-                if isinstance(pm_data, dict):
-                    for pid, pm in pm_data.items():
-                        if pm.get("user", {}).get("email", "").lower() == email.lower():
-                            return {"name": project.get("title", ""), "uuid": project.get("uuid", ""),
-                                "role": pm.get("role", {}).get("name", "") if isinstance(pm.get("role"), dict) else str(pm.get("role", ""))}
-            return None
-        with ThreadPoolExecutor(max_workers=8) as pool:
-            results = list(pool.map(check_project, projects))
-        user_info["projects"] = [r for r in results if r is not None]
+    if not user_info:
+        return None
+
+    # Check project membership — only within registry-allowed projects
+    def check_project(project_uuid):
+        pr = http_requests.get(
+            f"{base_url}/project/{project_uuid}/role/member/list",
+            headers=headers, timeout=10
+        )
+        if pr.status_code == 200:
+            pm_data = pr.json().get("data", {})
+            if isinstance(pm_data, dict):
+                for pid, pm in pm_data.items():
+                    if pm.get("user", {}).get("email", "").lower() == email.lower():
+                        role = pm.get("role", {})
+                        return {
+                            "uuid": project_uuid,
+                            "role": role.get("name", "") if isinstance(role, dict) else str(role),
+                        }
+        return None
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(check_project, allowed_project_uuids))
+    user_info["projects"] = [r for r in results if r is not None]
     return user_info
 
 def forma_search_user(email, config, allowed_project_ids: list = None):
-    fc = config["forma"]
-    if not fc["account_id"]: return None
+    """Search for a user in Forma/ACC, scoped to registry-allowed project IDs.
+
+    If no allowed_project_ids are provided, returns None (no scope = no results).
+    Uses shared Forma credentials (falls back to owner config).
+    """
+    if not allowed_project_ids:
+        return None
+
+    fc = config.get("forma", {})
+    if not fc.get("account_id"):
+        owner_cfg = load_config(OWNER_EMAIL)
+        fc        = owner_cfg.get("forma", {})
+    if not fc.get("account_id"):
+        return None
+
     token = forma_get_token(config)
-    if not token: return None
+    if not token:
+        return None
+
     headers  = {"Authorization": f"Bearer {token}"}
     hub_info = None
     offset   = 0
+
+    # Find the user in the hub-level user list
     while True:
-        response = http_requests.get(f"https://developer.api.autodesk.com/hq/v1/accounts/{fc['account_id']}/users",
-            headers=headers, params={"limit": 100, "offset": offset}, timeout=15)
-        if response.status_code != 200: break
+        response = http_requests.get(
+            f"https://developer.api.autodesk.com/hq/v1/accounts/{fc['account_id']}/users",
+            headers=headers, params={"limit": 100, "offset": offset}, timeout=15
+        )
+        if response.status_code != 200:
+            print(f"[Forma] Hub users fetch failed: {response.status_code}")
+            break
         batch = response.json()
         if not batch: break
         for u in batch:
             if u.get("email", "").lower() == email.lower():
-                hub_info = {"found": True, "name": u.get("name", ""), "email": u.get("email", ""),
-                    "hub_role": u.get("role", ""), "hub_status": u.get("status", ""),
-                    "company": u.get("company_name") or u.get("company", ""),
-                    "job_title": u.get("job_title", ""), "last_sign_in": u.get("last_sign_in", ""),
-                    "user_id": u.get("id", ""), "autodesk_id": u.get("uid", ""), "projects": []}
+                hub_info = {
+                    "found":       True,
+                    "name":        u.get("name", ""),
+                    "email":       u.get("email", ""),
+                    "hub_role":    u.get("role", ""),
+                    "hub_status":  u.get("status", ""),
+                    "company":     u.get("company_name") or u.get("company", ""),
+                    "job_title":   u.get("job_title", ""),
+                    "last_sign_in": u.get("last_sign_in", ""),
+                    "user_id":     u.get("id", ""),
+                    "autodesk_id": u.get("uid", ""),
+                    "projects":    [],
+                }
                 break
         if hub_info: break
         offset += len(batch)
         if len(batch) < 100: break
-    if not hub_info: return None
 
-    all_projects = get_forma_project_names(config)
-    # Filter to allowed projects if specified
-    if allowed_project_ids:
-        projects = [p for p in all_projects if p.get("id") in allowed_project_ids]
-    else:
-        projects = all_projects
+    if not hub_info:
+        return None
 
-    def check_forma_project(project):
+    # Check project membership — only within registry-allowed projects
+    def check_forma_project(project_id):
         po = 0
         while True:
             response = http_requests.get(
-                f"https://developer.api.autodesk.com/construction/admin/v1/projects/{project['id']}/users",
-                headers=headers, params={"limit": 200, "offset": po}, timeout=10)
+                f"https://developer.api.autodesk.com/construction/admin/v1/projects/{project_id}/users",
+                headers=headers, params={"limit": 200, "offset": po}, timeout=10
+            )
             if response.status_code != 200: break
             batch = response.json().get("results", [])
             if not batch: break
             for u in batch:
                 if u.get("email", "").lower() == email.lower():
                     access = [k for k, v in u.get("accessLevels", {}).items() if v] if isinstance(u.get("accessLevels"), dict) else []
-                    return {"name": project["name"], "platform": project["platform"],
-                        "status": u.get("status", ""), "access_levels": ", ".join(access) if access else "member",
-                        "added_on": u.get("addedOn", "")}
+                    return {
+                        "project_id":    project_id,
+                        "status":        u.get("status", ""),
+                        "access_levels": ", ".join(access) if access else "member",
+                        "added_on":      u.get("addedOn", ""),
+                    }
             po += len(batch)
             if len(batch) < 200: break
         return None
 
     with ThreadPoolExecutor(max_workers=8) as pool:
-        results = list(pool.map(check_forma_project, projects))
+        results = list(pool.map(check_forma_project, allowed_project_ids))
     hub_info["projects"] = [r for r in results if r is not None]
     return hub_info
 # ---------------------------------------------------------------------------
@@ -1813,16 +1908,10 @@ async def invite_page(request: Request, user: str = Depends(require_user)):
 
 @app.get("/manage", response_class=HTMLResponse)
 async def manage_page(request: Request, user: str = Depends(require_user)):
-    config        = load_config(user)
-    log           = load_invite_log()
-    user_projects = get_user_projects(user)
-    if not is_owner(user) and user_projects:
-        log = [e for e in log if e.get("project_key") in user_projects
-               or e.get("project_id") in user_projects]
-    recent_invites = log[-20:][::-1] if log else []
+    config = load_config(user)
     return templates.TemplateResponse(request=request, name="manage.html", context={
-        "active_page": "manage", "recent_invites": recent_invites,
-        "current_user": user,
+        "active_page":    "manage",
+        "current_user":   user,
         "active_context": config.get("active_context", {}),
     })
 
@@ -2083,10 +2172,33 @@ async def debug_paths():
 
 @app.get("/api/projects")
 async def api_projects(user: str = Depends(require_user)):
-    """Return saved projects from config (no live API calls)."""
-    config = load_config(user)
+    """Return saved projects filtered to only those the user is an admin of in the registry."""
+    config   = load_config(user)
     projects = config.get("projects", {"morta": [], "revizto": [], "forma": []})
     context  = config.get("active_context", {})
+
+    # Owner sees everything
+    if not is_owner(user):
+        registry      = load_registry()
+        user_projects = {k: v for k, v in registry.items() if user in v.get("admins", [])}
+
+        # Collect allowed platform IDs from the registry entries this admin belongs to
+        allowed_morta_hubs    = {v["platforms"]["morta"]["hub_id"]
+                                  for v in user_projects.values()
+                                  if v.get("platforms", {}).get("morta", {}).get("hub_id")}
+        allowed_revizto_uuids = {v["platforms"]["revizto"]["project_uuid"]
+                                  for v in user_projects.values()
+                                  if v.get("platforms", {}).get("revizto", {}).get("project_uuid")}
+        allowed_forma_ids     = {v["platforms"]["forma"]["project_id"]
+                                  for v in user_projects.values()
+                                  if v.get("platforms", {}).get("forma", {}).get("project_id")}
+
+        projects = {
+            "morta":   [p for p in projects.get("morta",   []) if p.get("id")   in allowed_morta_hubs],
+            "revizto": [p for p in projects.get("revizto", []) if p.get("uuid") in allowed_revizto_uuids],
+            "forma":   [p for p in projects.get("forma",   []) if p.get("id")   in allowed_forma_ids],
+        }
+
     return JSONResponse({"projects": projects, "active_context": context})
 
 # ---------------------------------------------------------------------------
@@ -2142,6 +2254,26 @@ async def api_fetch_projects(request: Request, user: str = Depends(require_user)
         except Exception as e:
             results["forma"] = {"count": 0, "items": [], "error": str(e)}
 
+    # For non-owners, filter the saved project lists down to only registry-allowed projects
+    # so their config never stores projects they shouldn't have access to.
+    if not is_owner(user):
+        registry      = load_registry()
+        user_reg      = {k: v for k, v in registry.items() if user in v.get("admins", [])}
+        allowed_morta    = {v["platforms"]["morta"]["hub_id"]         for v in user_reg.values() if v.get("platforms", {}).get("morta", {}).get("hub_id")}
+        allowed_revizto  = {v["platforms"]["revizto"]["project_uuid"] for v in user_reg.values() if v.get("platforms", {}).get("revizto", {}).get("project_uuid")}
+        allowed_forma    = {v["platforms"]["forma"]["project_id"]      for v in user_reg.values() if v.get("platforms", {}).get("forma", {}).get("project_id")}
+        p = config.get("projects", {})
+        config["projects"] = {
+            "morta":   [x for x in p.get("morta",   []) if x.get("id")   in allowed_morta],
+            "revizto": [x for x in p.get("revizto", []) if x.get("uuid") in allowed_revizto],
+            "forma":   [x for x in p.get("forma",   []) if x.get("id")   in allowed_forma],
+        }
+        # Update results counts to reflect filtered lists
+        for plt in ["morta", "revizto", "forma"]:
+            if plt in results:
+                results[plt]["items"] = config["projects"][plt]
+                results[plt]["count"] = len(config["projects"][plt])
+
     save_config(config, user)
     return JSONResponse({"status": "ok", "results": results})
 
@@ -2158,8 +2290,16 @@ async def api_get_context(user: str = Depends(require_user)):
 async def api_set_context(request: Request, user: str = Depends(require_user)):
     body   = await request.json()
     config = load_config(user)
+
+    # For non-owners, validate the selected project key is one they're an admin of
+    project_key = body.get("active_project_key", "")
+    if project_key and not is_owner(user):
+        registry = load_registry()
+        if user not in registry.get(project_key, {}).get("admins", []):
+            raise HTTPException(status_code=403, detail="You are not an admin of this project.")
+
     config["active_context"] = {
-        "active_project_key":     body.get("active_project_key", ""),
+        "active_project_key":     project_key,
         "active_project_name":    body.get("active_project_name", ""),
         "morta_hub_id":           body.get("morta_hub_id", ""),
         "morta_hub_name":         body.get("morta_hub_name", ""),
@@ -2227,7 +2367,33 @@ async def api_exports_read(filename: str, user: str = Depends(require_user)):
 # API — Invite
 # ---------------------------------------------------------------------------
 
-@app.post("/api/invite/single")
+@app.get("/api/invite/log")
+async def api_invite_log(
+    project_key: str = None,
+    limit: int = 50,
+    user: str = Depends(require_user)
+):
+    """Return invite log entries scoped to the user's registry projects.
+
+    project_key: if provided, filter to that specific project only.
+    limit: max entries to return (most recent first), default 50.
+    """
+    log           = load_invite_log()
+    user_projects = get_user_projects(user)
+
+    if not is_owner(user):
+        # Non-owners only see entries for projects they manage
+        log = [e for e in log
+               if e.get("project_key") and e.get("project_key") in user_projects]
+
+    # If a specific project is selected, filter to that project only
+    if project_key:
+        log = [e for e in log if e.get("project_key") == project_key]
+
+    # Most recent first, capped at limit
+    log = log[-limit:][::-1]
+
+    return JSONResponse({"entries": log, "total": len(log), "project_key": project_key or "all"})
 async def api_invite_single(request: Request, user: str = Depends(require_user)):
     data   = await request.json()
     config = load_config(user)
@@ -2332,36 +2498,90 @@ async def api_invite_bulk(request: Request, user: str = Depends(require_user)):
 
 @app.get("/api/user/search")
 async def api_user_search(email: str, user: str = Depends(require_user)):
-    config   = load_config(user)
-    email    = email.strip().lower()
-    if not email: return JSONResponse({"found": False})
+    config = load_config(user)
+    email  = email.strip().lower()
+    if not email:
+        return JSONResponse({"found": False})
 
-    # Get projects this admin has access to from registry
-    registry      = load_registry()
-    admin_projects = {k: v for k, v in registry.items() if user in v.get("admins", [])}
+    # Registry is the single source of truth for search scope
+    registry       = load_registry()
+    admin_projects = registry if is_owner(user) else {
+        k: v for k, v in registry.items() if user in v.get("admins", [])
+    }
 
-    # If owner, they see everything (use all registry projects)
-    if user == OWNER_EMAIL:
-        admin_projects = registry
+    if not admin_projects:
+        return JSONResponse({
+            "found": False, "email": email,
+            "morta": None, "revizto": None, "forma": None,
+            "detail": "You have no projects assigned in the registry.",
+        })
 
-    # Extract per-platform allowed IDs
-    allowed_morta_hubs    = [v["platforms"]["morta"]["hub_id"]         for v in admin_projects.values() if v.get("platforms", {}).get("morta", {}).get("hub_id")]
-    allowed_revizto_uuids = [v["platforms"]["revizto"]["project_uuid"] for v in admin_projects.values() if v.get("platforms", {}).get("revizto", {}).get("project_uuid")]
-    allowed_forma_ids     = [v["platforms"]["forma"]["project_id"]      for v in admin_projects.values() if v.get("platforms", {}).get("forma", {}).get("project_id")]
+    # Extract scoped platform IDs from registry
+    allowed_morta_hubs    = [v["platforms"]["morta"]["hub_id"]
+                              for v in admin_projects.values()
+                              if v.get("platforms", {}).get("morta", {}).get("hub_id")]
+    allowed_revizto_uuids = [v["platforms"]["revizto"]["project_uuid"]
+                              for v in admin_projects.values()
+                              if v.get("platforms", {}).get("revizto", {}).get("project_uuid")]
+    allowed_forma_ids     = [v["platforms"]["forma"]["project_id"]
+                              for v in admin_projects.values()
+                              if v.get("platforms", {}).get("forma", {}).get("project_id")]
+
+    # Build a lookup of project names from the registry for enriching results
+    revizto_name_map = {
+        v["platforms"]["revizto"]["project_uuid"]: k
+        for k, v in admin_projects.items()
+        if v.get("platforms", {}).get("revizto", {}).get("project_uuid")
+    }
+    forma_name_map = {
+        v["platforms"]["forma"]["project_id"]: admin_projects[k].get("name", k)
+        for k, v in admin_projects.items()
+        if v.get("platforms", {}).get("forma", {}).get("project_id")
+    }
 
     loop = asyncio.get_event_loop()
     with ThreadPoolExecutor() as pool:
-        morta_fut   = loop.run_in_executor(pool, morta_search_user,   email, config, allowed_morta_hubs)
-        revizto_fut = loop.run_in_executor(pool, lambda: revizto_search_user(email, config, allowed_revizto_uuids, admin_email=user))
-        forma_fut   = loop.run_in_executor(pool, forma_search_user,   email, config, allowed_forma_ids)
-        morta_result, revizto_result, forma_result = await asyncio.gather(morta_fut, revizto_fut, forma_fut)
+        morta_fut   = loop.run_in_executor(
+            pool, morta_search_user, email, config, allowed_morta_hubs
+        )
+        revizto_fut = loop.run_in_executor(
+            pool, lambda: revizto_search_user(
+                email, config, allowed_revizto_uuids,
+                admin_email=user, registry_projects=admin_projects
+            )
+        )
+        forma_fut   = loop.run_in_executor(
+            pool, forma_search_user, email, config, allowed_forma_ids
+        )
+        morta_result, revizto_result, forma_result = await asyncio.gather(
+            morta_fut, revizto_fut, forma_fut
+        )
+
+    # Enrich Revizto project results with names from registry
+    if revizto_result and revizto_result.get("projects"):
+        for p in revizto_result["projects"]:
+            p["name"] = revizto_name_map.get(p.get("uuid"), p.get("uuid", ""))
+
+    # Enrich Forma project results with names from registry
+    if forma_result and forma_result.get("projects"):
+        for p in forma_result["projects"]:
+            p["name"] = forma_name_map.get(p.get("project_id"), p.get("project_id", ""))
 
     found = any(r is not None for r in [morta_result, revizto_result, forma_result])
     name  = ""
     for r in [morta_result, forma_result, revizto_result]:
-        if r and r.get("name"): name = r["name"]; break
-    return JSONResponse({"found": found, "name": name, "email": email,
-                         "morta": morta_result, "revizto": revizto_result, "forma": forma_result})
+        if r and r.get("name"):
+            name = r["name"]
+            break
+
+    return JSONResponse({
+        "found":   found,
+        "name":    name,
+        "email":   email,
+        "morta":   morta_result,
+        "revizto": revizto_result,
+        "forma":   forma_result,
+    })
 
 # ---------------------------------------------------------------------------
 # Run

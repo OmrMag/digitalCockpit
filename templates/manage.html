@@ -149,20 +149,17 @@
 
 <!-- ── Invite Log ──────────────────────────────────────────────────── -->
 <div class="card">
-    <div class="card-header"><span class="card-title">Invite Log</span><span style="font-size:var(--fs-xs);color:var(--text-dark-muted)">{{recent_invites|length}} record(s)</span></div>
-    {% if recent_invites %}
-    <div class="table-wrapper"><table><thead><tr><th>Date</th><th>Mode</th><th>Email</th><th>Name</th><th>Company</th><th>Morta</th><th>Revizto</th><th>Forma</th></tr></thead><tbody>
-    {% for inv in recent_invites %}<tr>
-        <td style="font-size:var(--fs-xs);color:var(--text-dark-muted);white-space:nowrap">{{inv.date}}</td>
-        <td><span class="card-badge {{'warning' if inv.mode=='bulk' else 'success'}}">{{inv.mode}}</span></td>
-        <td>{{inv.email}}</td><td>{{inv.first_name}} {{inv.last_name}}</td><td style="color:var(--text-dark-muted)">{{inv.company}}</td>
-        <td>{%if inv.morta_status=='success'%}<span class="status"><span class="status-dot success"></span>ok</span>{%elif inv.morta_status=='skipped'%}<span style="color:var(--text-dark-muted)">—</span>{%else%}<span class="status"><span class="status-dot error"></span>fail</span>{%endif%}</td>
-        <td>{%if inv.revizto_status=='success'%}<span class="status"><span class="status-dot success"></span>ok</span>{%elif inv.revizto_status=='skipped'%}<span style="color:var(--text-dark-muted)">—</span>{%else%}<span class="status"><span class="status-dot error"></span>fail</span>{%endif%}</td>
-        <td>{%if inv.forma_status=='success'%}<span class="status"><span class="status-dot success"></span>ok</span>{%elif inv.forma_status=='skipped'%}<span style="color:var(--text-dark-muted)">—</span>{%else%}<span class="status"><span class="status-dot error"></span>fail</span>{%endif%}</td>
-    </tr>{%endfor%}</tbody></table></div>
-    {% else %}
-    <div class="empty-state"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197"/></svg><h3>No activity yet</h3><p>Click "+ Invite" to add your first user.</p></div>
-    {% endif %}
+    <div class="card-header">
+        <span class="card-title">Invite Log</span>
+        <span id="logProjectLabel" style="font-size:var(--fs-xs);color:var(--accent);font-weight:500;margin-left:6px;"></span>
+        <span id="logCount" style="font-size:var(--fs-xs);color:var(--text-dark-muted);margin-left:auto;">—</span>
+    </div>
+    <div id="logBody">
+        <div class="empty-state">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197"/></svg>
+            <h3>Loading log...</h3>
+        </div>
+    </div>
 </div>
 
 
@@ -546,11 +543,13 @@ setInterval(loadPending, 60000);
 ═══════════════════════════════════════════════════ */
 let currentMode='single', currentStep=1, previewUsers=[];
 let projectData = {};
+let activeCtx   = {};
 
 async function loadActiveContext() {
     try {
         const res = await fetch('/api/context');
         const ctx = await res.json();
+        activeCtx   = ctx;
         projectData = {
             revizto_project_uuid: ctx.revizto_project_uuid || '',
             revizto_project_name: ctx.revizto_project_name || '',
@@ -559,9 +558,20 @@ async function loadActiveContext() {
             forma_project_id:     ctx.forma_project_id      || '',
             forma_project_name:   ctx.forma_project_name    || '',
         };
+        // Load invite log for the current active project
+        await loadInviteLog(ctx.active_project_key || null);
     } catch(e) {}
 }
 loadActiveContext();
+
+// Reload invite log whenever the sidebar project changes
+window.addEventListener('cockpit:projectChanged', (e) => {
+    activeCtx = { ...activeCtx, active_project_key: e.detail.key, active_project_name: e.detail.name };
+    projectData.revizto_project_uuid = e.detail.revizto_uuid || '';
+    projectData.morta_hub_id         = e.detail.morta_hub_id || '';
+    projectData.forma_project_id     = e.detail.forma_id     || '';
+    loadInviteLog(e.detail.key || null);
+});
 
 function setMode(mode){
     currentMode=mode;
@@ -668,10 +678,66 @@ function renderResults(single,bulk){
     if(single){const r=single[0];
         el.innerHTML=`<div class="alert alert-${r.morta_status?.startsWith('error')||r.revizto_status?.startsWith('error')||r.forma_status?.startsWith('error')?'warning':'success'}">Invite processed for ${r.email}</div>
         <div class="detail-grid"><div class="detail-item"><label>Morta</label><div class="value">${r.morta_status}</div></div><div class="detail-item"><label>Revizto</label><div class="value">${r.revizto_status}</div></div><div class="detail-item"><label>Forma</label><div class="value">${r.forma_status}</div></div></div>
-        <button class="btn btn-secondary" style="margin-top:12px" onclick="closeInviteModal();location.reload()">Close & Refresh</button>`;
+        <button class="btn btn-secondary" style="margin-top:12px" onclick="closeInviteModal();loadInviteLog(activeCtx.active_project_key||null)">Close & Refresh</button>`;
     } else if(bulk){
         el.innerHTML=`<div class="alert alert-${bulk.errors>0?'warning':'success'}">Processed ${bulk.total} users: ${bulk.success} success, ${bulk.errors} errors</div>
-        <button class="btn btn-secondary" onclick="closeInviteModal();location.reload()">Close & Refresh</button>`;
+        <button class="btn btn-secondary" onclick="closeInviteModal();loadInviteLog(activeCtx.active_project_key||null)">Close & Refresh</button>`;
+    }
+}
+
+/* ═══════════════════════════════════════════════════
+   INVITE LOG
+═══════════════════════════════════════════════════ */
+async function loadInviteLog(projectKey) {
+    const body    = document.getElementById('logBody');
+    const countEl = document.getElementById('logCount');
+    const labelEl = document.getElementById('logProjectLabel');
+
+    body.innerHTML = `<div style="padding:16px;text-align:center;color:var(--text-dark-muted);font-size:var(--fs-xs);">Loading...</div>`;
+
+    try {
+        const url = projectKey ? `/api/invite/log?project_key=${encodeURIComponent(projectKey)}` : '/api/invite/log';
+        const res  = await fetch(url);
+        const data = await res.json();
+        const entries = data.entries || [];
+
+        labelEl.textContent = projectKey ? `· ${activeCtx.active_project_name || projectKey}` : '';
+        countEl.textContent = `${entries.length} record(s)`;
+
+        if (!entries.length) {
+            body.innerHTML = `<div class="empty-state">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197"/></svg>
+                <h3>No activity yet</h3>
+                <p>${projectKey ? 'No invites logged for this project.' : 'Select a project to see its invite log.'}</p>
+            </div>`;
+            return;
+        }
+
+        const statusCell = (val) => {
+            if (val === 'success') return `<span class="status"><span class="status-dot success"></span>ok</span>`;
+            if (val === 'skipped') return `<span style="color:var(--text-dark-muted)">—</span>`;
+            return `<span class="status"><span class="status-dot error"></span>fail</span>`;
+        };
+
+        const rows = entries.map(e => `<tr>
+            <td style="font-size:var(--fs-xs);color:var(--text-dark-muted);white-space:nowrap">${esc(e.date||'')}</td>
+            <td><span class="card-badge ${e.mode==='bulk'?'warning':'success'}">${esc(e.mode||'')}</span></td>
+            <td>${esc(e.email||'')}</td>
+            <td>${esc(((e.first_name||'')+' '+(e.last_name||'')).trim())}</td>
+            <td style="color:var(--text-dark-muted)">${esc(e.company||'')}</td>
+            <td>${statusCell(e.morta_status)}</td>
+            <td>${statusCell(e.revizto_status)}</td>
+            <td>${statusCell(e.forma_status)}</td>
+        </tr>`).join('');
+
+        body.innerHTML = `<div class="table-wrapper">
+            <table><thead><tr>
+                <th>Date</th><th>Mode</th><th>Email</th><th>Name</th><th>Company</th>
+                <th>Morta</th><th>Revizto</th><th>Forma</th>
+            </tr></thead><tbody>${rows}</tbody></table>
+        </div>`;
+    } catch(e) {
+        body.innerHTML = `<div style="padding:16px;color:var(--error);font-size:var(--fs-xs);">Failed to load log: ${e.message}</div>`;
     }
 }
 
@@ -747,12 +813,14 @@ function renderRevizto(r){
     const c=document.getElementById('reviztoContent'),t=document.getElementById('reviztoTitle');
     if(!r){t.textContent='';c.innerHTML='<div class="not-found">Not found in Revizto</div>';return;}
     t.textContent=r.license_role;
-    const phtml=r.projects&&r.projects.length?'<div class="project-list">'+r.projects.map(p=>`<div class="project-row"><span class="proj-name">${p.name}</span><span class="proj-meta">${p.role}</span></div>`).join('')+'</div>':'<div class="not-found">No project assignments</div>';
+    const phtml=r.projects&&r.projects.length
+        ?'<div class="project-list">'+r.projects.map(p=>`<div class="project-row"><span class="proj-name">${esc(p.name||p.uuid)}</span><span class="proj-meta">${esc(p.role)}</span></div>`).join('')+'</div>'
+        :'<div class="not-found">No project assignments found in your registry projects</div>';
     c.innerHTML=`<div class="detail-grid">
-        <div class="detail-item"><label>License Role</label><div class="value hacker-animate">${r.license_role}</div></div>
-        <div class="detail-item"><label>Status</label><div class="value hacker-animate">${r.status}</div></div>
-        <div class="detail-item"><label>Company</label><div class="value hacker-animate">${r.company||'—'}</div></div>
-        <div class="detail-item"><label>Region</label><div class="value hacker-animate">${r.region||'—'}</div></div>
+        <div class="detail-item"><label>License Role</label><div class="value hacker-animate">${esc(r.license_role)}</div></div>
+        <div class="detail-item"><label>Status</label><div class="value hacker-animate">${esc(r.status)}</div></div>
+        <div class="detail-item"><label>Company</label><div class="value hacker-animate">${esc(r.company||'—')}</div></div>
+        <div class="detail-item"><label>Region</label><div class="value hacker-animate">${esc(r.region||'—')}</div></div>
         <div class="detail-item"><label>Last Active</label><div class="value hacker-animate">${r.last_active?r.last_active.split(' ')[0]:'—'}</div></div>
     </div><div style="margin-top:10px"><label style="font-size:var(--fs-xs);color:var(--text-dark-muted);text-transform:uppercase;letter-spacing:.3px;font-weight:600">Projects (${r.projects?r.projects.length:0})</label>${phtml}</div>`;
 }
@@ -761,12 +829,14 @@ function renderForma(f){
     const c=document.getElementById('formaContent'),t=document.getElementById('formaTitle');
     if(!f){t.textContent='';c.innerHTML='<div class="not-found">Not found in Forma/ACC</div>';return;}
     t.textContent=f.hub_role;
-    const phtml=f.projects&&f.projects.length?'<div class="project-list">'+f.projects.map(p=>`<div class="project-row"><span class="proj-name">${p.name}</span><span class="proj-meta">${p.platform}</span><span class="proj-meta">${p.access_levels}</span></div>`).join('')+'</div>':'<div class="not-found">No project assignments</div>';
+    const phtml=f.projects&&f.projects.length
+        ?'<div class="project-list">'+f.projects.map(p=>`<div class="project-row"><span class="proj-name">${esc(p.name||p.project_id)}</span><span class="proj-meta">${esc(p.access_levels)}</span><span class="proj-meta">${esc(p.status)}</span></div>`).join('')+'</div>'
+        :'<div class="not-found">No project assignments found in your registry projects</div>';
     c.innerHTML=`<div class="detail-grid">
-        <div class="detail-item"><label>Hub Role</label><div class="value hacker-animate">${f.hub_role}</div></div>
-        <div class="detail-item"><label>Status</label><div class="value hacker-animate">${f.hub_status}</div></div>
-        <div class="detail-item"><label>Company</label><div class="value hacker-animate">${f.company||'—'}</div></div>
-        <div class="detail-item"><label>Job Title</label><div class="value hacker-animate">${f.job_title||'—'}</div></div>
+        <div class="detail-item"><label>Hub Role</label><div class="value hacker-animate">${esc(f.hub_role)}</div></div>
+        <div class="detail-item"><label>Status</label><div class="value hacker-animate">${esc(f.hub_status)}</div></div>
+        <div class="detail-item"><label>Company</label><div class="value hacker-animate">${esc(f.company||'—')}</div></div>
+        <div class="detail-item"><label>Job Title</label><div class="value hacker-animate">${esc(f.job_title||'—')}</div></div>
         <div class="detail-item"><label>Last Sign In</label><div class="value hacker-animate">${f.last_sign_in?f.last_sign_in.split('T')[0]:'—'}</div></div>
     </div><div style="margin-top:10px"><label style="font-size:var(--fs-xs);color:var(--text-dark-muted);text-transform:uppercase;letter-spacing:.3px;font-weight:600">Projects (${f.projects?f.projects.length:0})</label>${phtml}</div>`;
 }

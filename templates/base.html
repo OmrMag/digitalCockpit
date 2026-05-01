@@ -331,6 +331,7 @@
                     forma_project_id:     '', forma_project_name: '', forma_platform: '',
                 })
             });
+            window.dispatchEvent(new CustomEvent('cockpit:projectChanged', { detail: { key: '', name: '' } }));
             return;
         }
 
@@ -353,6 +354,17 @@
                 forma_platform:       'acc',
             })
         });
+
+        // Notify child pages that the active project has changed
+        window.dispatchEvent(new CustomEvent('cockpit:projectChanged', {
+            detail: {
+                key,
+                name:          proj.name,
+                revizto_uuid:  p.revizto?.project_uuid || '',
+                morta_hub_id:  p.morta?.hub_id         || '',
+                forma_id:      p.forma?.project_id     || '',
+            }
+        }));
     }
 
     // ── Copy portal link ──────────────────────────────────────────
