@@ -1,11 +1,75 @@
 import json
 import os
 import requests
-from Revizto_Config import REGION, BASE_URL, ACCESS_CODE, TOKENS_FILE
+from Revizto_Config import REGION, BASE_URL, ACCESS_CODE, TOKENS_FILE, _ROOT_DIR
 
 # Re-export for backward compatibility
 region = REGION
 
+# ---------------------------------------------------------------------------
+# Token persistence — blob when running under the web app, local disk otherwise
+# ---------------------------------------------------------------------------
+
+_COCKPIT_USER = os.environ.get("COCKPIT_USER", "")  # set by app.py before subprocess
+_AZURE_CONN   = os.environ.get("AZURE_STORAGE_CONNECTION_STRING", "")
+_BLOB_CONTAINER = "cockpit-data"
+
+
+def _safe_email(email: str) -> str:
+    return email.lower().replace("@", "_at_").replace(".", "_")
+
+
+def _blob_key() -> str:
+    """Per-admin blob key for this region's tokens."""
+    return f"revizto_tokens_{REGION}_{_safe_email(_COCKPIT_USER)}.json"
+
+
+def _get_blob_client():
+    if not _AZURE_CONN or not _COCKPIT_USER:
+        return None
+    try:
+        from azure.storage.blob import BlobServiceClient
+        svc = BlobServiceClient.from_connection_string(_AZURE_CONN)
+        return svc.get_blob_client(container=_BLOB_CONTAINER, blob=_blob_key())
+    except Exception:
+        return None
+
+
+def _load_tokens() -> dict:
+    """Load token dict from blob (web app) or local disk (VS Code)."""
+    if _COCKPIT_USER and _AZURE_CONN:
+        client = _get_blob_client()
+        if client:
+            try:
+                data = client.download_blob().readall()
+                return json.loads(data)
+            except Exception:
+                pass
+    # Local disk fallback (VS Code runs, or blob unavailable)
+    if os.path.exists(TOKENS_FILE):
+        with open(TOKENS_FILE, "r") as f:
+            return json.load(f)
+    return {}
+
+
+def _save_tokens(tokens: dict):
+    """Persist token dict to blob (web app) or local disk (VS Code)."""
+    if _COCKPIT_USER and _AZURE_CONN:
+        client = _get_blob_client()
+        if client:
+            try:
+                client.upload_blob(
+                    json.dumps(tokens, indent=4).encode(),
+                    overwrite=True
+                )
+                return
+            except Exception as e:
+                print(f"[Revizto] Blob write failed: {e} — falling back to disk")
+    with open(TOKENS_FILE, "w") as f:
+        json.dump(tokens, f, indent=4)
+
+
+# ---------------------------------------------------------------------------
 
 def _auth_with_access_code() -> dict:
     """Authenticate using the one-time access code."""
@@ -37,21 +101,22 @@ def _refresh_token(refresh_token: str) -> dict:
 
 
 def get_access_token() -> str:
-    """Get a valid access token, refreshing if needed."""
-    # Try refresh first
-    if os.path.exists(TOKENS_FILE):
-        with open(TOKENS_FILE, "r") as f:
-            tokens = json.load(f)
+    """Get a valid access token, refreshing if needed.
 
-        data = _refresh_token(tokens.get("refresh_token", ""))
+    When running under the web app (COCKPIT_USER env var is set), tokens are
+    stored per-admin in Azure Blob so they survive container restarts.
+    When running from VS Code (no env var), tokens go to the local TOKENS_FILE.
+    """
+    tokens = _load_tokens()
+
+    if tokens.get("refresh_token"):
+        data = _refresh_token(tokens["refresh_token"])
         if data and "access_token" in data:
-            with open(TOKENS_FILE, "w") as f:
-                json.dump({
-                    "access_token": data["access_token"],
-                    "refresh_token": data["refresh_token"]
-                }, f, indent=4)
+            _save_tokens({
+                "access_token":  data["access_token"],
+                "refresh_token": data["refresh_token"],
+            })
             return data["access_token"]
-
         print("[Revizto] Token refresh failed, falling back to access code...")
 
     # Fall back to access code
@@ -60,12 +125,10 @@ def get_access_token() -> str:
         print("[Revizto] Authentication failed completely.")
         return ""
 
-    with open(TOKENS_FILE, "w") as f:
-        json.dump({
-            "access_token": data["access_token"],
-            "refresh_token": data["refresh_token"]
-        }, f, indent=4)
-
+    _save_tokens({
+        "access_token":  data["access_token"],
+        "refresh_token": data["refresh_token"],
+    })
     return data["access_token"]
 
 
@@ -74,6 +137,6 @@ def get_headers() -> dict:
     token = get_access_token()
     return {
         "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
-        "Accept": "application/json"
+        "Content-Type":  "application/json",
+        "Accept":        "application/json"
     }

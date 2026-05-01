@@ -18,6 +18,49 @@ TOKEN_URL  = "https://developer.api.autodesk.com/authentication/v2/token"
 
 _token_lock = Lock()
 
+# Blob config — shared token (Forma credentials are organisation-wide)
+_AZURE_CONN     = os.environ.get("AZURE_STORAGE_CONNECTION_STRING", "")
+_BLOB_CONTAINER = "cockpit-data"
+_BLOB_KEY       = "forma_tokens.json"
+
+
+def _get_blob_client():
+    if not _AZURE_CONN:
+        return None
+    try:
+        from azure.storage.blob import BlobServiceClient
+        svc = BlobServiceClient.from_connection_string(_AZURE_CONN)
+        return svc.get_blob_client(container=_BLOB_CONTAINER, blob=_BLOB_KEY)
+    except Exception:
+        return None
+
+
+def _load_token_data() -> dict:
+    if _AZURE_CONN:
+        client = _get_blob_client()
+        if client:
+            try:
+                return json.loads(client.download_blob().readall())
+            except Exception:
+                pass
+    if os.path.exists(TOKEN_FILE):
+        with open(TOKEN_FILE, "r") as f:
+            return json.load(f)
+    return {}
+
+
+def _save_token_data(data: dict):
+    if _AZURE_CONN:
+        client = _get_blob_client()
+        if client:
+            try:
+                client.upload_blob(json.dumps(data, indent=4).encode(), overwrite=True)
+                return
+            except Exception as e:
+                print(f"[Forma] Blob write failed: {e} — falling back to disk")
+    with open(TOKEN_FILE, "w") as f:
+        json.dump(data, f, indent=4)
+
 
 def fetch_new_token() -> dict:
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
@@ -34,8 +77,7 @@ def fetch_new_token() -> dict:
             "access_token": data["access_token"],
             "expires_at":   time.time() + data.get("expires_in", 3600) - 60,
         }
-        with open(TOKEN_FILE, "w") as f:
-            json.dump(token_data, f, indent=4)
+        _save_token_data(token_data)
         return token_data
     print(f"[Forma] Error fetching token: {response.status_code}")
     print(json.dumps(response.json(), indent=4))
@@ -43,13 +85,13 @@ def fetch_new_token() -> dict:
 
 
 def get_token() -> str:
-    """Return a valid 2-legged access token."""
+    """Return a valid 2-legged access token.
+    Token is cached in blob (Azure) or local disk (VS Code) and reused until expiry.
+    """
     with _token_lock:
-        if os.path.exists(TOKEN_FILE):
-            with open(TOKEN_FILE, "r") as f:
-                tokens = json.load(f)
-            if time.time() < tokens.get("expires_at", 0):
-                return tokens["access_token"]
+        tokens = _load_token_data()
+        if tokens and time.time() < tokens.get("expires_at", 0):
+            return tokens["access_token"]
         return fetch_new_token()["access_token"]
 
 

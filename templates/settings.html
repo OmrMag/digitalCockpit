@@ -87,10 +87,70 @@
     </div>
 
     <!-- Forma / ACC -->
-    <div class="card" style="margin-bottom: 24px;">
+    <div class="card {% if not is_owner %}forma-locked{% endif %}" style="margin-bottom: 24px;">
         <div class="card-header">
-            <span class="card-title"><span class="platform-tag forma">Forma / ACC</span> Configuration</span>
+            <span class="card-title">
+                <span class="platform-tag forma">Forma / ACC</span> Configuration
+            </span>
+            {% if not is_owner %}
+            <span class="forma-lock-badge">
+                <svg width="13" height="13" viewBox="0 0 16 16" fill="none" style="vertical-align:-2px; margin-right:4px;">
+                    <rect x="3" y="7" width="10" height="8" rx="2" stroke="currentColor" stroke-width="1.4"/>
+                    <path d="M5 7V5a3 3 0 0 1 6 0v2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+                </svg>
+                Managed by system owner — shared across all admins
+            </span>
+            {% endif %}
         </div>
+
+        {% if not is_owner %}
+        <!-- Non-owner: read-only masked view -->
+        <div class="forma-locked-overlay">
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Client ID (2-legged)</label>
+                    <input type="password" value="••••••••••••••••" disabled tabindex="-1">
+                </div>
+                <div class="form-group">
+                    <label>Client Secret (2-legged)</label>
+                    <input type="password" value="••••••••••••••••" disabled tabindex="-1">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Client ID (3-legged)</label>
+                    <input type="password" value="••••••••••••••••" disabled tabindex="-1">
+                </div>
+                <div class="form-group">
+                    <label>Client Secret (3-legged)</label>
+                    <input type="password" value="••••••••••••••••" disabled tabindex="-1">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Account ID</label>
+                    <input type="text" value="••••••••••••••••" disabled tabindex="-1">
+                </div>
+                <div class="form-group">
+                    <label>Admin User ID</label>
+                    <input type="text" value="••••••••••••••••" disabled tabindex="-1">
+                </div>
+            </div>
+            <!-- Hidden fields so the form POST doesn't wipe these values on save -->
+            <input type="hidden" name="forma_client_id"     value="{{ config.forma.client_id or '' }}">
+            <input type="hidden" name="forma_client_secret" value="{{ config.forma.client_secret or '' }}">
+            <input type="hidden" name="forma_client_id_3l"     value="{{ config.forma.client_id_3l or '' }}">
+            <input type="hidden" name="forma_client_secret_3l" value="{{ config.forma.client_secret_3l or '' }}">
+            <input type="hidden" name="forma_account_id"    value="{{ config.forma.account_id or '' }}">
+            <input type="hidden" name="forma_project_id"    value="{{ config.forma.project_id or '' }}">
+            <input type="hidden" name="forma_admin_user_id" value="{{ config.forma.admin_user_id or '' }}">
+        </div>
+        <p style="font-size:var(--fs-xs); color:var(--text-dark-muted); margin-top:4px;">
+            Forma credentials are shared organisation-wide and managed by the system owner. Your extractions will use them automatically.
+        </p>
+
+        {% else %}
+        <!-- Owner: fully editable -->
         <div class="form-row">
             <div class="form-group">
                 <label>Client ID (2-legged)</label>
@@ -124,6 +184,7 @@
         <p style="font-size:var(--fs-xs); color:var(--text-dark-muted); margin-top:-4px;">
             Project selection is managed from the sidebar context selector.
         </p>
+        {% endif %}
     </div>
 
     <div style="display:flex; gap:12px; justify-content:flex-end;">
@@ -157,6 +218,46 @@
 }
 .revizto-tab:hover { color: var(--navy); background: var(--cream-mid); }
 .revizto-tab.active { color: var(--navy); border-bottom-color: var(--navy); }
+
+/* Forma locked state */
+.forma-locked {
+    opacity: 0.65;
+    position: relative;
+}
+.forma-locked::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: var(--radius-lg, 10px);
+    background: repeating-linear-gradient(
+        -45deg,
+        transparent,
+        transparent 8px,
+        rgba(0,0,0,0.015) 8px,
+        rgba(0,0,0,0.015) 10px
+    );
+    pointer-events: none;
+}
+.forma-lock-badge {
+    display: inline-flex;
+    align-items: center;
+    font-size: var(--fs-xs);
+    color: var(--text-dark-muted);
+    background: var(--cream-mid, #f0ece4);
+    border: 1px solid var(--border-cream);
+    border-radius: 4px;
+    padding: 3px 9px;
+    margin-left: auto;
+    font-weight: 500;
+    user-select: none;
+}
+.forma-locked-overlay input[disabled] {
+    cursor: not-allowed;
+    background: var(--cream-mid, #f0ece4);
+    color: var(--text-dark-muted);
+    border-color: var(--border-cream);
+    letter-spacing: 2px;
+}
 </style>
 <script>
 function switchReviztoTab(region, btn) {

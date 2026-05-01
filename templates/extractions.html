@@ -477,7 +477,27 @@ function showResult(data) {
     el.style.background = ok ? 'rgba(52,211,153,0.08)' : 'rgba(248,113,113,0.08)';
     el.style.border     = ok ? '1px solid rgba(52,211,153,0.2)' : '1px solid rgba(248,113,113,0.2)';
     el.style.color      = ok ? '#065f46' : '#991b1b';
-    el.textContent      = data.message || (ok ? 'Extraction complete.' : 'Extraction failed.');
+
+    const msg = document.createElement('div');
+    msg.textContent = data.message || (ok ? 'Extraction complete.' : 'Extraction failed.');
+    el.innerHTML = '';
+    el.appendChild(msg);
+
+    // Download buttons for each file produced
+    if (ok && data.files && data.files.length) {
+        const btnRow = document.createElement('div');
+        btnRow.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;';
+        data.files.forEach(f => {
+            const btn = document.createElement('a');
+            btn.href     = f.url;
+            btn.download = f.filename;
+            btn.style.cssText = 'display:inline-flex;align-items:center;gap:5px;padding:5px 12px;border-radius:5px;font-size:11px;font-weight:600;text-decoration:none;background:rgba(52,211,153,0.15);color:#065f46;border:1px solid rgba(52,211,153,0.3);cursor:pointer;';
+            btn.innerHTML = `<svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M8 1v9M4 7l4 4 4-4M2 13h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg> ${f.filename} <span style="opacity:0.6;">${f.size_kb}kb</span>`;
+            btnRow.appendChild(btn);
+        });
+        el.appendChild(btnRow);
+    }
+
     badge.style.display = 'inline-block';
     badge.className     = `card-badge ${ok ? 'success' : 'error'}`;
     badge.textContent   = ok ? 'Success' : 'Failed';

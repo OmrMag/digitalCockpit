@@ -24,6 +24,8 @@ app = FastAPI(title="Digital Construction Cockpit", version="0.2")
 BASE_DIR    = Path(__file__).parent
 EXPORTS_DIR = BASE_DIR / "exports"
 EXPORTS_DIR.mkdir(exist_ok=True)
+TEMP_DIR    = BASE_DIR / "temp"
+TEMP_DIR.mkdir(exist_ok=True)
 SCRIPT_DIRS = {
     "revizto": BASE_DIR / "codeRevizto" / "vsCode",
     "morta":   BASE_DIR / "codeMorta"   / "vsCode",
@@ -99,6 +101,33 @@ def blob_delete(name: str):
         pass
 
 USE_BLOB = bool(AZURE_STORAGE_CONNECTION_STRING)
+
+# ── Email (SendGrid) ───────────────────────────────────────────────────────
+SENDGRID_API_KEY = os.environ.get("SENDGRID_API_KEY", "")
+EMAIL_FROM       = os.environ.get("EMAIL_FROM", "cockpit@alec.ae")
+EMAIL_FROM_NAME  = "Digital Construction Cockpit"
+
+def send_email(to_emails: list, subject: str, html_body: str) -> bool:
+    """Send email via SendGrid. Returns True on success."""
+    if not SENDGRID_API_KEY or not to_emails:
+        return False
+    payload = {
+        "personalizations": [{"to": [{"email": e} for e in to_emails]}],
+        "from": {"email": EMAIL_FROM, "name": EMAIL_FROM_NAME},
+        "subject": subject,
+        "content": [{"type": "text/html", "value": html_body}],
+    }
+    try:
+        resp = http_requests.post(
+            "https://api.sendgrid.com/v3/mail/send",
+            headers={"Authorization": f"Bearer {SENDGRID_API_KEY}",
+                     "Content-Type": "application/json"},
+            json=payload, timeout=10
+        )
+        return resp.status_code in (200, 202)
+    except Exception as e:
+        print(f"[Email] Send failed: {e}")
+        return False
 
 # ── Project Registry helpers ───────────────────────────────────────────────
 def load_registry() -> dict:
@@ -278,6 +307,165 @@ def append_invite_log(entries):
     save_invite_log(log)
 
 # ---------------------------------------------------------------------------
+# Per-user temp directory  (extraction outputs, session-scoped, 24h TTL)
+# ---------------------------------------------------------------------------
+
+def get_user_temp_dir(email: str) -> Path:
+    """Return the per-user temp directory, creating it if needed."""
+    d = TEMP_DIR / _safe_email(email)
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+def cleanup_stale_temp_dirs(max_age_hours: int = 24):
+    """Delete per-user temp folders older than max_age_hours. Called on each extraction."""
+    import time as _time
+    cutoff = _time.time() - (max_age_hours * 3600)
+    for child in TEMP_DIR.iterdir():
+        if child.is_dir():
+            try:
+                # Use the most-recently-modified file in the folder as the age marker
+                mtime = max((f.stat().st_mtime for f in child.rglob("*") if f.is_file()), default=child.stat().st_mtime)
+                if mtime < cutoff:
+                    import shutil
+                    shutil.rmtree(child, ignore_errors=True)
+                    print(f"[Temp] Cleaned up stale dir: {child.name}")
+            except Exception:
+                pass
+
+# ---------------------------------------------------------------------------
+# Token Storage Helpers  (blob-backed, local-disk fallback)
+# ---------------------------------------------------------------------------
+
+def _safe_email(email: str) -> str:
+    """Convert an email to a safe filename segment."""
+    return email.lower().replace("@", "_at_").replace(".", "_")
+
+def _revizto_token_blob_key(region: str, email: str) -> str:
+    """Blob key for a per-admin, per-region Revizto token file."""
+    return f"revizto_tokens_{region}_{_safe_email(email)}.json"
+
+def _revizto_token_local_path(region: str, email: str = None) -> Path:
+    """Local fallback path — per-admin when email given, legacy shared otherwise."""
+    if email:
+        return BASE_DIR / f"revizto_tokens_{region}_{_safe_email(email)}.json"
+    return BASE_DIR / f"revizto_tokens_{region}.json"
+
+def load_revizto_tokens(region: str, email: str) -> dict:
+    """Load Revizto token dict for a specific admin + region."""
+    if USE_BLOB:
+        data = blob_read(_revizto_token_blob_key(region, email))
+        if data:
+            return data
+    path = _revizto_token_local_path(region, email)
+    if path.exists():
+        with open(path) as f:
+            return json.load(f)
+    # Legacy fallback — shared file used before per-user tokens
+    legacy = BASE_DIR / f"revizto_tokens_{region}.json"
+    if legacy.exists():
+        with open(legacy) as f:
+            return json.load(f)
+    return {}
+
+def save_revizto_tokens(region: str, email: str, data: dict):
+    """Persist Revizto token dict for a specific admin + region."""
+    if USE_BLOB:
+        blob_write(_revizto_token_blob_key(region, email), data)
+    else:
+        path = _revizto_token_local_path(region, email)
+        with open(path, "w") as f:
+            json.dump(data, f, indent=4)
+
+# Forma 2-legged token — shared credentials, one token for all
+_FORMA_TOKEN_BLOB_KEY   = "forma_tokens.json"
+_FORMA_TOKEN_LOCAL_PATH = BASE_DIR / "forma_tokens.json"
+
+def load_forma_tokens() -> dict:
+    if USE_BLOB:
+        data = blob_read(_FORMA_TOKEN_BLOB_KEY)
+        if data:
+            return data
+    if _FORMA_TOKEN_LOCAL_PATH.exists():
+        with open(_FORMA_TOKEN_LOCAL_PATH) as f:
+            return json.load(f)
+    return {}
+
+def save_forma_tokens(data: dict):
+    if USE_BLOB:
+        blob_write(_FORMA_TOKEN_BLOB_KEY, data)
+    else:
+        with open(_FORMA_TOKEN_LOCAL_PATH, "w") as f:
+            json.dump(data, f, indent=4)
+
+_forma_token_lock_obj = None
+
+def _get_forma_lock():
+    """Lazy-init a threading lock for Forma token refresh."""
+    global _forma_token_lock_obj
+    if _forma_token_lock_obj is None:
+        import threading
+        _forma_token_lock_obj = threading.Lock()
+    return _forma_token_lock_obj
+
+def forma_get_token(config) -> str:
+    """Return a valid Forma 2-legged access token.
+    Uses shared Forma credentials (client_id / client_secret).
+    Falls back to owner config if admin config has no Forma creds.
+    Token is cached in blob (or local disk) and reused until expiry.
+    """
+    import time
+    fc = config.get("forma", {})
+    client_id     = fc.get("client_id", "")
+    client_secret = fc.get("client_secret", "")
+
+    # Fall back to owner config if this admin has no Forma credentials
+    if not client_id or not client_secret:
+        owner_cfg = load_config(OWNER_EMAIL)
+        fc2       = owner_cfg.get("forma", {})
+        client_id     = fc2.get("client_id", "")
+        client_secret = fc2.get("client_secret", "")
+
+    if not client_id or not client_secret:
+        print("[Forma] No client credentials available — configure Forma in Settings")
+        return ""
+
+    with _get_forma_lock():
+        tokens = load_forma_tokens()
+        if tokens and time.time() < tokens.get("expires_at", 0):
+            return tokens["access_token"]
+
+        # Fetch a new 2-legged token
+        TOKEN_URL = "https://developer.api.autodesk.com/authentication/v2/token"
+        try:
+            r = http_requests.post(
+                TOKEN_URL,
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                data={
+                    "grant_type":    "client_credentials",
+                    "client_id":     client_id,
+                    "client_secret": client_secret,
+                    "scope":         "account:read account:write data:read",
+                },
+                timeout=15,
+            )
+        except Exception as e:
+            print(f"[Forma] Token request failed: {e}")
+            return ""
+
+        if r.status_code != 200:
+            print(f"[Forma] Token fetch failed: {r.status_code} {r.text[:200]}")
+            return ""
+
+        data = r.json()
+        token_data = {
+            "access_token": data["access_token"],
+            "expires_at":   time.time() + data.get("expires_in", 3600) - 60,
+        }
+        save_forma_tokens(token_data)
+        print("[Forma] New 2-legged token obtained and cached")
+        return token_data["access_token"]
+
+# ---------------------------------------------------------------------------
 # Platform Helpers — Names / Fetch
 # ---------------------------------------------------------------------------
 
@@ -315,37 +503,45 @@ def fetch_morta_hubs(config):
         if not f.get("isDeleted", False)
     ]
 
-def revizto_get_token_for_region(config, region: str) -> str:
-    """Get a valid Revizto access token for a specific region."""
-    rc          = config.get(f"revizto_{region}", {})
-    base_url    = f"https://api.{region}.revizto.com/v5"
-    tokens_file = BASE_DIR / f"revizto_tokens_{region}.json"
+def revizto_get_token_for_region(config, region: str, email: str = None) -> str:
+    """Get a valid Revizto access token for a specific admin + region.
 
-    # Try refresh token first
-    if tokens_file.exists():
-        with open(tokens_file) as f:
-            tokens = json.load(f)
-        refresh_token = tokens.get("refresh_token", "")
-        if refresh_token:
-            r = http_requests.post(
-                f"{base_url}/oauth2",
-                headers={"Content-Type": "application/x-www-form-urlencoded"},
-                data={"grant_type": "refresh_token", "refresh_token": refresh_token},
-                timeout=10,
-            )
-            print(f"[Revizto/{region}] Token refresh → {r.status_code}")
-            if r.status_code == 200 and "access_token" in r.json():
-                data = r.json()
-                with open(tokens_file, "w") as f:
-                    json.dump({"access_token": data["access_token"], "refresh_token": data["refresh_token"]}, f, indent=4)
-                return data["access_token"]
-            else:
-                print(f"[Revizto/{region}] Refresh failed: {r.text[:200]}")
-        else:
-            print(f"[Revizto/{region}] tokens.json exists but has no refresh_token — deleting and retrying with access code")
-            tokens_file.unlink(missing_ok=True)
+    Tokens are stored per-admin in blob storage (key: revizto_tokens_{region}_{email}.json)
+    so they survive Azure container restarts and are never shared between admins.
 
-    # Fall back to access code
+    email: the logged-in admin's email. When called from a web route, always pass
+           the user from Depends(require_user). Omit only for VS Code / CLI runs.
+    """
+    rc       = config.get(f"revizto_{region}", {})
+    base_url = f"https://api.{region}.revizto.com/v5"
+
+    # --- Try refresh token ---
+    tokens = load_revizto_tokens(region, email) if email else {}
+    if not tokens:
+        # Legacy local-disk fallback for VS Code runs with no email
+        legacy = BASE_DIR / f"revizto_tokens_{region}.json"
+        if legacy.exists():
+            with open(legacy) as f:
+                tokens = json.load(f)
+
+    refresh_token = tokens.get("refresh_token", "")
+    if refresh_token:
+        r = http_requests.post(
+            f"{base_url}/oauth2",
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            data={"grant_type": "refresh_token", "refresh_token": refresh_token},
+            timeout=10,
+        )
+        print(f"[Revizto/{region}] Token refresh → {r.status_code}")
+        if r.status_code == 200 and "access_token" in r.json():
+            data = r.json()
+            new_tokens = {"access_token": data["access_token"], "refresh_token": data["refresh_token"]}
+            if email:
+                save_revizto_tokens(region, email, new_tokens)
+            return data["access_token"]
+        print(f"[Revizto/{region}] Refresh failed: {r.text[:200]}")
+
+    # --- Fall back to access code ---
     access_code = rc.get("access_code", "")
     if not access_code:
         print(f"[Revizto/{region}] No access_code in config — cannot authenticate")
@@ -356,18 +552,22 @@ def revizto_get_token_for_region(config, region: str) -> str:
     print(f"[Revizto/{region}] Access code auth → {r.status_code}")
     if r.status_code == 200 and "access_token" in r.json():
         data = r.json()
-        with open(tokens_file, "w") as f:
-            json.dump({"access_token": data["access_token"], "refresh_token": data["refresh_token"]}, f, indent=4)
-        print(f"[Revizto/{region}] Token saved to {tokens_file}")
+        new_tokens = {"access_token": data["access_token"], "refresh_token": data["refresh_token"]}
+        if email:
+            save_revizto_tokens(region, email, new_tokens)
+        else:
+            # VS Code run — write to legacy local file
+            with open(BASE_DIR / f"revizto_tokens_{region}.json", "w") as f:
+                json.dump(new_tokens, f, indent=4)
+        print(f"[Revizto/{region}] Token obtained and saved (user={email or 'local'})")
         return data["access_token"]
-    else:
-        print(f"[Revizto/{region}] Access code auth failed: {r.text[:300]}")
-        print(f"[Revizto/{region}] Access codes are one-time use — generate a new one at https://ws.revizto.com/login?request=accessCode")
 
+    print(f"[Revizto/{region}] Access code auth failed: {r.text[:300]}")
+    print(f"[Revizto/{region}] Access codes are one-time use — generate a new one at https://ws.revizto.com/login?request=accessCode")
     return ""
 
 
-def revizto_resolve_license(config, region: str) -> tuple[str, str]:
+def revizto_resolve_license(config, region: str, email: str = None) -> tuple[str, str]:
     """Resolve license_uuid and auth_method for a region dynamically from the API.
     Returns (license_uuid, auth_method) — both empty strings on failure.
     Results are cached back into config to avoid repeated API calls within a request."""
@@ -377,7 +577,7 @@ def revizto_resolve_license(config, region: str) -> tuple[str, str]:
     if rc.get("license_uuid") and rc.get("auth_method"):
         return rc["license_uuid"], rc["auth_method"]
 
-    token = revizto_get_token_for_region(config, region)
+    token = revizto_get_token_for_region(config, region, email=email)
     if not token:
         return "", ""
 
@@ -422,17 +622,19 @@ def revizto_resolve_license(config, region: str) -> tuple[str, str]:
     return license_uuid, auth_method
 
 
-def fetch_revizto_projects(config):
+def fetch_revizto_projects(config, email: str = None):
     """Fetch all projects across all user licenses, for both configured regions."""
     all_projects = []
     seen_uuids = set()
 
     for region in ["dubai", "ireland"]:
         rc = config.get(f"revizto_{region}", {})
-        if not rc.get("access_code") and not (BASE_DIR / f"revizto_tokens_{region}.json").exists():
+        # Check blob tokens if we have an email, otherwise fall back to local disk check
+        has_tokens = bool(load_revizto_tokens(region, email)) if email else (BASE_DIR / f"revizto_tokens_{region}.json").exists()
+        if not rc.get("access_code") and not has_tokens:
             print(f"[Revizto/{region}] Skipping — no access_code and no saved token")
             continue
-        token = revizto_get_token_for_region(config, region)
+        token = revizto_get_token_for_region(config, region, email=email)
         if not token:
             print(f"[Revizto/{region}] Skipping — no valid token")
             continue
@@ -522,7 +724,7 @@ async def debug_revizto(user: str = Depends(require_user)):
     results = {}
     for region in ["dubai", "ireland"]:
         rc    = config.get(f"revizto_{region}", {})
-        token = revizto_get_token_for_region(config, region)
+        token = revizto_get_token_for_region(config, region, email=user)
         results[region] = {
             "has_license_uuid": bool(rc.get("license_uuid")),
             "has_access_code":  bool(rc.get("access_code")),
@@ -534,7 +736,7 @@ async def debug_revizto(user: str = Depends(require_user)):
 @app.get("/api/debug/revizto/projects")
 async def debug_revizto_projects(user: str = Depends(require_user)):
     config = load_config(user)
-    token  = revizto_get_token_for_region(config, "dubai")
+    token  = revizto_get_token_for_region(config, "dubai", email=user)
     rc     = config.get("revizto_dubai", {})
     r = http_requests.get(
         f"https://api.dubai.revizto.com/v5/project/list/{rc['license_uuid']}/paged",
@@ -658,11 +860,13 @@ async def api_forma_models(request: Request, user: str = Depends(require_user)):
  
 @app.get("/api/exports/{filename}")
 async def api_get_export(filename: str, user: str = Depends(require_user)):
-    """Serve a file from the exports directory as JSON or plain text."""
-    safe_name = Path(filename).name  # strip any path traversal
-    path = EXPORTS_DIR / safe_name
+    """Serve a file from the user's temp directory as JSON or plain text.
+    Used by the extractions page to load scene/model data after a script run.
+    """
+    safe_name = Path(filename).name
+    path = get_user_temp_dir(user) / safe_name
     if not path.exists():
-        return JSONResponse({"error": "File not found"}, status_code=404)
+        return JSONResponse({"error": "File not found — run the extraction first."}, status_code=404)
     with open(path, "r", encoding="utf-8") as f:
         content = f.read()
     if safe_name.endswith(".json"):
@@ -703,90 +907,134 @@ async def api_set_model_context(request: Request, user: str = Depends(require_us
 # Platform Helpers — Invite
 # ---------------------------------------------------------------------------
 
-def morta_invite(email, config):
-    api_key = config["morta"]["api_key"]
-    hub_id  = config.get("active_context", {}).get("morta_hub_id") or config["morta"].get("hub_id", "")
+def morta_invite(email, config, hub_id: str = None, tag_reference_id: str = None):
+    api_key    = config["morta"]["api_key"]
+    hub_id     = hub_id or config.get("active_context", {}).get("morta_hub_id") or config["morta"].get("hub_id", "")
     if not api_key or not hub_id:
         return {"status": "error", "detail": "Morta not configured — set API key in Settings and select a hub in the sidebar"}
+    headers  = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     response = http_requests.post(
         f"https://api.morta.io/v1/hub/{hub_id}/invite",
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        headers=headers,
         json={"email": email, "projectRole": "member", "tags": []},
         timeout=15,
     )
-    if response.status_code in (200, 201):
-        return {"status": "success"}
-    return {"status": "error", "detail": f"{response.status_code}: {response.text[:200]}"}
+    if response.status_code not in (200, 201):
+        return {"status": "error", "detail": f"{response.status_code}: {response.text[:200]}"}
 
-def revizto_get_token(config, region: str = None):
-    # Resolve region: prefer explicit arg, then active_context, then first configured region
-    if not region:
-        region = config.get("active_context", {}).get("revizto_region", "")
-    if not region:
-        for r in ["dubai", "ireland"]:
-            if config.get(f"revizto_{r}", {}).get("license_uuid"):
-                region = r
-                break
-    if not region:
-        return ""
-    return revizto_get_token_for_region(config, region)
+    # Chain tag assignment if tag_reference_id provided
+    if tag_reference_id:
+        # Look up the user's public_id from the hub members
+        try:
+            members_resp = http_requests.get(
+                f"https://api.morta.io/v1/hub/{hub_id}/members",
+                headers={"Authorization": f"Bearer {api_key}"}, timeout=10
+            )
+            if members_resp.status_code == 200:
+                for m in members_resp.json().get("data", []):
+                    u = m.get("user", {})
+                    if u.get("email", "").lower() == email.lower():
+                        user_id = u.get("publicId", "")
+                        if user_id:
+                            http_requests.post(
+                                f"https://api.morta.io/v1/user/{user_id}/tags",
+                                headers={**headers, "Accept": "application/json"},
+                                json={"tagReferenceId": tag_reference_id},
+                                timeout=10,
+                            )
+                        break
+        except Exception:
+            pass  # Tag assignment failure shouldn't fail the whole invite
 
-def revizto_invite(email, first_name, last_name, company, department, config, project_uuid=None):
+    return {"status": "success"}
+
+
+def revizto_invite(email, first_name, last_name, company, department, config,
+                   project_uuid=None, license_role_id: int = None,
+                   project_role_id: int = None,
+                   invite_to_license: bool = True,
+                   invite_to_project: bool = False,
+                   admin_email: str = None):
     region = config.get("active_context", {}).get("revizto_region", "")
     if not region:
         for r in ["dubai", "ireland"]:
-            if config.get(f"revizto_{r}", {}).get("access_code") or (BASE_DIR / f"revizto_tokens_{r}.json").exists():
-                region = r
-                break
+            has_tokens = bool(load_revizto_tokens(r, admin_email)) if admin_email else (BASE_DIR / f"revizto_tokens_{r}.json").exists()
+            if config.get(f"revizto_{r}", {}).get("access_code") or has_tokens:
+                region = r; break
     if not region:
         return {"status": "error", "detail": "Revizto region not set — select a project in the sidebar"}
 
-    license_uuid, auth_method = revizto_resolve_license(config, region)
+    license_uuid, auth_method = revizto_resolve_license(config, region, email=admin_email)
     if not license_uuid:
         return {"status": "error", "detail": f"Could not resolve Revizto license for region '{region}'"}
 
     rc       = config.get(f"revizto_{region}", {})
-    token    = revizto_get_token_for_region(config, region)
-    if not token:
-        return {"status": "error", "detail": "Revizto auth failed"}
+    token    = revizto_get_token_for_region(config, region, email=admin_email)
+    if not token: return {"status": "error", "detail": "Revizto auth failed"}
     base_url = f"https://api.{region}.revizto.com/v5"
     headers  = {"Authorization": f"Bearer {token}", "Content-Type": "application/json", "Accept": "application/json"}
-    payload  = {
-        "data": [{"email": email, "role": rc.get("default_license_role", 2), "firstName": first_name,
-                  "lastName": last_name, "tags": [], "authMethod": auth_method,
-                  "company": company, "department": department}],
-        "preserveRoles": True, "makeGuests": False, "authMethod": auth_method, "deactivate": False,
-    }
-    response = http_requests.post(f"{base_url}/license/{license_uuid}/invite/bulk", headers=headers, json=payload, timeout=30)
-    result   = {"status": "success"} if response.status_code == 200 else {"status": "error", "detail": f"{response.status_code}: {response.text[:200]}"}
-    if project_uuid and result["status"] == "success":
-        http_requests.post(f"{base_url}/project/{project_uuid}/role/invite", headers=headers,
-                           json={"invitations": [email], "company": company, "department": department}, timeout=30)
+
+    result = {"status": "success"}
+
+    # ── License invite ────────────────────────────────────────────────────
+    if invite_to_license:
+        role = int(license_role_id or rc.get("default_license_role", 2))
+        payload = {
+            "data": [{"email": email, "role": role, "firstName": first_name,
+                      "lastName": last_name, "tags": [], "authMethod": auth_method,
+                      "company": company, "department": department}],
+            "preserveRoles": True, "makeGuests": False, "authMethod": auth_method, "deactivate": False,
+        }
+        resp = http_requests.post(f"{base_url}/license/{license_uuid}/invite/bulk",
+                                   headers=headers, json=payload, timeout=30)
+        if resp.status_code != 200:
+            result = {"status": "error", "detail": f"License invite: {resp.status_code}: {resp.text[:200]}"}
+
+    # ── Project invite ────────────────────────────────────────────────────
+    if invite_to_project and project_uuid and result["status"] == "success":
+        proj_payload = {
+            "invitations": [email],
+            "company":     company,
+            "department":  department,
+        }
+        if project_role_id:
+            proj_payload["roleId"] = project_role_id
+        resp = http_requests.post(f"{base_url}/project/{project_uuid}/role/invite",
+                                   headers=headers, json=proj_payload, timeout=30)
+        if resp.status_code != 200:
+            result = {"status": "error", "detail": f"Project invite: {resp.status_code}: {resp.text[:200]}"}
+
     return result
 
-def forma_get_token(config):
-    fc = config["forma"]
-    if not fc["client_id"] or not fc["client_secret"]: return ""
-    response = http_requests.post("https://developer.api.autodesk.com/authentication/v2/token",
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
-        data={"grant_type": "client_credentials", "client_id": fc["client_id"], "client_secret": fc["client_secret"],
-              "scope": "account:read account:write data:read"}, timeout=10)
-    if response.status_code == 200: return response.json().get("access_token", "")
-    return ""
 
-def forma_invite(email, config, project_id=None):
+def forma_invite(email, config, project_id=None, company_id: str = None,
+                 role_ids: list = None, products: list = None):
     fc  = config["forma"]
-    pid = project_id or fc["project_id"]
+    pid = project_id or fc.get("project_id", "")
     if not fc["account_id"] or not fc["admin_user_id"] or not pid:
         return {"status": "error", "detail": "Forma not configured"}
     token = forma_get_token(config)
     if not token: return {"status": "error", "detail": "Forma auth failed"}
-    headers  = {"Authorization": f"Bearer {token}", "Content-Type": "application/json", "User-Id": fc["admin_user_id"]}
-    payload  = {"users": [{"email": email, "products": [{"key": "docs", "access": "member"}]}], "suppressAdministrativeEmails": False}
-    response = http_requests.post(f"https://developer.api.autodesk.com/construction/admin/v2/projects/{pid}/users:import",
-        headers=headers, json=payload, timeout=30)
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json", "User-Id": fc["admin_user_id"]}
+
+    # Build products array — default to docs/member if not specified
+    if products is None:
+        products = [{"key": "docs", "access": "member"}]
+
+    user_entry = {"email": email, "products": products}
+    if company_id:
+        user_entry["companyId"] = company_id
+    if role_ids:
+        user_entry["roleIds"] = role_ids
+
+    payload  = {"users": [user_entry], "suppressAdministrativeEmails": False}
+    response = http_requests.post(
+        f"https://developer.api.autodesk.com/construction/admin/v2/projects/{pid}/users:import",
+        headers=headers, json=payload, timeout=30
+    )
     if response.status_code in (200, 202): return {"status": "success"}
     return {"status": "error", "detail": f"{response.status_code}: {response.text[:200]}"}
+
 
 # ---------------------------------------------------------------------------
 # Platform Helpers — Search
@@ -842,18 +1090,19 @@ def morta_search_user(email, config, allowed_hub_ids: list = None):
         "hubs":     matches,   # all hub memberships
     }
 
-def revizto_search_user(email, config, allowed_project_uuids: list = None):
+def revizto_search_user(email, config, allowed_project_uuids: list = None, admin_email: str = None):
     region = config.get("active_context", {}).get("revizto_region", "")
     if not region:
         for r in ["dubai", "ireland"]:
-            if config.get(f"revizto_{r}", {}).get("access_code") or (BASE_DIR / f"revizto_tokens_{r}.json").exists():
+            has_tokens = bool(load_revizto_tokens(r, admin_email)) if admin_email else (BASE_DIR / f"revizto_tokens_{r}.json").exists()
+            if config.get(f"revizto_{r}", {}).get("access_code") or has_tokens:
                 region = r; break
     if not region: return None
 
-    license_uuid, _ = revizto_resolve_license(config, region)
+    license_uuid, _ = revizto_resolve_license(config, region, email=admin_email)
     if not license_uuid: return None
 
-    token = revizto_get_token_for_region(config, region)
+    token = revizto_get_token_for_region(config, region, email=admin_email)
     if not token: return None
     base_url = f"https://api.{region}.revizto.com/v5"
     headers  = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
@@ -1098,19 +1347,13 @@ async def portal_submit(
     if not users:
         return JSONResponse({"status": "error", "detail": "No valid users found in file."}, status_code=400)
 
-    pending_file = BASE_DIR / "portal_requests.json"
-    existing = {}
-    if pending_file.exists():
-        with open(pending_file) as f:
-            loaded = json.load(f)
-        # Migrate old flat list format to new dict format
-        existing = loaded if isinstance(loaded, dict) else {}
-    # Group by project_id
+    # Save submission
+    existing = _load_portal_requests()
     key = project_id or "unassigned"
     if key not in existing:
         existing[key] = {
             "project_id":   project_id,
-            "project_name": project_name,
+            "project_name": reg_name,
             "submissions":  []
         }
     existing[key]["submissions"].append({
@@ -1119,8 +1362,64 @@ async def portal_submit(
         "submitted_at":       datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "users":              users,
     })
-    with open(pending_file, "w") as f:
-        json.dump(existing, f, indent=2)
+    _save_portal_requests(existing)
+
+    # ── Email notifications to project admins ─────────────────────────────
+    registry     = load_registry()
+    proj_entry   = registry.get(key, {})
+    admin_emails = proj_entry.get("admins", [])
+    proj_name    = reg_name or project_id
+
+    if admin_emails and SENDGRID_API_KEY:
+        portal_url  = f"/portal/platformAccess?pid={key}"
+        manage_url  = "/manage"
+        morta_count   = sum(1 for u in users if u.get("morta"))
+        revizto_count = sum(1 for u in users if u.get("revizto"))
+        forma_count   = sum(1 for u in users if u.get("forma"))
+
+        html = f"""
+        <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;">
+            <div style="background:#0f1b2d;padding:20px 24px;border-radius:8px 8px 0 0;">
+                <h2 style="color:#e8edf2;margin:0;font-size:18px;">New Platform Access Request</h2>
+                <p style="color:#8099b3;margin:4px 0 0;font-size:13px;">{proj_name}</p>
+            </div>
+            <div style="background:#fff;border:1px solid #e0e6ed;border-top:none;padding:24px;border-radius:0 0 8px 8px;">
+                <p style="color:#2d3748;font-size:14px;margin-top:0;">
+                    A new access request has been submitted and requires your review.
+                </p>
+                <table style="width:100%;border-collapse:collapse;margin-bottom:20px;">
+                    <tr style="background:#f5f7fa;">
+                        <td style="padding:10px 14px;font-size:12px;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;">Submitted by</td>
+                        <td style="padding:10px 14px;font-size:14px;color:#0f1b2d;font-weight:500;">{submitter_name} &lt;{submitter_email}&gt;</td>
+                    </tr>
+                    <tr>
+                        <td style="padding:10px 14px;font-size:12px;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;">Project</td>
+                        <td style="padding:10px 14px;font-size:14px;color:#0f1b2d;font-weight:500;">{proj_name}</td>
+                    </tr>
+                    <tr style="background:#f5f7fa;">
+                        <td style="padding:10px 14px;font-size:12px;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;">Users requested</td>
+                        <td style="padding:10px 14px;font-size:14px;color:#0f1b2d;font-weight:500;">{len(users)} users</td>
+                    </tr>
+                    <tr>
+                        <td style="padding:10px 14px;font-size:12px;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;">Platform breakdown</td>
+                        <td style="padding:10px 14px;font-size:14px;color:#0f1b2d;">
+                            {"<span style='background:#e8f0fe;color:#1a56db;padding:2px 8px;border-radius:3px;font-size:12px;margin-right:6px;'>Morta: " + str(morta_count) + "</span>" if morta_count else ""}
+                            {"<span style='background:#e8f5e9;color:#1b7a34;padding:2px 8px;border-radius:3px;font-size:12px;margin-right:6px;'>Revizto: " + str(revizto_count) + "</span>" if revizto_count else ""}
+                            {"<span style='background:#fff3e0;color:#b45309;padding:2px 8px;border-radius:3px;font-size:12px;'>Forma: " + str(forma_count) + "</span>" if forma_count else ""}
+                        </td>
+                    </tr>
+                </table>
+                <a href="{{manage_url}}" style="display:inline-block;background:#0f1b2d;color:#e8edf2;padding:12px 24px;border-radius:6px;text-decoration:none;font-size:14px;font-weight:600;">
+                    Review in Cockpit →
+                </a>
+                <p style="color:#9ca3af;font-size:12px;margin-top:20px;margin-bottom:0;">
+                    Digital Construction Cockpit · ALEC Holdings
+                </p>
+            </div>
+        </div>
+        """.replace("{manage_url}", manage_url)
+
+        send_email(admin_emails, f"[Cockpit] New access request — {proj_name} ({len(users)} users)", html)
 
     return JSONResponse({"status": "success", "total": len(users)})
 
@@ -1165,14 +1464,13 @@ def _save_portal_requests(data: dict):
 async def api_pending_list(user: str = Depends(require_user)):
     """Return submissions only for projects the user is admin of."""
     data          = _load_portal_requests()
-    user_projects = get_user_projects(user)
-    # Owner sees all
-    if is_owner(user):
-        user_projects = list(data.keys())
+    owner_view    = is_owner(user)
+    user_projects = get_user_projects(user) if not owner_view else None
 
     submissions = []
     for key, project in data.items():
-        if key not in user_projects:
+        # Owner sees everything, others see only their registry projects
+        if not owner_view and key not in (user_projects or []):
             continue
         for idx, sub in enumerate(project.get("submissions", [])):
             users = sub.get("users", [])
@@ -1194,6 +1492,9 @@ async def api_pending_list(user: str = Depends(require_user)):
 @app.get("/api/pending/{project_key}/{sub_idx}")
 async def api_pending_get(project_key: str, sub_idx: int, user: str = Depends(require_user)):
     """Get a specific submission for review."""
+    registry = load_registry()
+    if not is_owner(user) and user not in registry.get(project_key, {}).get("admins", []):
+        raise HTTPException(status_code=403, detail="You are not an admin of this project.")
     data = _load_portal_requests()
     project = data.get(project_key)
     if not project:
@@ -1220,52 +1521,81 @@ async def api_pending_get(project_key: str, sub_idx: int, user: str = Depends(re
 
 @app.post("/api/pending/{project_key}/{sub_idx}/process")
 async def api_pending_process(project_key: str, sub_idx: int, request: Request, user: str = Depends(require_user)):
-    """Process approved users from a submission — invite them to all requested platforms."""
-    body = await request.json()
-    users = body.get("users", [])
+    """Process approved users with configured access parameters."""
+    # Access check — owner sees all, admins only their own projects
+    registry = load_registry()
+    if not is_owner(user) and user not in registry.get(project_key, {}).get("admins", []):
+        raise HTTPException(status_code=403, detail="You are not an admin of this project.")
+
+    body     = await request.json()
+    users    = body.get("users", [])
+    access   = body.get("access", {})
 
     success = 0; errors = 0; rejected = 0
     config   = load_config(user)
     registry = load_registry()
+    proj     = registry.get(project_key, {})
+    platforms = proj.get("platforms", {})
+
+    morta_hub_id     = platforms.get("morta", {}).get("hub_id", "")
+    revizto_uuid     = platforms.get("revizto", {}).get("project_uuid", "")
+    forma_project_id = platforms.get("forma", {}).get("project_id", "")
+
+    morta_tag_id         = access.get("morta_tag_id", "")
+    revizto_license_role = access.get("revizto_license_role_id")
+    revizto_project_role = access.get("revizto_project_role_id")
+    revizto_to_license   = access.get("revizto_invite_license", True)
+    revizto_to_project   = access.get("revizto_invite_project", False)
+    forma_company_id     = access.get("forma_company_id", "")
+    forma_role_ids       = access.get("forma_role_ids", [])
+    forma_products       = access.get("forma_products", [{"key": "docs", "access": "member"}])
 
     for u in users:
         if not u.get("approved", True):
-            rejected += 1
-            u["status"] = "rejected"
-            continue
-        try:
-            # Build invite payload matching existing /api/invite/single format
-            payload = {
-                "email":      u.get("email",""),
-                "first_name": u.get("first_name",""),
-                "last_name":  u.get("last_name",""),
-                "company":    u.get("company",""),
-                "department": u.get("department",""),
-                "morta":      u.get("morta", False),
-                "revizto":    u.get("revizto", False),
-                "forma":      u.get("forma", False),
-                # Look up platform IDs from registry using project key
-                "revizto_project_uuid": registry.get(project_key, {}).get("platforms", {}).get("revizto", {}).get("project_uuid", ""),
-                "forma_project_id":     registry.get(project_key, {}).get("platforms", {}).get("forma", {}).get("project_id", ""),
-            }
-            import httpx
-            async with httpx.AsyncClient() as client:
-                res = await client.post(
-                    str(request.base_url).rstrip("/") + "/api/invite/single",
-                    json=payload,
-                    cookies={"session": request.cookies.get("session","")},
-                    timeout=60,
-                )
-            if res.status_code == 200:
-                u["status"] = "processed"; success += 1
-            else:
-                u["status"] = "error"; errors += 1
-        except Exception as e:
-            u["status"] = "error"; errors += 1
+            rejected += 1; u["status"] = "rejected"; continue
 
-    # Save updated statuses back to portal_requests.json
+        u_access         = u.get("access_override", {})
+        u_morta_tag      = u_access.get("morta_tag_id", morta_tag_id)
+        u_rev_lic_role   = u_access.get("revizto_license_role_id", revizto_license_role)
+        u_rev_proj_role  = u_access.get("revizto_project_role_id", revizto_project_role)
+        u_rev_to_license = u_access.get("revizto_invite_license", revizto_to_license)
+        u_rev_to_project = u_access.get("revizto_invite_project", revizto_to_project)
+        u_forma_company  = u_access.get("forma_company_id", forma_company_id)
+        u_forma_roles    = u_access.get("forma_role_ids", forma_role_ids)
+        u_forma_products = u_access.get("forma_products", forma_products)
+
+        email = u.get("email",""); first_name = u.get("first_name","")
+        last_name = u.get("last_name",""); company = u.get("company",""); department = u.get("department","")
+        err_parts = []
+
+        try:
+            if u.get("morta"):
+                r = morta_invite(email, config, hub_id=morta_hub_id, tag_reference_id=u_morta_tag)
+                if r["status"] != "success": err_parts.append(f"Morta: {r.get('detail','failed')}")
+
+            if u.get("revizto"):
+                r = revizto_invite(email, first_name, last_name, company, department, config,
+                                   project_uuid=revizto_uuid, license_role_id=u_rev_lic_role,
+                                   project_role_id=u_rev_proj_role, invite_to_license=u_rev_to_license,
+                                   invite_to_project=u_rev_to_project, admin_email=user)
+                if r["status"] != "success": err_parts.append(f"Revizto: {r.get('detail','failed')}")
+
+            if u.get("forma"):
+                r = forma_invite(email, config, project_id=forma_project_id,
+                                 company_id=u_forma_company,
+                                 role_ids=u_forma_roles if u_forma_roles else None,
+                                 products=u_forma_products)
+                if r["status"] != "success": err_parts.append(f"Forma: {r.get('detail','failed')}")
+
+            if err_parts:
+                u["status"] = "error"; u["error"] = " | ".join(err_parts); errors += 1
+            else:
+                u["status"] = "processed"; success += 1
+        except Exception as e:
+            u["status"] = "error"; u["error"] = str(e); errors += 1
+
     data = _load_portal_requests()
-    if project_key in data and sub_idx < len(data[project_key].get("submissions",[])):
+    if project_key in data and sub_idx < len(data[project_key].get("submissions", [])):
         data[project_key]["submissions"][sub_idx]["users"] = users
     _save_portal_requests(data)
 
@@ -1275,6 +1605,9 @@ async def api_pending_process(project_key: str, sub_idx: int, request: Request, 
 @app.delete("/api/pending/{project_key}/{sub_idx}")
 async def api_pending_delete(project_key: str, sub_idx: int, user: str = Depends(require_user)):
     """Delete a submission."""
+    registry = load_registry()
+    if not is_owner(user) and user not in registry.get(project_key, {}).get("admins", []):
+        raise HTTPException(status_code=403, detail="You are not an admin of this project.")
     data = _load_portal_requests()
     if project_key in data:
         subs = data[project_key].get("submissions", [])
@@ -1297,44 +1630,7 @@ async def registry_page(request: Request, user: str = Depends(require_owner)):
 
 @app.get("/api/registry")
 async def api_registry_get(user: str = Depends(require_user)):
-    if not is_owner(user):
-        raise HTTPException(status_code=403)
-    return JSONResponse(load_registry())
-
-@app.post("/api/registry")
-async def api_registry_save(request: Request, user: str = Depends(require_user)):
-    if not is_owner(user):
-        raise HTTPException(status_code=403)
-    body = await request.json()
-    registry = load_registry()
-    key = body.get("key", "").strip().lower().replace(" ", "-")
-    if not key:
-        return JSONResponse({"status": "error", "detail": "Project key required."}, status_code=400)
-    registry[key] = {
-        "name":      body.get("name", "").strip(),
-        "platforms": {
-            "morta":   {"hub_id": body.get("morta_hub_id", "").strip()},
-            "revizto": {"project_uuid": body.get("revizto_uuid", "").strip(),
-                        "region": body.get("revizto_region", "dubai").strip()},
-            "forma":   {"project_id": body.get("forma_project_id", "").strip()},
-        },
-        "admins": [e.strip().lower() for e in body.get("admins", "").split(",") if e.strip()],
-    }
-    save_registry(registry)
-    return JSONResponse({"status": "ok", "key": key})
-
-@app.delete("/api/registry/{key}")
-async def api_registry_delete(key: str, user: str = Depends(require_user)):
-    if not is_owner(user):
-        raise HTTPException(status_code=403)
-    registry = load_registry()
-    registry.pop(key, None)
-    save_registry(registry)
-    return JSONResponse({"status": "ok"})
-
-
-@app.get("/api/registry")
-async def api_registry_get(user: str = Depends(require_owner)):
+    """All logged-in users can read the registry (needed for sidebar + manage page)."""
     return JSONResponse(load_registry())
 
 @app.post("/api/registry/project")
@@ -1385,6 +1681,123 @@ async def api_registry_delete(key: str, user: str = Depends(require_owner)):
     return JSONResponse({"status": "ok"})
 
 
+@app.post("/api/registry/project/{key}/sync")
+async def api_registry_sync(key: str, request: Request, user: str = Depends(require_user)):
+    """Fetch and store tags/roles/companies. Owner can sync any project; admins only their own."""
+    registry = load_registry()
+    if key not in registry:
+        raise HTTPException(status_code=404, detail="Project not found.")
+    # Check access: owner or project admin
+    if not is_owner(user) and user not in registry[key].get("admins", []):
+        raise HTTPException(status_code=403, detail="Not an admin of this project.")
+
+    proj     = registry[key]
+    platforms = proj.get("platforms", {})
+    config   = load_config(user)
+    results  = {}
+
+    # ── Morta tags ────────────────────────────────────────────────────────
+    hub_id  = platforms.get("morta", {}).get("hub_id", "")
+    api_key = config["morta"]["api_key"]
+    if hub_id and api_key:
+        try:
+            headers  = {"Authorization": f"Bearer {api_key}"}
+            response = http_requests.get(
+                f"https://api.morta.io/v1/hub/{hub_id}/tags",
+                headers=headers, timeout=10
+            )
+            if response.status_code == 200:
+                raw_tags = response.json().get("data", [])
+                tags = []
+                for tag_group in raw_tags:
+                    for cell in tag_group.get("cells", []):
+                        if "value" in cell and "id" in cell:
+                            tags.append({"name": cell["value"], "tag_reference_id": cell["id"]})
+                platforms["morta"]["tags"] = tags
+                results["morta_tags"] = len(tags)
+        except Exception as e:
+            results["morta_error"] = str(e)
+
+    # ── Revizto project roles ─────────────────────────────────────────────
+    rev_uuid   = platforms.get("revizto", {}).get("project_uuid", "")
+    rev_region = platforms.get("revizto", {}).get("region", "dubai")
+    if rev_uuid:
+        try:
+            token = revizto_get_token_for_region(config, rev_region, email=user)
+            if token:
+                license_uuid, _ = revizto_resolve_license(config, rev_region, email=user)
+                base_url = f"https://api.{rev_region}.revizto.com/v5"
+                headers  = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+                # Project roles
+                r = http_requests.get(
+                    f"{base_url}/project/{rev_uuid}/role/list",
+                    headers=headers, timeout=10
+                )
+                if r.status_code == 200:
+                    raw = r.json().get("data", {})
+                    roles = []
+                    if isinstance(raw, dict):
+                        roles = [{"id": v.get("id"), "uuid": v.get("uuid",""), "name": v.get("name","")} for v in raw.values()]
+                    elif isinstance(raw, list):
+                        roles = [{"id": v.get("id"), "uuid": v.get("uuid",""), "name": v.get("name","")} for v in raw]
+                    platforms["revizto"]["roles"] = roles
+                    results["revizto_roles"] = len(roles)
+                # License member roles (for license invite)
+                license_roles = [
+                    {"id": 1, "name": "Guest"},
+                    {"id": 2, "name": "Collaborator"},
+                    {"id": 3, "name": "Content Creator"},
+                    {"id": 4, "name": "License Admin"},
+                ]
+                platforms["revizto"]["license_roles"] = license_roles
+        except Exception as e:
+            results["revizto_error"] = str(e)
+
+    # ── Forma companies + roles ───────────────────────────────────────────
+    forma_pid  = platforms.get("forma", {}).get("project_id", "")
+    account_id = config["forma"].get("account_id", "")
+    if forma_pid and account_id:
+        try:
+            token   = forma_get_token(config)
+            headers = {"Authorization": f"Bearer {token}"}
+            # Strip b. prefix for HQ endpoints
+            clean_pid = forma_pid.lstrip("b.") if forma_pid.startswith("b.") else forma_pid
+            # Companies
+            r = http_requests.get(
+                f"https://developer.api.autodesk.com/hq/v1/accounts/{account_id}/projects/{clean_pid}/companies",
+                headers=headers, params={"limit": 100}, timeout=15
+            )
+            if r.status_code == 200:
+                companies = [{"id": c["id"], "name": c["name"]} for c in r.json()]
+                platforms["forma"]["companies"] = companies
+                results["forma_companies"] = len(companies)
+            else:
+                results["forma_companies_error"] = f"{r.status_code}: {r.text[:100]}"
+            # Roles — try v1 first then v2
+            for roles_url in [
+                f"https://developer.api.autodesk.com/construction/admin/v1/projects/{clean_pid}/roles",
+                f"https://developer.api.autodesk.com/construction/admin/v2/projects/{clean_pid}/roles",
+            ]:
+                r = http_requests.get(roles_url, headers=headers, timeout=15)
+                if r.status_code == 200:
+                    raw = r.json()
+                    role_list = raw.get("results", raw) if isinstance(raw, dict) else raw
+                    roles = [{"id": ro.get("id",""), "name": ro.get("name","")} for ro in role_list if ro.get("name")]
+                    if roles:
+                        platforms["forma"]["roles"] = roles
+                        results["forma_roles"] = len(roles)
+                        break
+            else:
+                results["forma_roles_error"] = "No roles found"
+        except Exception as e:
+            results["forma_error"] = str(e)
+
+    proj["platforms"] = platforms
+    registry[key] = proj
+    save_registry(registry)
+    return JSONResponse({"status": "ok", "synced": results})
+
+
 @app.get("/info", response_class=HTMLResponse)
 async def info_page(request: Request, user: str = Depends(require_user)):
     return templates.TemplateResponse(request=request, name="info.html", context={
@@ -1400,16 +1813,17 @@ async def invite_page(request: Request, user: str = Depends(require_user)):
 
 @app.get("/manage", response_class=HTMLResponse)
 async def manage_page(request: Request, user: str = Depends(require_user)):
+    config        = load_config(user)
     log           = load_invite_log()
     user_projects = get_user_projects(user)
-    # Filter log to only entries for projects the user is admin of
-    # Owner sees all. If no registry set up yet, show all.
     if not is_owner(user) and user_projects:
         log = [e for e in log if e.get("project_key") in user_projects
-               or e.get("project_id") in user_projects]  # backwards compat
+               or e.get("project_id") in user_projects]
     recent_invites = log[-20:][::-1] if log else []
     return templates.TemplateResponse(request=request, name="manage.html", context={
-        "active_page": "manage", "recent_invites": recent_invites, "current_user": user,
+        "active_page": "manage", "recent_invites": recent_invites,
+        "current_user": user,
+        "active_context": config.get("active_context", {}),
     })
 
 @app.get("/scheduler", response_class=HTMLResponse)
@@ -1423,7 +1837,8 @@ async def settings_page(request: Request, user: str = Depends(require_user)):
     config = load_config(user)
     return templates.TemplateResponse(request=request, name="settings.html", context={
         "active_page": "settings", "config": config,
-        "message": None, "message_type": None, "current_user": user,
+        "message": None, "message_type": None,
+        "current_user": user, "is_owner": is_owner(user),
     })
 
 @app.post("/settings", response_class=HTMLResponse)
@@ -1456,7 +1871,8 @@ async def settings_save(request: Request, user: str = Depends(require_user),
     save_config(config, user)
     return templates.TemplateResponse(request=request, name="settings.html", context={
         "active_page": "settings", "config": config,
-        "message": "Settings saved successfully.", "message_type": "success", "current_user": user,
+        "message": "Settings saved successfully.", "message_type": "success",
+        "current_user": user, "is_owner": is_owner(user),
     })
 
 @app.get("/extractions", response_class=HTMLResponse)
@@ -1464,6 +1880,76 @@ async def extractions_page(request: Request, user: str = Depends(require_user)):
     return templates.TemplateResponse(request=request, name="extractions.html", context={
         "active_page": "extractions", "current_user": user,
     })
+
+# ---------------------------------------------------------------------------
+# Script config builder — merges admin credentials + registry project context
+# ---------------------------------------------------------------------------
+
+def build_script_config(user: str) -> dict:
+    """Build the merged config dict that scripts should see when run by this admin.
+
+    Merge order (later wins):
+      1. Default config structure
+      2. Admin's own blob config (personal api_key, access_code, active_context)
+      3. Forma shared credentials from owner config (if admin has none)
+      4. Project-level IDs injected from registry for the active project key
+
+    This is what gets written to the temp COCKPIT_CONFIG file before each subprocess.
+    """
+    config = load_config(user)
+
+    # ── Forma shared credentials fallback ──────────────────────────────────
+    fc = config.get("forma", {})
+    if not fc.get("client_id") or not fc.get("client_secret"):
+        owner_fc = load_config(OWNER_EMAIL).get("forma", {})
+        config.setdefault("forma", {}).update({
+            k: owner_fc.get(k, "")
+            for k in ["client_id", "client_secret", "client_id_3l",
+                      "client_secret_3l", "account_id", "admin_user_id"]
+            if owner_fc.get(k)
+        })
+
+    # ── Inject registry project IDs into active_context ───────────────────
+    ctx = config.get("active_context", {})
+    project_key = ctx.get("active_project_key", "")
+    if project_key:
+        registry = load_registry()
+        reg_proj = registry.get(project_key, {})
+        platforms = reg_proj.get("platforms", {})
+
+        # Only inject if the values aren't already set from the sidebar selection
+        if platforms.get("morta", {}).get("hub_id") and not ctx.get("morta_hub_id"):
+            ctx["morta_hub_id"] = platforms["morta"]["hub_id"]
+        if platforms.get("revizto", {}).get("project_uuid") and not ctx.get("revizto_project_uuid"):
+            ctx["revizto_project_uuid"] = platforms["revizto"]["project_uuid"]
+            ctx["revizto_region"]       = platforms["revizto"].get("region", "dubai")
+        if platforms.get("forma", {}).get("project_id") and not ctx.get("forma_project_id"):
+            ctx["forma_project_id"] = platforms["forma"]["project_id"]
+
+        config["active_context"] = ctx
+
+        # Also mirror IDs into top-level platform blocks so scripts that read
+        # config["morta"]["hub_id"] directly (not via active_context) get the right value
+        if ctx.get("morta_hub_id"):
+            config.setdefault("morta", {})["hub_id"] = ctx["morta_hub_id"]
+        if ctx.get("revizto_project_uuid"):
+            region = ctx.get("revizto_region", "dubai")
+            config.setdefault(f"revizto_{region}", {})["project_uuid"] = ctx["revizto_project_uuid"]
+        if ctx.get("forma_project_id"):
+            config.setdefault("forma", {})["project_id"] = ctx["forma_project_id"]
+
+    return config
+
+
+def write_script_config(user: str, user_temp: Path) -> Path:
+    """Write the merged script config to a temp JSON file and return its path.
+    The file lives in the user's temp dir so it's cleaned up with other temp files.
+    """
+    merged = build_script_config(user)
+    config_path = user_temp / "_cockpit_config.json"
+    with open(config_path, "w") as f:
+        json.dump(merged, f, indent=2)
+    return config_path
 
 @app.post("/api/extract")
 async def api_extract(request: Request, user: str = Depends(require_user)):
@@ -1483,6 +1969,10 @@ async def api_extract(request: Request, user: str = Depends(require_user)):
     if not script_path.exists():
         return JSONResponse({"status": "error", "message": f"Script not found: {script_name}.py"}, status_code=404)
 
+    # Resolve per-user temp dir and clean up stale ones opportunistically
+    cleanup_stale_temp_dirs()
+    user_temp = get_user_temp_dir(user)
+
     if project_uuid:
         config = load_config(user)
         if platform_key == "revizto":
@@ -1491,6 +1981,16 @@ async def api_extract(request: Request, user: str = Depends(require_user)):
             config.setdefault("forma", {})["project_id"] = project_uuid
         save_config(config, user)
 
+    # Env vars passed to the subprocess:
+    #   COCKPIT_USER        — the logged-in admin's email (for per-user token storage)
+    #   COCKPIT_EXPORTS_DIR — where the script should write its output files
+    #   COCKPIT_CONFIG      — path to the admin's merged config JSON (credentials + project context)
+    config_path = write_script_config(user, user_temp)
+    script_env = os.environ.copy()
+    script_env["COCKPIT_USER"]        = user
+    script_env["COCKPIT_EXPORTS_DIR"] = str(user_temp)
+    script_env["COCKPIT_CONFIG"]      = str(config_path)
+
     try:
         loop = asyncio.get_event_loop()
         def run_script():
@@ -1498,21 +1998,72 @@ async def api_extract(request: Request, user: str = Depends(require_user)):
                 [sys.executable, str(script_path)],
                 capture_output=True, text=True, timeout=300,
                 cwd=str(SCRIPT_DIRS[platform_key]),
+                env=script_env,
             )
         result = await loop.run_in_executor(None, run_script)
         lines  = [l for l in (result.stdout + result.stderr).strip().splitlines() if l.strip()]
-        # Check saved files in output — more reliable than exit code alone
         saved  = any("saved" in l.lower() or "export" in l.lower() for l in lines)
         ok     = result.returncode == 0 or saved
+
+        # Collect any new files in the user's temp dir and build download links
+        files = []
+        for ext in [".csv", ".json"]:
+            for f in sorted(user_temp.glob(f"*{ext}")):
+                files.append({
+                    "filename": f.name,
+                    "ext":      ext.lstrip("."),
+                    "url":      f"/api/extractions/download/{f.name}",
+                    "size_kb":  round(f.stat().st_size / 1024, 1),
+                })
+
         return JSONResponse({
             "status":  "success" if ok else "error",
-            "message": "Extraction complete. Output saved to exports/." if ok else f"Script exited with code {result.returncode}.",
+            "message": "Extraction complete." if ok else f"Script exited with code {result.returncode}.",
             "output":  lines[:10],
+            "files":   files,
         })
     except subprocess.TimeoutExpired:
-        return JSONResponse({"status": "error", "message": "Timed out after 5 minutes.", "output": []})
+        return JSONResponse({"status": "error", "message": "Timed out after 5 minutes.", "output": [], "files": []})
     except Exception as e:
-        return JSONResponse({"status": "error", "message": str(e), "output": []})
+        return JSONResponse({"status": "error", "message": str(e), "output": [], "files": []})
+
+
+@app.get("/api/extractions/download/{filename}")
+async def api_extraction_download(filename: str, user: str = Depends(require_user)):
+    """Stream a file from the user's temp folder as a browser download."""
+    from fastapi.responses import FileResponse
+    safe_name = Path(filename).name  # strip any path traversal
+    if not safe_name.endswith((".csv", ".json")):
+        raise HTTPException(status_code=400, detail="Only CSV and JSON files are supported.")
+    file_path = get_user_temp_dir(user) / safe_name
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail=f"{safe_name} not found. Try running the extraction again.")
+    media_type = "text/csv" if safe_name.endswith(".csv") else "application/json"
+    return FileResponse(
+        path=file_path,
+        filename=safe_name,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{safe_name}"'},
+    )
+
+
+@app.get("/api/extractions/files")
+async def api_extractions_files(user: str = Depends(require_user)):
+    """List files available in the user's temp folder (for widget builder)."""
+    user_temp = get_user_temp_dir(user)
+    files = []
+    for ext in [".csv", ".json"]:
+        for f in sorted(user_temp.glob(f"*{ext}")):
+            files.append({
+                "name":     f.stem,
+                "filename": f.name,
+                "ext":      ext.lstrip("."),
+                "url":      f"/api/extractions/download/{f.name}",
+                "size_kb":  round(f.stat().st_size / 1024, 1),
+                "modified": datetime.fromtimestamp(f.stat().st_mtime).strftime("%Y-%m-%d %H:%M"),
+            })
+    return JSONResponse({"files": files})
+
 
 #TEMP DEBUG ROUTE TO CHECK PATHS IN DEPLOYMENT ENVIRONMENT    
 @app.get("/api/debug/paths")
@@ -1525,7 +2076,7 @@ async def debug_paths():
         "revizto_exists": (BASE_DIR.parent / "codeRevizto" / "vsCode").exists(),
         "morta_exists":   (BASE_DIR.parent / "codeMorta"   / "vsCode").exists(),
         "forma_exists":   (BASE_DIR.parent / "codeForma"   / "vsCode").exists(),
-    })    
+    })
 # ---------------------------------------------------------------------------
 # API — Projects List (saved, for dropdowns)
 # ---------------------------------------------------------------------------
@@ -1562,14 +2113,14 @@ async def api_fetch_projects(request: Request, user: str = Depends(require_user)
 
     if platform in ("revizto", "all"):
         try:
-            dubai_ok   = bool(config.get("revizto_dubai",   {}).get("access_code")) or (BASE_DIR / "revizto_tokens_dubai.json").exists()
-            ireland_ok = bool(config.get("revizto_ireland", {}).get("access_code")) or (BASE_DIR / "revizto_tokens_ireland.json").exists()
+            dubai_ok   = bool(config.get("revizto_dubai",   {}).get("access_code")) or bool(load_revizto_tokens("dubai",   user))
+            ireland_ok = bool(config.get("revizto_ireland", {}).get("access_code")) or bool(load_revizto_tokens("ireland", user))
             if not dubai_ok and not ireland_ok:
                 results["revizto"] = {"count": 0, "items": [], "error": "No Revizto access code configured — check Settings"}
             else:
                 loop = asyncio.get_event_loop()
                 with ThreadPoolExecutor() as pool:
-                    projects = await loop.run_in_executor(pool, fetch_revizto_projects, config)
+                    projects = await loop.run_in_executor(pool, fetch_revizto_projects, config, user)
                 config.setdefault("projects", {})["revizto"] = projects
                 if not projects:
                     results["revizto"] = {
@@ -1637,14 +2188,15 @@ async def api_set_context(request: Request, user: str = Depends(require_user)):
 
 @app.get("/api/exports")
 async def api_exports_list(user: str = Depends(require_user)):
-    """Return a list of available CSV files in the exports folder."""
-    files = sorted(EXPORTS_DIR.glob("*.csv"))
+    """Return a list of available CSV files in the user's temp folder."""
+    user_temp = get_user_temp_dir(user)
+    files = sorted(user_temp.glob("*.csv"))
     return JSONResponse({
         "files": [
             {
-                "name": f.stem,
+                "name":     f.stem,
                 "filename": f.name,
-                "size_kb": round(f.stat().st_size / 1024, 1),
+                "size_kb":  round(f.stat().st_size / 1024, 1),
                 "modified": datetime.fromtimestamp(f.stat().st_mtime).strftime("%Y-%m-%d %H:%M"),
             }
             for f in files
@@ -1653,23 +2205,22 @@ async def api_exports_list(user: str = Depends(require_user)):
 
 @app.get("/api/exports/{filename}")
 async def api_exports_read(filename: str, user: str = Depends(require_user)):
-    """Read and return the contents of a specific CSV from the exports folder."""
-    # Prevent path traversal
+    """Read and return the contents of a specific CSV from the user's temp folder."""
     safe_name = Path(filename).name
     if not safe_name.endswith(".csv"):
         raise HTTPException(status_code=400, detail="Only CSV files are supported.")
-    file_path = EXPORTS_DIR / safe_name
+    file_path = get_user_temp_dir(user) / safe_name
     if not file_path.exists():
-        raise HTTPException(status_code=404, detail=f"{safe_name} not found in exports.")
+        raise HTTPException(status_code=404, detail=f"{safe_name} not found. Run the extraction first.")
     with open(file_path, newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        rows   = list(reader)
+        reader  = csv.DictReader(f)
+        rows    = list(reader)
         headers = reader.fieldnames or []
     return JSONResponse({
         "filename": safe_name,
-        "headers": headers,
-        "rows": rows,
-        "total": len(rows),
+        "headers":  headers,
+        "rows":     rows,
+        "total":    len(rows),
     })
 
 # ---------------------------------------------------------------------------
@@ -1697,7 +2248,7 @@ async def api_invite_single(request: Request, user: str = Depends(require_user))
     if data.get("revizto"):
         r = revizto_invite(email, data.get("first_name", ""), data.get("last_name", ""),
                           data.get("company", ""), data.get("department", ""), config,
-                          project_uuid=data.get("revizto_project_uuid"))
+                          project_uuid=data.get("revizto_project_uuid"), admin_email=user)
         result["revizto_status"] = r["status"]
     if data.get("forma"):
         r = forma_invite(email, config, project_id=data.get("forma_project_id"))
@@ -1765,7 +2316,7 @@ async def api_invite_bulk(request: Request, user: str = Depends(require_user)):
         if u.get("revizto"):
             r = revizto_invite(u["email"], u.get("first_name", ""), u.get("last_name", ""),
                               u.get("company", ""), u.get("department", ""), config,
-                              project_uuid=revizto_project_uuid)
+                              project_uuid=revizto_project_uuid, admin_email=user)
             result["revizto_status"] = r["status"]
         if u.get("forma"):
             r = forma_invite(u["email"], config, project_id=forma_project_id)
@@ -1801,7 +2352,7 @@ async def api_user_search(email: str, user: str = Depends(require_user)):
     loop = asyncio.get_event_loop()
     with ThreadPoolExecutor() as pool:
         morta_fut   = loop.run_in_executor(pool, morta_search_user,   email, config, allowed_morta_hubs)
-        revizto_fut = loop.run_in_executor(pool, revizto_search_user, email, config, allowed_revizto_uuids)
+        revizto_fut = loop.run_in_executor(pool, lambda: revizto_search_user(email, config, allowed_revizto_uuids, admin_email=user))
         forma_fut   = loop.run_in_executor(pool, forma_search_user,   email, config, allowed_forma_ids)
         morta_result, revizto_result, forma_result = await asyncio.gather(morta_fut, revizto_fut, forma_fut)
 

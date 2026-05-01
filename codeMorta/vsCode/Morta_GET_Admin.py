@@ -1,12 +1,10 @@
 import json
 import os
 import requests
-from Morta_Config import API_KEY, _ROOT_DIR
+from Morta_Config import API_KEY, EXPORTS_DIR
 
-BASE_URL    = "https://api.morta.io"
-HEADERS     = {"Authorization": f"Bearer {API_KEY}"}
-EXPORTS_DIR = os.path.join(_ROOT_DIR, "exports")
-os.makedirs(EXPORTS_DIR, exist_ok=True)
+BASE_URL = "https://api.morta.io"
+HEADERS  = {"Authorization": f"Bearer {API_KEY}"}
 
 
 def get_current_user() -> dict:

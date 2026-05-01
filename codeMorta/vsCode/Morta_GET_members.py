@@ -1,9 +1,8 @@
 import json
 import os
-from Morta_Config import _ROOT_DIR
+from Morta_Config import _ROOT_DIR, EXPORTS_DIR
 from Morta_GET_members import get_hub_members, to_email_dict
 
-EXPORTS_DIR  = os.path.join(_ROOT_DIR, "exports")
 MEMBERS_JSON = os.path.join(EXPORTS_DIR, "morta_members.json")
 
 
