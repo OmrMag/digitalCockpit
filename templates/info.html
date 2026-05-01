@@ -1,968 +1,863 @@
 {% extends "base.html" %}
 
 {% block title %}System Info — Digital Construction Cockpit{% endblock %}
-
 {% block page_title %}System Architecture{% endblock %}
-{% block page_subtitle %}How the Digital Construction Cockpit is built — for handover, onboarding, and reference{% endblock %}
+{% block page_subtitle %}Technical documentation for the Digital Construction Cockpit — infrastructure, platform integrations, data flows, and codebase reference{% endblock %}
 
 {% block content %}
-
-<!-- ── Quick Nav ──────────────────────────────────────────────────────── -->
-<div class="info-quicknav">
-    <a href="#overview">Overview</a>
-    <a href="#folder">Folder Structure</a>
-    <a href="#config">Config System</a>
-    <a href="#webapp">Web App</a>
-    <a href="#platforms">Platforms</a>
-    <a href="#scripts">Scripts</a>
-    <a href="#context">Active Context</a>
-    <a href="#exports">Exports</a>
-    <a href="#auth">Auth &amp; Tokens</a>
-    <a href="#adding">Adding Scripts</a>
-</div>
-
-<!-- ══════════════════════════════════════════════════════════════════════
-     SECTION 1 — OVERVIEW
-══════════════════════════════════════════════════════════════════════ -->
-<div class="info-section" id="overview">
-    <div class="info-section-label">01</div>
-    <div class="info-section-body">
-        <h2>Overview</h2>
-        <p>The <strong>Digital Construction Cockpit</strong> is an internal web application built at ALEC Holdings to manage users, run data extractions, and automate workflows across three construction platforms: <span class="tag revizto">Revizto</span> <span class="tag morta">Morta</span> <span class="tag forma">Forma / ACC</span></p>
-
-        <p>It has two layers that work together:</p>
-
-        <div class="info-grid-2" style="margin-top:16px;">
-            <div class="info-box">
-                <div class="info-box-label">Web App Layer</div>
-                <p>A FastAPI web server (<code>app.py</code>) serves a browser UI. Users log in, select active projects from the sidebar, and trigger actions — invites, searches, extractions, settings — all through the browser.</p>
-            </div>
-            <div class="info-box">
-                <div class="info-box-label">Script Layer</div>
-                <p>Python scripts organised per platform handle all API calls. They read from <code>config.json</code> and write outputs to <code>exports/</code>. Scripts run both from VS Code (direct) and from the web app (via subprocess).</p>
-            </div>
-        </div>
-
-        <div class="info-callout">
-            <span class="info-callout-icon">⚡</span>
-            <span><strong>Single source of truth:</strong> <code>config.json</code> is the bridge between the web app and all scripts. Everything reads from it. The web app writes to it. Scripts never write to it — they only read.</span>
-        </div>
-    </div>
-</div>
-
-<!-- ══════════════════════════════════════════════════════════════════════
-     SECTION 2 — FOLDER STRUCTURE
-══════════════════════════════════════════════════════════════════════ -->
-<div class="info-section" id="folder">
-    <div class="info-section-label">02</div>
-    <div class="info-section-body">
-        <h2>Folder Structure</h2>
-
-        <div class="info-tree">
-<pre>digitalCockpit/                   ← project root
-│
-├── app.py                        ← FastAPI web server (main entry point)
-├── config.json                   ← master config (credentials + active context)
-├── users.json                    ← local user accounts (hashed passwords)
-├── invite_log.json               ← log of all invitations sent
-├── forma_models_cache.json       ← per-project model list cache
-├── forma_tokens.json             ← 2-legged Forma/ACC token cache
-├── forma_tokens_3l.json          ← 3-legged Forma/ACC token cache
-├── revizto_tokens_dubai.json     ← Revizto Dubai token cache
-├── revizto_tokens_ireland.json   ← Revizto Ireland token cache
-│
-├── exports/                      ← all script outputs land here
-│   ├── morta_members.csv
-│   ├── revizto_license_projects.csv
-│   ├── forma_model_properties.csv
-│   └── ...
-│
-├── static/
-│   ├── style.css                 ← global design system (navy + cream)
-│   └── utils.js                  ← hacker text animation + cache helpers
-│
-├── templates/                    ← Jinja2 HTML templates
-│   ├── base.html                 ← sidebar, nav, shared layout
-│   ├── home.html
-│   ├── manage.html
-│   ├── extractions.html
-│   ├── scheduler.html
-│   ├── settings.html
-│   ├── invite.html
-│   ├── info.html                 ← this page
-│   └── login.html
-│
-├── codeRevizto/vsCode/           ← all Revizto scripts
-│   ├── Revizto_Config.py
-│   ├── Revizto_MasterScript.py
-│   ├── Revizto_GET_*.py
-│   ├── Revizto_POST_*.py
-│   └── Revizto_DELETE_*.py
-│
-├── codeMorta/vsCode/             ← all Morta scripts
-│   ├── Morta_Config.py
-│   ├── Morta_GET_*.py
-│   ├── Morta_POST_*.py
-│   └── Morta_DELETE_*.py
-│
-└── codeForma/vsCode/             ← all Forma / ACC scripts
-    ├── Forma_Config.py
-    ├── Forma_MasterScript.py
-    ├── Forma_GET_*.py
-    ├── Forma_POST_*.py
-    └── Proccesed_Model_Properties.py</pre>
-        </div>
-    </div>
-</div>
-
-<!-- ══════════════════════════════════════════════════════════════════════
-     SECTION 3 — CONFIG SYSTEM
-══════════════════════════════════════════════════════════════════════ -->
-<div class="info-section" id="config">
-    <div class="info-section-label">03</div>
-    <div class="info-section-body">
-        <h2>Config System</h2>
-        <p><code>config.json</code> is the single file that connects everything. It has five top-level keys:</p>
-
-        <div class="info-table-wrap">
-            <table class="info-table">
-                <thead>
-                    <tr><th>Key</th><th>What it stores</th><th>Written by</th></tr>
-                </thead>
-                <tbody>
-                    <tr><td><code>morta</code></td><td>API key, hub_id</td><td>Settings page</td></tr>
-                    <tr><td><code>revizto_dubai</code></td><td>access_code, default_license_role</td><td>Settings page</td></tr>
-                    <tr><td><code>revizto_ireland</code></td><td>access_code, default_license_role</td><td>Settings page</td></tr>
-                    <tr><td><code>forma</code></td><td>client IDs, secrets, account_id, admin_user_id, selected model</td><td>Settings page + Extractions model selector</td></tr>
-                    <tr><td><code>projects</code></td><td>Cached project lists per platform</td><td>Sidebar refresh button</td></tr>
-                    <tr><td><code>active_context</code></td><td>Currently selected project per platform</td><td>Sidebar dropdowns</td></tr>
-                </tbody>
-            </table>
-        </div>
-
-        <div class="info-callout warning">
-            <span class="info-callout-icon">⚠</span>
-            <span><strong>Note:</strong> <code>license_uuid</code> and <code>auth_method</code> for Revizto are <em>not</em> stored in config — they are resolved dynamically from the API at runtime via <code>/user/licenses</code> and <code>/license/{uuid}/auth-methods</code>. This is by design so users never need to enter them.</span>
-        </div>
-
-        <p style="margin-top:14px;">Each platform has its own <strong>Config.py</strong> file that reads from <code>config.json</code> at import time:</p>
-
-        <div class="info-grid-3">
-            <div class="info-box">
-                <div class="info-box-label revizto">Revizto_Config.py</div>
-                <p>Resolves <code>REGION</code> from <code>active_context</code>, builds <code>BASE_URL</code>, reads <code>ACCESS_CODE</code>, sets <code>TOKENS_FILE</code> path, exposes <code>PROJECT_UUID</code> and <code>PROJECT_NAME</code>.</p>
-            </div>
-            <div class="info-box">
-                <div class="info-box-label morta">Morta_Config.py</div>
-                <p>Reads <code>API_KEY</code> from <code>morta</code> block. Reads <code>HUB_ID</code> from <code>active_context.morta_hub_id</code> first, falls back to <code>morta.hub_id</code>.</p>
-            </div>
-            <div class="info-box">
-                <div class="info-box-label forma">Forma_Config.py</div>
-                <p>Reads credentials from <code>forma</code> block. Reads <code>PROJECT_ID</code> from <code>active_context.forma_project_id</code> first. Exports <code>_ROOT_DIR</code> and <code>EXPORTS_DIR</code> for other modules.</p>
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- ══════════════════════════════════════════════════════════════════════
-     SECTION 4 — WEB APP
-══════════════════════════════════════════════════════════════════════ -->
-<div class="info-section" id="webapp">
-    <div class="info-section-label">04</div>
-    <div class="info-section-body">
-        <h2>Web App (app.py)</h2>
-        <p><code>app.py</code> is a single-file <strong>FastAPI</strong> application. It serves the browser UI and exposes a REST API consumed by the frontend JavaScript.</p>
-
-        <div class="info-table-wrap">
-            <table class="info-table">
-                <thead>
-                    <tr><th>Route group</th><th>Routes</th><th>Purpose</th></tr>
-                </thead>
-                <tbody>
-                    <tr>
-                        <td>Pages</td>
-                        <td><code>GET /</code> <code>/manage</code> <code>/extractions</code> <code>/scheduler</code> <code>/settings</code> <code>/invite</code> <code>/info</code></td>
-                        <td>Render Jinja2 HTML templates</td>
-                    </tr>
-                    <tr>
-                        <td>Auth</td>
-                        <td><code>POST /api/auth/check-email</code> <code>/api/auth/login</code> <code>/api/auth/register</code> <code>GET /logout</code></td>
-                        <td>Session-based login. Domain restricted to <code>@alec.ae</code></td>
-                    </tr>
-                    <tr>
-                        <td>Config</td>
-                        <td><code>GET /api/context</code> <code>POST /api/context</code> <code>POST /api/context/model</code></td>
-                        <td>Read / write active sidebar selections</td>
-                    </tr>
-                    <tr>
-                        <td>Projects</td>
-                        <td><code>GET /api/projects</code> <code>POST /api/projects/fetch</code></td>
-                        <td>Return cached projects or fetch fresh from each platform API</td>
-                    </tr>
-                    <tr>
-                        <td>Manage</td>
-                        <td><code>POST /api/search</code> <code>POST /api/invite</code> <code>GET /api/invite/log</code></td>
-                        <td>Cross-platform user search and invite with logging</td>
-                    </tr>
-                    <tr>
-                        <td>Extractions</td>
-                        <td><code>POST /api/extract</code> <code>POST /api/forma/models</code> <code>GET /api/exports/{filename}</code></td>
-                        <td>Run Python scripts as subprocesses, browse exports</td>
-                    </tr>
-                    <tr>
-                        <td>Settings</td>
-                        <td><code>GET /settings</code> <code>POST /settings</code></td>
-                        <td>Read and save platform credentials</td>
-                    </tr>
-                </tbody>
-            </table>
-        </div>
-
-        <div class="info-callout">
-            <span class="info-callout-icon">🔒</span>
-            <span>Every route (except auth routes) is protected by <code>require_user</code> — a dependency that checks the session cookie. If not logged in, the user is redirected to <code>/login</code>.</span>
-        </div>
-
-        <h3 style="margin-top:20px;">Pages & Templates</h3>
-        <div class="info-grid-2" style="margin-top:12px;">
-            <div class="info-box">
-                <div class="info-box-label">base.html</div>
-                <p>Shared layout — sidebar, nav links, context selectors, user avatar, logout. All other pages extend this via Jinja2 <code>{% raw %}{% extends %}{% endraw %}</code>.</p>
-            </div>
-            <div class="info-box">
-                <div class="info-box-label">home.html</div>
-                <p>Dashboard with stat cards (Morta members, Revizto projects, Forma projects), recent invite log, and a widget builder for CSV data.</p>
-            </div>
-            <div class="info-box">
-                <div class="info-box-label">manage.html</div>
-                <p>User search across all 3 platforms in parallel (ThreadPoolExecutor). Single and bulk invite modal with CSV/XLSX upload.</p>
-            </div>
-            <div class="info-box">
-                <div class="info-box-label">extractions.html</div>
-                <p>Tabbed extraction runner per platform. L1/L2/L3 hierarchy. Runs scripts as subprocesses via <code>POST /api/extract</code>. Model selector with per-project cache.</p>
-            </div>
-            <div class="info-box">
-                <div class="info-box-label">scheduler.html</div>
-                <p>Automation builder UI (frontend only at present). Saves schedules to <code>localStorage</code>. Backend cron runner is planned.</p>
-            </div>
-            <div class="info-box">
-                <div class="info-box-label">settings.html</div>
-                <p>Platform credentials. Revizto has Dubai / Ireland tabs. License UUID and Auth Method are resolved automatically — not shown here.</p>
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- ══════════════════════════════════════════════════════════════════════
-     SECTION 5 — PLATFORMS
-══════════════════════════════════════════════════════════════════════ -->
-<div class="info-section" id="platforms">
-    <div class="info-section-label">05</div>
-    <div class="info-section-body">
-        <h2>Platforms</h2>
-
-        <!-- Revizto -->
-        <div class="platform-block revizto">
-            <div class="platform-block-header">
-                <span class="platform-dot revizto"></span>
-                <strong>Revizto</strong>
-                <span class="platform-region">Dubai (ME) · Ireland (EU)</span>
-            </div>
-            <div class="info-grid-2" style="margin-top:12px;">
-                <div>
-                    <p class="info-label">API Base URL</p>
-                    <code>https://api.{region}.revizto.com/v5</code>
-                </div>
-                <div>
-                    <p class="info-label">Auth Flow</p>
-                    <p>One-time access code → OAuth2 token pair (<code>access_token</code> + <code>refresh_token</code>). Token saved to <code>revizto_tokens_{region}.json</code>. Refresh attempted first on every request; falls back to access code if refresh fails. Access codes expire after one use — generate a new one monthly at <code>ws.revizto.com/login?request=accessCode</code>.</p>
-                </div>
-                <div>
-                    <p class="info-label">License resolution</p>
-                    <p>License UUID and Auth Method are never stored in config. They are fetched at runtime from <code>GET /user/licenses</code> and <code>GET /license/{uuid}/auth-methods</code> and cached in-memory per request.</p>
-                </div>
-                <div>
-                    <p class="info-label">Project resolution</p>
-                    <p>Fetches all user licenses, then fetches projects per license, deduplicates by UUID. Handles multi-license accounts. Region comes from <code>active_context.revizto_region</code>.</p>
-                </div>
-            </div>
-        </div>
-
-        <!-- Morta -->
-        <div class="platform-block morta" style="margin-top:16px;">
-            <div class="platform-block-header">
-                <span class="platform-dot morta"></span>
-                <strong>Morta</strong>
-                <span class="platform-region">Single region</span>
-            </div>
-            <div class="info-grid-2" style="margin-top:12px;">
-                <div>
-                    <p class="info-label">API Base URL</p>
-                    <code>https://api.morta.io</code>
-                </div>
-                <div>
-                    <p class="info-label">Auth Flow</p>
-                    <p>Simple Bearer token (API key). Stored as <code>morta.api_key</code> in config. No token refresh needed — keys are long-lived.</p>
-                </div>
-                <div>
-                    <p class="info-label">Hub resolution</p>
-                    <p>Active hub ID read from <code>active_context.morta_hub_id</code>. Falls back to <code>morta.hub_id</code> in config. Hub list cached in <code>projects.morta</code>.</p>
-                </div>
-                <div>
-                    <p class="info-label">Email as identifier</p>
-                    <p>Email is the universal key for user lookups. <code>Morta_GET_User.py</code> returns a dict keyed by lowercase email for O(1) lookups.</p>
-                </div>
-            </div>
-        </div>
-
-        <!-- Forma -->
-        <div class="platform-block forma" style="margin-top:16px;">
-            <div class="platform-block-header">
-                <span class="platform-dot forma"></span>
-                <strong>Forma / ACC</strong>
-                <span class="platform-region">Autodesk Platform Services</span>
-            </div>
-            <div class="info-grid-2" style="margin-top:12px;">
-                <div>
-                    <p class="info-label">API Base URL</p>
-                    <code>https://developer.api.autodesk.com</code>
-                </div>
-                <div>
-                    <p class="info-label">Auth — 2-legged</p>
-                    <p>Client credentials flow (<code>client_id</code> + <code>client_secret</code>). Used for account-level operations. Token cached in <code>forma_tokens.json</code> with expiry check. Scopes: <code>account:read account:write data:read</code>.</p>
-                </div>
-                <div>
-                    <p class="info-label">Auth — 3-legged</p>
-                    <p>Authorization code flow. Requires a browser session — run <code>Forma_MasterScript.py</code> directly from VS Code to cache the token. When running from the web app subprocess, falls back to 2-legged automatically. Token cached in <code>forma_tokens_3l.json</code> with refresh.</p>
-                </div>
-                <div>
-                    <p class="info-label">Project IDs</p>
-                    <p>All Autodesk API calls require <code>b.</code> prefix on hub and project IDs (e.g. <code>b.{account_id}</code>, <code>b.{project_id}</code>). The prefix is added at call time — IDs are stored without it in config.</p>
-                </div>
-                <div>
-                    <p class="info-label">Model cache</p>
-                    <p>BIM model lists are cached per project in <code>forma_models_cache.json</code> keyed by <code>project_id</code>. Selected model stored at <code>project_id__selected</code>. Fetch Models button forces a fresh walk of the folder tree.</p>
-                </div>
-                <div>
-                    <p class="info-label">Platforms within ACC</p>
-                    <p>Projects can be on <code>acc</code> or <code>bim360</code>. Both are fetched and listed. The <code>platform</code> field is stored on each project in the cache.</p>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- ══════════════════════════════════════════════════════════════════════
-     SECTION 6 — SCRIPTS
-══════════════════════════════════════════════════════════════════════ -->
-<div class="info-section" id="scripts">
-    <div class="info-section-label">06</div>
-    <div class="info-section-body">
-        <h2>Script Inventory</h2>
-        <p>Naming convention: <code>{Platform}_{VERB}_{Resource}.py</code>. Every script can run standalone from VS Code or be triggered by the web app.</p>
-
-        <h3 class="platform-heading revizto">Revizto</h3>
-        <div class="info-table-wrap">
-            <table class="info-table">
-                <thead><tr><th>Script</th><th>What it does</th><th>Level</th><th>Output</th></tr></thead>
-                <tbody>
-                    <tr><td><code>Revizto_MasterScript.py</code></td><td>Token management — refresh or authenticate with access code. Exports <code>get_headers()</code> used by all other scripts.</td><td>—</td><td>Updates token JSON</td></tr>
-                    <tr><td><code>Revizto_GET_User_Licenses.py</code></td><td>All licenses available to the authenticated user.</td><td>L1</td><td><code>revizto_user_licenses.csv</code></td></tr>
-                    <tr><td><code>Revizto_GET_License_Projects.py</code></td><td>All projects across all user licenses, deduplicated.</td><td>L1</td><td><code>revizto_license_projects.csv</code></td></tr>
-                    <tr><td><code>Revizto_GET_License_Members.py</code></td><td>All license members with roles, status, company.</td><td>L1</td><td><code>revizto_license_members.csv</code></td></tr>
-                    <tr><td><code>Revizto_GET_Project_Roles.py</code></td><td>All defined roles within the license.</td><td>L1</td><td><code>revizto_project_roles.csv</code></td></tr>
-                    <tr><td><code>Revizto_GET_Project_Members.py</code></td><td>Members and their roles within the active project.</td><td>L2</td><td><code>revizto_project_members.csv</code></td></tr>
-                    <tr><td><code>Revizto_GET_Clash_Tests.py</code></td><td>All clash tests with group and clash counts for active project.</td><td>L2</td><td><code>revizto_clash_tests.csv</code></td></tr>
-                    <tr><td><code>Revizto_GET_Scenes_and_Models_with_Properties.py</code></td><td>Scenes and their models for active project. Also populates the L3 model selector.</td><td>L2</td><td><code>revizto_scenes_models.csv</code></td></tr>
-                    <tr><td><code>Revizto_GET_Object_Tree_With_Properties.py</code></td><td>Full object tree with all properties. Paginated (50k per page). Large export.</td><td>L3</td><td><code>revizto_object_tree.csv</code></td></tr>
-                    <tr><td><code>Revizto_POST_Invite.py</code></td><td>Invite user to license + optionally a project. Resolves license/auth at runtime.</td><td>—</td><td>API response</td></tr>
-                    <tr><td><code>Revizto_POST_Assign_Project_Role.py</code></td><td>Assign a project role to a user by UUID.</td><td>—</td><td>API response</td></tr>
-                    <tr><td><code>Revizto_POST_Remove_Users_From_Project.py</code></td><td>Remove one or more users from active project. Confirms before acting.</td><td>—</td><td>API response</td></tr>
-                </tbody>
-            </table>
-        </div>
-
-        <h3 class="platform-heading morta" style="margin-top:24px;">Morta</h3>
-        <div class="info-table-wrap">
-            <table class="info-table">
-                <thead><tr><th>Script</th><th>What it does</th><th>Level</th><th>Output</th></tr></thead>
-                <tbody>
-                    <tr><td><code>Morta_GET_Admin.py</code></td><td>Current authenticated admin user info.</td><td>L1</td><td><code>morta_admin.json</code></td></tr>
-                    <tr><td><code>Morta_GET_members.py</code></td><td>All hub members with tags, roles, and timestamps. Exports email-keyed JSON for lookups.</td><td>L1</td><td><code>morta_members.csv</code></td></tr>
-                    <tr><td><code>Morta_GET_Tags.py</code></td><td>All permission tags defined in the hub.</td><td>L1</td><td><code>morta_tags.csv</code></td></tr>
-                    <tr><td><code>Morta_GET_User.py</code></td><td>Look up a specific user by email (fetches fresh members list).</td><td>L1</td><td>Updates <code>morta_members.json</code></td></tr>
-                    <tr><td><code>Morta_POST_User.py</code></td><td>Invite a user to the active Morta hub.</td><td>—</td><td><code>morta_invite_response.json</code></td></tr>
-                    <tr><td><code>Morta_POST_Tag.py</code></td><td>Assign a permission tag to a user by email. Reads available tags from <code>morta_tags.json</code>.</td><td>—</td><td>API response</td></tr>
-                    <tr><td><code>Morta_DELETE_Tag.py</code></td><td>Remove a permission tag from a user. Shows current tags and confirms before deleting.</td><td>—</td><td>API response</td></tr>
-                </tbody>
-            </table>
-        </div>
-
-        <h3 class="platform-heading forma" style="margin-top:24px;">Forma / ACC</h3>
-        <div class="info-table-wrap">
-            <table class="info-table">
-                <thead><tr><th>Script</th><th>What it does</th><th>Level</th><th>Output</th></tr></thead>
-                <tbody>
-                    <tr><td><code>Forma_MasterScript.py</code></td><td>2-legged and 3-legged token management. 3-legged requires interactive browser session — run from VS Code first to cache.</td><td>—</td><td>Updates token JSONs</td></tr>
-                    <tr><td><code>Forma_GET_Account_Projects.py</code></td><td>All active ACC and BIM360 projects under the account.</td><td>L1</td><td><code>forma_account_projects.csv</code></td></tr>
-                    <tr><td><code>Forma_GET_Hub_Users.py</code></td><td>All users in the ACC hub (paginated).</td><td>L1</td><td><code>forma_hub_users.csv</code></td></tr>
-                    <tr><td><code>Forma_GET_Project_Files.py</code></td><td>Full file tree of the active project, recursively walking all folders.</td><td>L2</td><td><code>forma_project_files.csv</code></td></tr>
-                    <tr><td><code>Forma_GET_Project_Models.py</code></td><td>BIM model files only (.rvt, .ifc, .nwc etc.) with item IDs and version URNs.</td><td>L2</td><td><code>forma_project_models.csv</code></td></tr>
-                    <tr><td><code>Forma_GET_Projects_Users.py</code></td><td>Users across all projects — loops every project and collects members.</td><td>L2</td><td><code>forma_projects_users.csv</code></td></tr>
-                    <tr><td><code>Forma_GET_Model_Properties.py</code></td><td>Full property extraction via APS Construction Index. Polls until index ready, downloads gzipped NDJSON, saves all properties.</td><td>L3</td><td><code>forma_model_properties.csv</code></td></tr>
-                    <tr><td><code>Proccesed_Model_Properties.py</code></td><td>Post-processes <code>forma_model_properties.json</code> — filters physical elements, flags quality issues, generates model health report. Run after Model Properties.</td><td>L3</td><td><code>forma_model_elements.csv</code> + <code>forma_model_report.csv</code></td></tr>
-                    <tr><td><code>Forma_POST_Invite.py</code></td><td>Invite a user to the active ACC project using the v2 bulk endpoint with <code>User-Id</code> header for impersonation.</td><td>—</td><td>API response</td></tr>
-                </tbody>
-            </table>
-        </div>
-    </div>
-</div>
-
-<!-- ══════════════════════════════════════════════════════════════════════
-     SECTION 7 — ACTIVE CONTEXT
-══════════════════════════════════════════════════════════════════════ -->
-<div class="info-section" id="context">
-    <div class="info-section-label">07</div>
-    <div class="info-section-body">
-        <h2>Active Context (Sidebar)</h2>
-        <p>The sidebar context selectors are the central control panel. When you change the active project, every script and every web app function automatically uses the new selection — no config edits needed.</p>
-
-        <div class="info-flow">
-            <div class="info-flow-step">
-                <div class="info-flow-num">1</div>
-                <div>User clicks <strong>refresh icon</strong> in sidebar</div>
-            </div>
-            <div class="info-flow-arrow">→</div>
-            <div class="info-flow-step">
-                <div class="info-flow-num">2</div>
-                <div><code>POST /api/projects/fetch</code> calls each platform API in parallel threads</div>
-            </div>
-            <div class="info-flow-arrow">→</div>
-            <div class="info-flow-step">
-                <div class="info-flow-num">3</div>
-                <div>Results saved to <code>config.json → projects</code></div>
-            </div>
-            <div class="info-flow-arrow">→</div>
-            <div class="info-flow-step">
-                <div class="info-flow-num">4</div>
-                <div>Dropdowns populated from <code>GET /api/projects</code></div>
-            </div>
-            <div class="info-flow-arrow">→</div>
-            <div class="info-flow-step">
-                <div class="info-flow-num">5</div>
-                <div>User selects a project — <code>POST /api/context</code> saves to <code>active_context</code></div>
-            </div>
-            <div class="info-flow-arrow">→</div>
-            <div class="info-flow-step">
-                <div class="info-flow-num">6</div>
-                <div>All scripts read new context on next run via their Config.py</div>
-            </div>
-        </div>
-
-        <div class="info-table-wrap" style="margin-top:16px;">
-            <table class="info-table">
-                <thead><tr><th>active_context field</th><th>Set by</th><th>Used by</th></tr></thead>
-                <tbody>
-                    <tr><td><code>revizto_project_uuid</code></td><td>Revizto sidebar dropdown</td><td>All Revizto L2/L3 scripts</td></tr>
-                    <tr><td><code>revizto_project_name</code></td><td>Revizto sidebar dropdown</td><td>UI display, invite log</td></tr>
-                    <tr><td><code>revizto_region</code></td><td>Revizto sidebar dropdown (from project)</td><td><code>Revizto_Config.py</code>, all Revizto scripts</td></tr>
-                    <tr><td><code>morta_hub_id</code></td><td>Morta sidebar dropdown</td><td>All Morta scripts</td></tr>
-                    <tr><td><code>morta_hub_name</code></td><td>Morta sidebar dropdown</td><td>UI display, invite log</td></tr>
-                    <tr><td><code>forma_project_id</code></td><td>Forma sidebar dropdown</td><td>All Forma L2/L3 scripts</td></tr>
-                    <tr><td><code>forma_project_name</code></td><td>Forma sidebar dropdown</td><td>UI display, invite log</td></tr>
-                    <tr><td><code>forma_platform</code></td><td>Forma sidebar dropdown (acc / bim360)</td><td>API route selection</td></tr>
-                </tbody>
-            </table>
-        </div>
-    </div>
-</div>
-
-<!-- ══════════════════════════════════════════════════════════════════════
-     SECTION 8 — EXPORTS
-══════════════════════════════════════════════════════════════════════ -->
-<div class="info-section" id="exports">
-    <div class="info-section-label">08</div>
-    <div class="info-section-body">
-        <h2>Exports Folder</h2>
-        <p>Every script writes its output to <code>exports/</code> at the project root. This is the single folder you check after running any extraction. Files are overwritten on each run — they are not versioned.</p>
-
-        <div class="info-callout">
-            <span class="info-callout-icon">📁</span>
-            <span>The web app serves these files at <code>GET /api/exports/{filename}</code> so the browser can read them (e.g. the Revizto model selector reads <code>revizto_scenes_models.json</code> after a Scenes &amp; Models run to populate the L3 dropdown).</span>
-        </div>
-
-        <p style="margin-top:14px;">File naming follows the pattern <code>{platform_prefix}_{resource}.{ext}</code>:</p>
-
-        <div class="info-grid-3" style="margin-top:12px;">
-            <div class="info-box">
-                <div class="info-box-label revizto">revizto_*</div>
-                <p>user_licenses · license_projects · license_members · project_roles · project_members · clash_tests · scenes_models · object_tree</p>
-            </div>
-            <div class="info-box">
-                <div class="info-box-label morta">morta_*</div>
-                <p>admin · members · tags · invite_response</p>
-            </div>
-            <div class="info-box">
-                <div class="info-box-label forma">forma_*</div>
-                <p>account_projects · hub_users · project_files · project_models · projects_users · model_properties · model_elements · model_report</p>
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- ══════════════════════════════════════════════════════════════════════
-     SECTION 9 — AUTH & TOKENS
-══════════════════════════════════════════════════════════════════════ -->
-<div class="info-section" id="auth">
-    <div class="info-section-label">09</div>
-    <div class="info-section-body">
-        <h2>Auth &amp; Tokens</h2>
-
-        <h3 style="margin-bottom:12px;">Web App Login</h3>
-        <p>Session-based auth using a signed cookie. Login flow is 2-stage: email check → password. First time users go through a register stage. Domain is restricted to <code>@alec.ae</code>. Passwords are hashed with <strong>bcrypt</strong>. User accounts stored in <code>users.json</code>.</p>
-
-        <h3 style="margin-top:20px; margin-bottom:12px;">Platform Token Summary</h3>
-        <div class="info-table-wrap">
-            <table class="info-table">
-                <thead><tr><th>Platform</th><th>Token type</th><th>Expiry</th><th>Stored in</th><th>Refresh</th></tr></thead>
-                <tbody>
-                    <tr>
-                        <td><span class="tag revizto">Revizto</span></td>
-                        <td>OAuth2 access + refresh</td>
-                        <td>Access: ~1hr · Refresh: ~1 month</td>
-                        <td><code>revizto_tokens_{region}.json</code></td>
-                        <td>Auto on every request. Falls back to access code if refresh fails.</td>
-                    </tr>
-                    <tr>
-                        <td><span class="tag morta">Morta</span></td>
-                        <td>API Key (Bearer)</td>
-                        <td>Long-lived (no expiry)</td>
-                        <td><code>config.json → morta.api_key</code></td>
-                        <td>Not needed.</td>
-                    </tr>
-                    <tr>
-                        <td><span class="tag forma">Forma 2L</span></td>
-                        <td>Client credentials</td>
-                        <td>~1hr</td>
-                        <td><code>forma_tokens.json</code></td>
-                        <td>Auto — fetches new token when expired.</td>
-                    </tr>
-                    <tr>
-                        <td><span class="tag forma">Forma 3L</span></td>
-                        <td>Auth code + refresh</td>
-                        <td>Access: ~1hr · Refresh: long</td>
-                        <td><code>forma_tokens_3l.json</code></td>
-                        <td>Auto refresh. Initial auth requires browser — run <code>Forma_MasterScript.py</code> from VS Code.</td>
-                    </tr>
-                </tbody>
-            </table>
-        </div>
-
-        <div class="info-callout warning" style="margin-top:16px;">
-            <span class="info-callout-icon">⚠</span>
-            <span><strong>Revizto access codes are one-time use.</strong> Once you paste an access code into Settings and save, or the script uses it to get a token, the code is consumed. Generate a new one each time the refresh token expires (~monthly) at <a href="https://ws.revizto.com/login?request=accessCode" target="_blank">ws.revizto.com/login?request=accessCode</a>.</span>
-        </div>
-    </div>
-</div>
-
-<!-- ══════════════════════════════════════════════════════════════════════
-     SECTION 10 — ADDING SCRIPTS
-══════════════════════════════════════════════════════════════════════ -->
-<div class="info-section" id="adding">
-    <div class="info-section-label">10</div>
-    <div class="info-section-body">
-        <h2>Adding a New Script</h2>
-        <p>Follow these steps to add a new extraction script and wire it up to the web app:</p>
-
-        <div class="info-steps">
-            <div class="info-step">
-                <div class="info-step-num">1</div>
-                <div class="info-step-body">
-                    <strong>Create the script</strong> in the correct platform folder (<code>codeRevizto/vsCode/</code>, <code>codeMorta/vsCode/</code>, or <code>codeForma/vsCode/</code>). Name it <code>{Platform}_{VERB}_{Resource}.py</code>.
-                </div>
-            </div>
-            <div class="info-step">
-                <div class="info-step-num">2</div>
-                <div class="info-step-body">
-                    <strong>Import from the platform Config</strong>, not hardcoded values. Use <code>PROJECT_UUID</code>, <code>EXPORTS_DIR</code>, <code>API_KEY</code> etc. from the Config file. Guard the entry point with <code>if not PROJECT_UUID: exit(1)</code> for L2/L3 scripts.
-                </div>
-            </div>
-            <div class="info-step">
-                <div class="info-step-num">3</div>
-                <div class="info-step-body">
-                    <strong>Save all outputs to EXPORTS_DIR</strong> using <code>os.path.join(EXPORTS_DIR, filename)</code>. Never save to CWD. Follow the naming convention <code>{platform}_{resource}.csv</code>.
-                </div>
-            </div>
-            <div class="info-step">
-                <div class="info-step-num">4</div>
-                <div class="info-step-body">
-                    <strong>Add a card to extractions.html</strong>. Copy an existing card and update <code>data-script</code> (must match the filename without <code>.py</code>), <code>data-level</code> (1, 2, or 3), <code>data-platform</code>, and the output filename in <code>ext-output</code>.
-                </div>
-            </div>
-            <div class="info-step">
-                <div class="info-step-num">5</div>
-                <div class="info-step-body">
-                    <strong>If the script name doesn't start with Revizto/Morta/Forma</strong>, add its prefix to <code>PLATFORM_MAP</code> in <code>app.py</code> so the extract endpoint can route it correctly.
-                </div>
-            </div>
-            <div class="info-step">
-                <div class="info-step-num">6</div>
-                <div class="info-step-body">
-                    <strong>Test from VS Code first</strong>, then test via the Extractions page. Check the server terminal for any errors — all scripts print <code>[Platform] Status: 200</code> lines that help diagnose issues.
-                </div>
-            </div>
-        </div>
-
-        <div class="info-callout" style="margin-top:20px;">
-            <span class="info-callout-icon">💡</span>
-            <span><strong>Extraction levels:</strong> L1 = license/account level (no project needed), L2 = project level (requires active context), L3 = model level (requires project + model selection). Cards are automatically disabled/enabled by the Extractions page JS based on what's set in the sidebar.</span>
-        </div>
-    </div>
-</div>
-
 <style>
-/* ── Quick Nav ─────────────────────────────────────────────────────────── */
-.info-quicknav {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    margin-bottom: 28px;
-    padding: 14px 16px;
-    background: white;
-    border: 1px solid var(--border-cream);
-    border-radius: var(--radius-lg);
-    box-shadow: var(--shadow);
-}
-.info-quicknav a {
-    font-size: var(--fs-xs);
-    font-weight: 600;
-    color: var(--text-dark-muted);
-    text-decoration: none;
-    padding: 4px 10px;
-    border-radius: var(--radius);
-    border: 1px solid var(--border-cream);
-    transition: all var(--transition);
-    letter-spacing: 0.3px;
-}
-.info-quicknav a:hover {
-    background: var(--navy);
-    color: var(--cream);
-    border-color: var(--navy);
-}
+/* ─── Layout ─────────────────────────────────────────────────── */
+.doc-nav{position:sticky;top:0;z-index:20;background:var(--cream);border-bottom:1px solid var(--border-cream);padding:10px 0 8px;margin-bottom:32px;display:flex;gap:4px;flex-wrap:wrap;}
+.doc-nav a{font-size:9px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:var(--text-dark-muted);text-decoration:none;padding:5px 10px;border-radius:4px;border:1px solid transparent;transition:all .15s;}
+.doc-nav a:hover{background:var(--navy);color:var(--cream);border-color:var(--navy);}
 
-/* ── Sections ──────────────────────────────────────────────────────────── */
-.info-section {
-    display: grid;
-    grid-template-columns: 48px 1fr;
-    gap: 0 20px;
-    margin-bottom: 32px;
-    padding-bottom: 32px;
-    border-bottom: 1px solid var(--border-cream);
-}
-.info-section:last-child { border-bottom: none; }
+.doc-section{margin-bottom:56px;padding-bottom:56px;border-bottom:1px solid var(--border-cream);}
+.doc-section:last-child{border-bottom:none;}
+.doc-section-inner{display:grid;grid-template-columns:160px 1fr;gap:0 40px;}
+.doc-num{font-size:10px;font-weight:700;letter-spacing:2px;color:var(--text-dark-muted);opacity:.35;padding-top:4px;text-transform:uppercase;}
+.doc-body h2{font-size:15px;font-weight:700;color:var(--navy);margin:0 0 12px;letter-spacing:-.3px;}
+.doc-body h3{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text-dark-muted);margin:20px 0 8px;}
+.doc-body p{font-size:11px;color:var(--text-dark);line-height:1.75;margin-bottom:12px;}
+.doc-body p:last-child{margin-bottom:0;}
 
-.info-section-label {
-    font-size: 11px;
-    font-weight: 700;
-    color: var(--text-dark-muted);
-    letter-spacing: 2px;
-    padding-top: 4px;
-    text-align: right;
-    opacity: 0.4;
-}
-.info-section-body h2 {
-    font-size: 15px;
-    font-weight: 700;
-    color: var(--navy);
-    margin-bottom: 12px;
-    letter-spacing: -0.3px;
-}
-.info-section-body h3 {
-    font-size: var(--fs-sm);
-    font-weight: 700;
-    color: var(--navy);
-    margin-bottom: 8px;
-    text-transform: uppercase;
-    letter-spacing: 0.8px;
-}
-.info-section-body p {
-    font-size: var(--fs-sm);
-    color: var(--text-dark);
-    line-height: 1.65;
-    margin-bottom: 10px;
-}
-.info-section-body code {
-    font-family: var(--font);
-    font-size: var(--fs-xs);
-    background: var(--cream-mid);
-    padding: 2px 5px;
-    border-radius: 3px;
-    color: var(--navy);
-}
+/* ─── Tables ─────────────────────────────────────────────────── */
+.doc-table-wrap{overflow-x:auto;border-radius:var(--radius-lg);border:1px solid var(--border-cream);box-shadow:var(--shadow);margin:12px 0;}
+.doc-table{width:100%;border-collapse:collapse;background:white;}
+.doc-table thead{background:var(--navy);}
+.doc-table th{font-size:9px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:rgba(232,237,242,.7);padding:9px 14px;text-align:left;}
+.doc-table td{padding:8px 14px;border-bottom:1px solid var(--border-cream);font-size:10px;color:var(--text-dark);line-height:1.6;vertical-align:top;}
+.doc-table tr:last-child td{border-bottom:none;}
+.doc-table tr:hover td{background:rgba(11,37,69,.025);}
+.doc-table code{font-size:9.5px;background:rgba(11,37,69,.07);color:var(--navy);padding:1px 5px;border-radius:3px;font-family:var(--font);}
 
-/* ── Grids ─────────────────────────────────────────────────────────────── */
-.info-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.info-grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+/* ─── Code block ─────────────────────────────────────────────── */
+.doc-code{background:var(--navy);border-radius:var(--radius-lg);padding:20px 22px;overflow-x:auto;box-shadow:var(--shadow-lg);margin:12px 0;}
+.doc-code pre{font-family:var(--font);font-size:10.5px;color:#8db4d8;line-height:1.8;margin:0;white-space:pre;}
+.dc-w{color:#e8edf2;font-weight:600;}
+.dc-g{color:#52d39a;}
+.dc-r{color:#f87171;}
+.dc-b{color:#4a9eff;}
+.dc-m{color:#fbbf24;}
+.dc-d{color:#3a5a7a;}
 
-/* ── Info boxes ────────────────────────────────────────────────────────── */
-.info-box {
-    background: white;
-    border: 1px solid var(--border-cream);
-    border-radius: var(--radius-lg);
-    padding: 14px 16px;
-    box-shadow: var(--shadow);
-}
-.info-box p {
-    margin-bottom: 0;
-    font-size: var(--fs-xs);
-    color: var(--text-dark-muted);
-    line-height: 1.6;
-}
-.info-box-label {
-    font-size: var(--fs-xs);
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.8px;
-    color: var(--navy);
-    margin-bottom: 7px;
-}
-.info-box-label.revizto { color: #e05a5a; }
-.info-box-label.morta   { color: var(--accent); }
-.info-box-label.forma   { color: #2563a8; }
+/* ─── Callout ─────────────────────────────────────────────────── */
+.doc-note{display:flex;gap:10px;padding:11px 14px;background:rgba(11,37,69,.05);border-left:3px solid var(--navy);border-radius:0 5px 5px 0;font-size:10px;color:var(--text-dark);line-height:1.65;margin:12px 0;}
+.doc-note.warn{background:rgba(251,191,36,.07);border-color:var(--warning);}
+.doc-note.ok{background:rgba(52,211,153,.07);border-color:var(--success);}
+.doc-note-label{font-size:8.5px;font-weight:800;letter-spacing:1px;text-transform:uppercase;white-space:nowrap;padding-top:1px;}
+.doc-note-label.n{color:var(--navy);}.doc-note-label.w{color:var(--warning);}.doc-note-label.ok{color:var(--success);}
 
-/* ── Callouts ──────────────────────────────────────────────────────────── */
-.info-callout {
-    display: flex;
-    align-items: flex-start;
-    gap: 10px;
-    padding: 12px 14px;
-    background: rgba(74,158,255,0.06);
-    border: 1px solid rgba(74,158,255,0.15);
-    border-radius: var(--radius);
-    font-size: var(--fs-sm);
-    color: var(--text-dark);
-    line-height: 1.6;
-    margin-top: 14px;
-}
-.info-callout.warning {
-    background: rgba(251,191,36,0.06);
-    border-color: rgba(251,191,36,0.2);
-}
-.info-callout-icon { font-size: 14px; flex-shrink: 0; margin-top: 1px; }
-.info-callout a { color: var(--accent); }
+/* ─── Grid ───────────────────────────────────────────────────── */
+.doc-grid-2{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:12px 0;}
+.doc-grid-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin:12px 0;}
+.doc-card{background:white;border:1px solid var(--border-cream);border-radius:var(--radius-lg);padding:14px 16px;box-shadow:var(--shadow);}
+.doc-card h4{font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:var(--navy);margin-bottom:7px;}
+.doc-card h4.r{color:#e05a5a;}.doc-card h4.b{color:var(--accent);}.doc-card h4.bl{color:#2563a8;}
+.doc-card p{font-size:10px;color:var(--text-dark);line-height:1.65;margin:0;}
+.doc-card code{font-size:9px;background:rgba(11,37,69,.07);color:var(--navy);padding:1px 4px;border-radius:3px;}
 
-/* ── Tables ────────────────────────────────────────────────────────────── */
-.info-table-wrap { overflow-x: auto; margin-top: 10px; }
-.info-table {
-    width: 100%;
-    border-collapse: collapse;
-    background: white;
-    border: 1px solid var(--border-cream);
-    border-radius: var(--radius-lg);
-    overflow: hidden;
-    box-shadow: var(--shadow);
-    font-size: var(--fs-xs);
-}
-.info-table th {
-    background: var(--cream-mid);
-    font-size: var(--fs-xs);
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    color: var(--text-dark-muted);
-    padding: 9px 12px;
-    text-align: left;
-    border-bottom: 1px solid var(--border-cream);
-}
-.info-table td {
-    padding: 9px 12px;
-    border-bottom: 1px solid var(--border-cream);
-    color: var(--text-dark);
-    line-height: 1.5;
-    vertical-align: top;
-}
-.info-table tr:last-child td { border-bottom: none; }
-.info-table tr:hover td { background: var(--cream); }
-.info-table td code {
-    font-size: 10px;
-    background: var(--cream-mid);
-    padding: 1px 4px;
-    border-radius: 3px;
-}
+/* ─── Platform bar ───────────────────────────────────────────── */
+.plat-bar{font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:1.2px;padding-bottom:7px;margin-bottom:10px;border-bottom:1.5px solid;margin-top:18px;}
+.plat-bar.r{color:#e05a5a;border-color:#e05a5a;}
+.plat-bar.b{color:var(--accent);border-color:var(--accent);}
+.plat-bar.bl{color:#2563a8;border-color:#2563a8;}
 
-/* ── Tree ──────────────────────────────────────────────────────────────── */
-.info-tree {
-    background: var(--navy);
-    border-radius: var(--radius-lg);
-    padding: 18px 20px;
-    overflow-x: auto;
-    box-shadow: var(--shadow-lg);
-}
-.info-tree pre {
-    font-family: var(--font);
-    font-size: var(--fs-xs);
-    color: #8db4d8;
-    line-height: 1.7;
-    margin: 0;
-    white-space: pre;
-}
+/* ─── Flow steps ─────────────────────────────────────────────── */
+.flow-steps{display:flex;flex-direction:column;gap:0;margin:12px 0;}
+.flow-step{display:flex;gap:0;align-items:stretch;}
+.flow-step-left{display:flex;flex-direction:column;align-items:center;width:32px;flex-shrink:0;}
+.flow-num{width:24px;height:24px;border-radius:50%;background:var(--navy);color:var(--cream);font-size:9px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+.flow-line{width:1px;background:var(--border-cream);flex:1;min-height:8px;}
+.flow-step:last-child .flow-line{display:none;}
+.flow-content{background:white;border:1px solid var(--border-cream);border-radius:var(--radius);padding:10px 14px;margin-bottom:4px;margin-left:8px;flex:1;box-shadow:var(--shadow);}
+.flow-content strong{font-size:10px;font-weight:700;color:var(--navy);display:block;margin-bottom:3px;}
+.flow-content span{font-size:10px;color:var(--text-dark-muted);line-height:1.55;}
 
-/* ── Flow ──────────────────────────────────────────────────────────────── */
-.info-flow {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 8px;
-    padding: 16px;
-    background: white;
-    border: 1px solid var(--border-cream);
-    border-radius: var(--radius-lg);
-    box-shadow: var(--shadow);
-}
-.info-flow-step {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: var(--fs-xs);
-    color: var(--text-dark);
-    line-height: 1.4;
-    max-width: 160px;
-}
-.info-flow-num {
-    width: 20px;
-    height: 20px;
-    border-radius: 50%;
-    background: var(--navy);
-    color: var(--cream);
-    font-size: 9px;
-    font-weight: 700;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-}
-.info-flow-arrow {
-    color: var(--text-dark-muted);
-    font-size: 14px;
-    flex-shrink: 0;
-}
+/* ─── Pill tags ──────────────────────────────────────────────── */
+.pill{display:inline-flex;align-items:center;padding:2px 8px;border-radius:3px;font-size:9px;font-weight:700;letter-spacing:.3px;}
+.pill.r{background:rgba(224,90,90,.1);color:#e05a5a;}
+.pill.b{background:rgba(74,158,255,.1);color:var(--accent);}
+.pill.bl{background:rgba(37,99,168,.1);color:#2563a8;}
+.pill.az{background:rgba(0,120,212,.1);color:#0078d4;}
+.pill.g{background:rgba(52,211,153,.1);color:#059669;}
 
-/* ── Platform blocks ───────────────────────────────────────────────────── */
-.platform-block {
-    background: white;
-    border: 1px solid var(--border-cream);
-    border-radius: var(--radius-lg);
-    padding: 16px 18px;
-    box-shadow: var(--shadow);
-}
-.platform-block.revizto { border-left: 3px solid #e05a5a; }
-.platform-block.morta   { border-left: 3px solid var(--accent); }
-.platform-block.forma   { border-left: 3px solid #2563a8; }
-.platform-block-header {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: var(--fs-sm);
-    color: var(--navy);
-    margin-bottom: 4px;
-}
-.platform-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    flex-shrink: 0;
-}
-.platform-dot.revizto { background: #e05a5a; }
-.platform-dot.morta   { background: var(--accent); }
-.platform-dot.forma   { background: #2563a8; }
-.platform-region {
-    font-size: var(--fs-xs);
-    color: var(--text-dark-muted);
-    margin-left: auto;
-}
-.platform-block .info-label {
-    font-size: var(--fs-xs);
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    color: var(--text-dark-muted);
-    margin-bottom: 3px;
-}
-.platform-block p {
-    font-size: var(--fs-xs);
-    color: var(--text-dark);
-    line-height: 1.6;
-    margin-bottom: 0;
-}
+/* ─── SVG diagrams ───────────────────────────────────────────── */
+.diagram-wrap{background:var(--navy);border-radius:var(--radius-lg);padding:24px;box-shadow:var(--shadow-lg);margin:16px 0;overflow-x:auto;}
+.diagram-wrap svg{display:block;max-width:100%;height:auto;}
 
-/* ── Platform headings ─────────────────────────────────────────────────── */
-.platform-heading {
-    font-size: var(--fs-xs);
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    margin-bottom: 8px;
-    padding-bottom: 6px;
-    border-bottom: 2px solid;
-}
-.platform-heading.revizto { color: #e05a5a; border-color: #e05a5a; }
-.platform-heading.morta   { color: var(--accent); border-color: var(--accent); }
-.platform-heading.forma   { color: #2563a8; border-color: #2563a8; }
-
-/* ── Tags ──────────────────────────────────────────────────────────────── */
-.tag {
-    display: inline-flex;
-    align-items: center;
-    padding: 2px 8px;
-    border-radius: 3px;
-    font-size: var(--fs-xs);
-    font-weight: 600;
-}
-.tag.revizto { background: rgba(224,90,90,0.1); color: #e05a5a; }
-.tag.morta   { background: rgba(74,158,255,0.1); color: var(--accent); }
-.tag.forma   { background: rgba(37,99,168,0.1); color: #2563a8; }
-
-/* ── Steps ─────────────────────────────────────────────────────────────── */
-.info-steps { display: flex; flex-direction: column; gap: 10px; }
-.info-step {
-    display: flex;
-    align-items: flex-start;
-    gap: 14px;
-    background: white;
-    border: 1px solid var(--border-cream);
-    border-radius: var(--radius-lg);
-    padding: 14px 16px;
-    box-shadow: var(--shadow);
-}
-.info-step-num {
-    width: 24px;
-    height: 24px;
-    border-radius: 50%;
-    background: var(--navy);
-    color: var(--cream);
-    font-size: var(--fs-xs);
-    font-weight: 700;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-    margin-top: 1px;
-}
-.info-step-body {
-    font-size: var(--fs-sm);
-    color: var(--text-dark);
-    line-height: 1.6;
-}
-.info-step-body strong { color: var(--navy); }
-
-/* ── Responsive ─────────────────────────────────────────────────────────── */
-@media (max-width: 900px) {
-    .info-grid-2, .info-grid-3 { grid-template-columns: 1fr; }
-    .info-section { grid-template-columns: 1fr; }
-    .info-section-label { text-align: left; padding-top: 0; }
-    .info-flow { flex-direction: column; align-items: flex-start; }
-    .info-flow-arrow { transform: rotate(90deg); }
+@media(max-width:960px){
+  .doc-section-inner{grid-template-columns:1fr;}
+  .doc-num{display:none;}
+  .doc-grid-2,.doc-grid-3{grid-template-columns:1fr;}
 }
 </style>
+
+<!-- NAV -->
+<div class="doc-nav">
+  <a href="#s-overview">Overview</a>
+  <a href="#s-infra">Infrastructure</a>
+  <a href="#s-registry">Registry</a>
+  <a href="#s-config">Config</a>
+  <a href="#s-auth">Auth</a>
+  <a href="#s-webapp">Web App</a>
+  <a href="#s-platforms">Platforms</a>
+  <a href="#s-scripts">Scripts</a>
+  <a href="#s-flows">Data Flows</a>
+  <a href="#s-files">File Map</a>
+  <a href="#s-env">Environment</a>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     01  OVERVIEW
+══════════════════════════════════════════════════════════════════ -->
+<div class="doc-section" id="s-overview">
+<div class="doc-section-inner">
+<div class="doc-num">01<br>Overview</div>
+<div class="doc-body">
+<h2>System Overview</h2>
+<p>The Digital Construction Cockpit is an internal web platform deployed at ALEC Holdings. It provides a single interface for managing users, running data extractions, and processing access requests across three construction technology platforms — <span class="pill r">Revizto</span> <span class="pill b">Morta</span> <span class="pill bl">Forma / ACC</span> — replacing previously manual, per-platform administration.</p>
+<p>The system is organised around two concerns: a browser-facing web layer that handles UI and all inbound API calls, and a script layer of standalone Python modules that interact with the external platforms. The two layers are decoupled through a file-based config contract and a set of environment variables injected at subprocess launch time.</p>
+<p>All runtime state — credentials, project registry, invite logs, portal submissions, token caches — is persisted in Azure Blob Storage so the application process is stateless and can be restarted without data loss.</p>
+
+<!-- MASTER ARCHITECTURE SVG -->
+<div class="diagram-wrap">
+<svg viewBox="0 0 780 340" xmlns="http://www.w3.org/2000/svg" font-family="'JetBrains Mono',monospace">
+  <defs>
+    <marker id="arr" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L6,3 Z" fill="rgba(255,255,255,0.25)"/>
+    </marker>
+    <marker id="arrb" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L6,3 Z" fill="rgba(74,158,255,0.7)"/>
+    </marker>
+    <marker id="arrr" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L6,3 Z" fill="rgba(224,90,90,0.7)"/>
+    </marker>
+    <marker id="arrg" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L6,3 Z" fill="rgba(52,211,153,0.6)"/>
+    </marker>
+  </defs>
+
+  <!-- LAYER LABELS -->
+  <text x="14" y="60" font-size="8" fill="rgba(255,255,255,0.2)" font-weight="700" letter-spacing="2">CLIENT</text>
+  <text x="14" y="175" font-size="8" fill="rgba(255,255,255,0.2)" font-weight="700" letter-spacing="2">SERVER</text>
+  <text x="14" y="285" font-size="8" fill="rgba(255,255,255,0.2)" font-weight="700" letter-spacing="2">EXTERNAL</text>
+  <!-- dividers -->
+  <line x1="60" y1="80" x2="770" y2="80" stroke="rgba(255,255,255,0.05)" stroke-width="1"/>
+  <line x1="60" y1="205" x2="770" y2="205" stroke="rgba(255,255,255,0.05)" stroke-width="1"/>
+
+  <!-- Browser -->
+  <rect x="70" y="28" width="130" height="46" rx="6" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.12)" stroke-width="1"/>
+  <text x="135" y="47" font-size="9" fill="#e8edf2" font-weight="700" text-anchor="middle">Browser</text>
+  <text x="135" y="60" font-size="8" fill="rgba(232,237,242,0.4)" text-anchor="middle">Admin UI</text>
+  <text x="135" y="71" font-size="8" fill="rgba(232,237,242,0.3)" text-anchor="middle">@alec.ae only</text>
+
+  <!-- Arrow: Browser → App -->
+  <line x1="200" y1="51" x2="256" y2="51" stroke="rgba(255,255,255,0.2)" stroke-width="1" marker-end="url(#arr)"/>
+  <text x="228" y="46" font-size="7" fill="rgba(255,255,255,0.2)" text-anchor="middle">HTTPS</text>
+
+  <!-- FastAPI App -->
+  <rect x="258" y="18" width="168" height="66" rx="6" fill="rgba(74,158,255,0.12)" stroke="rgba(74,158,255,0.35)" stroke-width="1.5"/>
+  <text x="342" y="37" font-size="9" fill="#4a9eff" font-weight="700" text-anchor="middle">FastAPI — app.py</text>
+  <text x="342" y="50" font-size="8" fill="rgba(232,237,242,0.5)" text-anchor="middle">Azure App Service B1</text>
+  <text x="342" y="62" font-size="7.5" fill="rgba(232,237,242,0.35)" text-anchor="middle">West Europe · Python 3.11</text>
+  <text x="342" y="74" font-size="7.5" fill="rgba(232,237,242,0.35)" text-anchor="middle">Uvicorn · Jinja2</text>
+
+  <!-- Arrow: App → Blob -->
+  <line x1="426" y1="51" x2="484" y2="51" stroke="rgba(255,255,255,0.2)" stroke-width="1" marker-end="url(#arr)"/>
+  <text x="455" y="46" font-size="7" fill="rgba(255,255,255,0.2)" text-anchor="middle">R/W</text>
+
+  <!-- Blob Storage -->
+  <rect x="486" y="18" width="148" height="66" rx="6" fill="rgba(52,211,153,0.1)" stroke="rgba(52,211,153,0.3)" stroke-width="1.5"/>
+  <text x="560" y="37" font-size="9" fill="#34d399" font-weight="700" text-anchor="middle">Blob Storage</text>
+  <text x="560" y="50" font-size="8" fill="rgba(232,237,242,0.5)" text-anchor="middle">cockpitdatastorage</text>
+  <text x="560" y="62" font-size="7.5" fill="rgba(232,237,242,0.35)" text-anchor="middle">container: cockpit-data</text>
+  <text x="560" y="74" font-size="7.5" fill="rgba(232,237,242,0.35)" text-anchor="middle">West Europe</text>
+
+  <!-- Arrow: App → ACS -->
+  <line x1="640" y1="51" x2="694" y2="51" stroke="rgba(255,255,255,0.2)" stroke-width="1" marker-end="url(#arr)"/>
+
+  <!-- ACS -->
+  <rect x="696" y="28" width="68" height="46" rx="6" fill="rgba(0,120,212,0.1)" stroke="rgba(0,120,212,0.3)" stroke-width="1.5"/>
+  <text x="730" y="47" font-size="8.5" fill="#60b8ff" font-weight="700" text-anchor="middle">Azure</text>
+  <text x="730" y="58" font-size="8.5" fill="#60b8ff" font-weight="700" text-anchor="middle">Email</text>
+  <text x="730" y="69" font-size="7" fill="rgba(232,237,242,0.3)" text-anchor="middle">ACS</text>
+
+  <!-- App → Script subprocess vertical arrow -->
+  <line x1="342" y1="84" x2="342" y2="118" stroke="rgba(255,255,255,0.15)" stroke-width="1" stroke-dasharray="3,3" marker-end="url(#arr)"/>
+  <text x="380" y="104" font-size="7" fill="rgba(255,255,255,0.2)">subprocess</text>
+  <text x="380" y="113" font-size="7" fill="rgba(255,255,255,0.2)">+ env vars</text>
+
+  <!-- Script Layer box -->
+  <rect x="200" y="120" width="284" height="66" rx="6" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>
+  <text x="342" y="139" font-size="9" fill="rgba(232,237,242,0.7)" font-weight="700" text-anchor="middle">Script Layer</text>
+  <text x="342" y="152" font-size="8" fill="rgba(232,237,242,0.4)" text-anchor="middle">Revizto_*.py  ·  Morta_*.py  ·  Forma_*.py</text>
+  <text x="342" y="164" font-size="7.5" fill="rgba(232,237,242,0.3)" text-anchor="middle">reads COCKPIT_CONFIG  ·  writes COCKPIT_EXPORTS_DIR</text>
+  <text x="342" y="176" font-size="7.5" fill="rgba(232,237,242,0.3)" text-anchor="middle">token namespace via COCKPIT_USER</text>
+
+  <!-- Script → Blob (temp files) -->
+  <path d="M484 153 Q520 153 520 100 Q520 51 488 51" stroke="rgba(52,211,153,0.25)" stroke-width="1" stroke-dasharray="3,3" fill="none" marker-end="url(#arrg)"/>
+  <text x="526" y="112" font-size="7" fill="rgba(52,211,153,0.4)" text-anchor="middle">tokens</text>
+  <text x="526" y="121" font-size="7" fill="rgba(52,211,153,0.4)" text-anchor="middle">/ temp</text>
+
+  <!-- External platform nodes -->
+  <!-- Revizto -->
+  <rect x="70" y="220" width="145" height="60" rx="6" fill="rgba(224,90,90,0.1)" stroke="rgba(224,90,90,0.3)" stroke-width="1.5"/>
+  <text x="142" y="239" font-size="9" fill="#e05a5a" font-weight="700" text-anchor="middle">Revizto</text>
+  <text x="142" y="252" font-size="8" fill="rgba(232,237,242,0.45)" text-anchor="middle">api.dubai.revizto.com/v5</text>
+  <text x="142" y="263" font-size="8" fill="rgba(232,237,242,0.45)" text-anchor="middle">api.ireland.revizto.com/v5</text>
+  <text x="142" y="274" font-size="7.5" fill="rgba(232,237,242,0.3)" text-anchor="middle">Bearer token · per-admin</text>
+
+  <!-- Morta -->
+  <rect x="235" y="220" width="145" height="60" rx="6" fill="rgba(74,158,255,0.1)" stroke="rgba(74,158,255,0.3)" stroke-width="1.5"/>
+  <text x="307" y="239" font-size="9" fill="#4a9eff" font-weight="700" text-anchor="middle">Morta</text>
+  <text x="307" y="252" font-size="8" fill="rgba(232,237,242,0.45)" text-anchor="middle">api.morta.io/v1</text>
+  <text x="307" y="263" font-size="7.5" fill="rgba(232,237,242,0.3)" text-anchor="middle">API Key · personal</text>
+  <text x="307" y="274" font-size="7.5" fill="rgba(232,237,242,0.3)" text-anchor="middle">no owner fallback</text>
+
+  <!-- Forma -->
+  <rect x="400" y="220" width="145" height="60" rx="6" fill="rgba(37,99,168,0.15)" stroke="rgba(37,99,168,0.4)" stroke-width="1.5"/>
+  <text x="472" y="239" font-size="9" fill="#7aa7e0" font-weight="700" text-anchor="middle">Forma / ACC</text>
+  <text x="472" y="252" font-size="8" fill="rgba(232,237,242,0.45)" text-anchor="middle">Autodesk APS</text>
+  <text x="472" y="263" font-size="7.5" fill="rgba(232,237,242,0.3)" text-anchor="middle">2-legged OAuth · shared</text>
+  <text x="472" y="274" font-size="7.5" fill="rgba(232,237,242,0.3)" text-anchor="middle">owner creds fallback</text>
+
+  <!-- GitHub -->
+  <rect x="565" y="220" width="145" height="60" rx="6" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>
+  <text x="637" y="239" font-size="9" fill="rgba(232,237,242,0.6)" font-weight="700" text-anchor="middle">GitHub</text>
+  <text x="637" y="252" font-size="8" fill="rgba(232,237,242,0.35)" text-anchor="middle">OmrMag/digitalCockpit</text>
+  <text x="637" y="263" font-size="7.5" fill="rgba(232,237,242,0.3)" text-anchor="middle">Private · manual deploy</text>
+  <text x="637" y="274" font-size="7.5" fill="rgba(232,237,242,0.3)" text-anchor="middle">git archive + az webapp</text>
+
+  <!-- App → Revizto (direct invite/search) -->
+  <line x1="292" y1="84" x2="142" y2="218" stroke="rgba(224,90,90,0.3)" stroke-width="1" marker-end="url(#arrr)"/>
+  <!-- App → Morta -->
+  <line x1="342" y1="84" x2="307" y2="218" stroke="rgba(74,158,255,0.3)" stroke-width="1" marker-end="url(#arrb)"/>
+  <!-- App → Forma -->
+  <line x1="390" y1="84" x2="472" y2="218" stroke="rgba(37,99,168,0.4)" stroke-width="1" marker-end="url(#arr)"/>
+
+  <!-- Script → Revizto -->
+  <line x1="240" y1="186" x2="142" y2="218" stroke="rgba(224,90,90,0.2)" stroke-width="1" stroke-dasharray="3,3" marker-end="url(#arrr)"/>
+  <!-- Script → Morta -->
+  <line x1="310" y1="186" x2="307" y2="218" stroke="rgba(74,158,255,0.2)" stroke-width="1" stroke-dasharray="3,3" marker-end="url(#arrb)"/>
+  <!-- Script → Forma -->
+  <line x1="440" y1="186" x2="472" y2="218" stroke="rgba(37,99,168,0.25)" stroke-width="1" stroke-dasharray="3,3" marker-end="url(#arr)"/>
+
+  <!-- Legend -->
+  <line x1="70" y1="307" x2="92" y2="307" stroke="rgba(255,255,255,0.3)" stroke-width="1"/>
+  <text x="96" y="310" font-size="7.5" fill="rgba(232,237,242,0.35)">Direct API call (invite / search)</text>
+  <line x1="240" y1="307" x2="262" y2="307" stroke="rgba(255,255,255,0.3)" stroke-width="1" stroke-dasharray="3,3"/>
+  <text x="266" y="310" font-size="7.5" fill="rgba(232,237,242,0.35)">Script subprocess call (extraction)</text>
+  <line x1="430" y1="307" x2="452" y2="307" stroke="rgba(52,211,153,0.5)" stroke-width="1" stroke-dasharray="3,3"/>
+  <text x="456" y="310" font-size="7.5" fill="rgba(232,237,242,0.35)">Blob read / write</text>
+</svg>
+</div>
+
+</div>
+</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     02  INFRASTRUCTURE
+══════════════════════════════════════════════════════════════════ -->
+<div class="doc-section" id="s-infra">
+<div class="doc-section-inner">
+<div class="doc-num">02<br>Infrastructure</div>
+<div class="doc-body">
+<h2>Azure Infrastructure</h2>
+<p>All components live under resource group <code>digitalcockpit-rg</code> in the ALEC Azure subscription. The application process is fully stateless — all persistent data lives in blob storage, making restarts and redeployments non-destructive.</p>
+
+<div class="doc-table-wrap">
+<table class="doc-table">
+<thead><tr><th>Resource</th><th>Name</th><th>Tier / Region</th><th>Purpose</th></tr></thead>
+<tbody>
+<tr><td><span class="pill az">App Service</span></td><td><code>digitalcockpit-alec</code></td><td>Basic B1 · West Europe · Python 3.11</td><td>Hosts FastAPI. Oryx builds on deploy, installs requirements.txt, starts uvicorn on port 8000.</td></tr>
+<tr><td><span class="pill g">Storage Account</span></td><td><code>cockpitdatastorage</code></td><td>LRS · West Europe</td><td>Blob container <code>cockpit-data</code> holds all runtime state: per-user configs, registry, logs, token caches, portal submissions.</td></tr>
+<tr><td><span class="pill az">Communication Services</span></td><td><code>cockpit-comms</code></td><td>Global</td><td>Email notifications to project admins when portal submissions arrive. HMAC-signed REST API, no SDK dependency.</td></tr>
+<tr><td><span class="pill az">Email Communication</span></td><td><code>cockpit-email-coms</code></td><td>Global · Europe data</td><td>Managed Azure subdomain provisioned. Linked to cockpit-comms. Sender address: <code>DoNotReply@...azurecomm.net</code></td></tr>
+<tr><td><span class="pill">GitHub</span></td><td><code>OmrMag/digitalCockpit</code></td><td>Private</td><td>Source control. Deploys are manual: <code>git archive --format=zip HEAD</code> then <code>az webapp deploy --type zip</code>.</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="doc-note warn">
+<span class="doc-note-label w">Note</span>
+<span>No CI/CD pipeline exists. Every deploy is a manual command sequence. The startup command is <code>uvicorn app:app --host 0.0.0.0 --port 8000</code> defined in <code>startup.sh</code>. <code>WEBSITE_RUN_FROM_PACKAGE</code> must be set to <code>0</code> to allow Oryx build — if set to <code>1</code>, the zip is mounted read-only and pip install fails.</span>
+</div>
+
+</div>
+</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     03  PROJECT REGISTRY
+══════════════════════════════════════════════════════════════════ -->
+<div class="doc-section" id="s-registry">
+<div class="doc-section-inner">
+<div class="doc-num">03<br>Registry</div>
+<div class="doc-body">
+<h2>Project Registry</h2>
+<p><code>projects_registry.json</code> in blob storage is the backbone of the entire access model. It maps a short project key to all platform identifiers, assigned admins, and live-synced metadata for that project. Every scoped operation in the system — what a user sees in the sidebar, what appears in search results, which tags and roles populate invite dropdowns — is derived from this file.</p>
+
+<div class="doc-code"><pre><span class="dc-w">{</span>
+  <span class="dc-g">"rak-central"</span>: {
+    <span class="dc-w">"name"</span>:    <span class="dc-d">"RAK Central"</span>,
+    <span class="dc-w">"admins"</span>: <span class="dc-d">["oawad@alec.ae", "srajendren@alec.ae"],</span>    <span class="dc-d">// ← only these users see this project</span>
+    <span class="dc-w">"platforms"</span>: {
+      <span class="dc-r">"revizto"</span>: {
+        <span class="dc-w">"project_uuid"</span>:  <span class="dc-d">"1cc01307-7d5a-4e97-..."</span>,
+        <span class="dc-w">"region"</span>:        <span class="dc-d">"dubai"</span>,
+        <span class="dc-w">"roles"</span>:         <span class="dc-d">[{ "id": 5, "name": "BIM Coordinator" }, ...]</span>,    <span class="dc-d">// synced</span>
+        <span class="dc-w">"license_roles"</span>: <span class="dc-d">[{ "id": 1, "name": "Guest" }, { "id": 2, "name": "Collaborator" }, { "id": 3, "name": "Content Creator" }]</span>
+      },
+      <span class="dc-b">"morta"</span>: {
+        <span class="dc-w">"hub_id"</span>: <span class="dc-d">"406ed81a-..."</span>,
+        <span class="dc-w">"tags"</span>:   <span class="dc-d">[{ "name": "ALEC-MC01-Procurement", "tag_reference_id": "..." }, ...]</span>    <span class="dc-d">// synced</span>
+      },
+      <span class="dc-m">"forma"</span>: {
+        <span class="dc-w">"project_id"</span>: <span class="dc-d">"6bf6b4f6-..."</span>,
+        <span class="dc-w">"companies"</span>:  <span class="dc-d">[{ "id": "...", "name": "VOLTAS LIMITED" }, ...]</span>,    <span class="dc-d">// synced</span>
+        <span class="dc-w">"roles"</span>:      <span class="dc-d">[{ "id": "...", "name": "Project Admin" }, ...]</span>          <span class="dc-d">// synced</span>
+      }
+    }
+  }
+<span class="dc-w">}</span></pre></div>
+
+<p>Registry sync (<code>POST /api/registry/project/{key}/sync</code>) fetches live data from each platform and writes it back. If the syncing admin has not configured their Morta API key or Forma credentials, the system falls back to the owner's credentials — except for Morta, where keys are strictly personal and no fallback is applied.</p>
+
+<!-- REGISTRY INFLUENCE DIAGRAM -->
+<div class="diagram-wrap">
+<svg viewBox="0 0 700 280" xmlns="http://www.w3.org/2000/svg" font-family="'JetBrains Mono',monospace">
+  <defs>
+    <marker id="a2" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L6,3 Z" fill="rgba(255,255,255,0.2)"/>
+    </marker>
+    <marker id="a2g" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L6,3 Z" fill="rgba(52,211,153,0.6)"/>
+    </marker>
+  </defs>
+
+  <!-- Central registry box -->
+  <rect x="255" y="95" width="190" height="90" rx="8" fill="rgba(52,211,153,0.12)" stroke="rgba(52,211,153,0.5)" stroke-width="2"/>
+  <text x="350" y="118" font-size="10" fill="#34d399" font-weight="700" text-anchor="middle">projects_registry.json</text>
+  <text x="350" y="132" font-size="8" fill="rgba(232,237,242,0.5)" text-anchor="middle">blob: cockpit-data</text>
+  <text x="350" y="145" font-size="7.5" fill="rgba(232,237,242,0.3)" text-anchor="middle">admins · platform IDs</text>
+  <text x="350" y="157" font-size="7.5" fill="rgba(232,237,242,0.3)" text-anchor="middle">synced tags · roles · companies</text>
+  <text x="350" y="169" font-size="7.5" fill="rgba(232,237,242,0.3)" text-anchor="middle">license roles</text>
+
+  <!-- Influences: 6 consumers -->
+  <!-- Sidebar projects -->
+  <rect x="20" y="20" width="130" height="44" rx="5" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>
+  <text x="85" y="38" font-size="8.5" fill="rgba(232,237,242,0.7)" font-weight="700" text-anchor="middle">Sidebar Projects</text>
+  <text x="85" y="51" font-size="7.5" fill="rgba(232,237,242,0.3)" text-anchor="middle">scoped to admins[]</text>
+  <text x="85" y="61" font-size="7.5" fill="rgba(232,237,242,0.25)" text-anchor="middle">GET /api/registry</text>
+  <line x1="150" y1="42" x2="253" y2="120" stroke="rgba(255,255,255,0.15)" stroke-width="1" marker-end="url(#a2)"/>
+
+  <!-- User Search -->
+  <rect x="20" y="90" width="130" height="44" rx="5" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>
+  <text x="85" y="108" font-size="8.5" fill="rgba(232,237,242,0.7)" font-weight="700" text-anchor="middle">User Search</text>
+  <text x="85" y="121" font-size="7.5" fill="rgba(232,237,242,0.3)" text-anchor="middle">hub/project/ID scope</text>
+  <text x="85" y="131" font-size="7.5" fill="rgba(232,237,242,0.25)" text-anchor="middle">GET /api/user/search</text>
+  <line x1="150" y1="112" x2="253" y2="138" stroke="rgba(255,255,255,0.15)" stroke-width="1" marker-end="url(#a2)"/>
+
+  <!-- Invite Dropdowns -->
+  <rect x="20" y="160" width="130" height="44" rx="5" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>
+  <text x="85" y="178" font-size="8.5" fill="rgba(232,237,242,0.7)" font-weight="700" text-anchor="middle">Invite Dropdowns</text>
+  <text x="85" y="191" font-size="7.5" fill="rgba(232,237,242,0.3)" text-anchor="middle">tags · roles · companies</text>
+  <text x="85" y="201" font-size="7.5" fill="rgba(232,237,242,0.25)" text-anchor="middle">single invite + pending</text>
+  <line x1="150" y1="182" x2="253" y2="168" stroke="rgba(255,255,255,0.15)" stroke-width="1" marker-end="url(#a2)"/>
+
+  <!-- Invite Log -->
+  <rect x="550" y="20" width="130" height="44" rx="5" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>
+  <text x="615" y="38" font-size="8.5" fill="rgba(232,237,242,0.7)" font-weight="700" text-anchor="middle">Invite Log</text>
+  <text x="615" y="51" font-size="7.5" fill="rgba(232,237,242,0.3)" text-anchor="middle">scoped per project key</text>
+  <text x="615" y="61" font-size="7.5" fill="rgba(232,237,242,0.25)" text-anchor="middle">GET /api/invite/log</text>
+  <line x1="447" y1="120" x2="548" y2="42" stroke="rgba(255,255,255,0.15)" stroke-width="1" marker-end="url(#a2)"/>
+
+  <!-- Pending Submissions -->
+  <rect x="550" y="90" width="130" height="44" rx="5" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>
+  <text x="615" y="108" font-size="8.5" fill="rgba(232,237,242,0.7)" font-weight="700" text-anchor="middle">Pending Submissions</text>
+  <text x="615" y="121" font-size="7.5" fill="rgba(232,237,242,0.3)" text-anchor="middle">scoped per active project</text>
+  <text x="615" y="131" font-size="7.5" fill="rgba(232,237,242,0.25)" text-anchor="middle">GET /api/pending</text>
+  <line x1="447" y1="138" x2="548" y2="112" stroke="rgba(255,255,255,0.15)" stroke-width="1" marker-end="url(#a2)"/>
+
+  <!-- Active Context guard -->
+  <rect x="550" y="160" width="130" height="44" rx="5" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>
+  <text x="615" y="178" font-size="8.5" fill="rgba(232,237,242,0.7)" font-weight="700" text-anchor="middle">Context Guard</text>
+  <text x="615" y="191" font-size="7.5" fill="rgba(232,237,242,0.3)" text-anchor="middle">validates project switch</text>
+  <text x="615" y="201" font-size="7.5" fill="rgba(232,237,242,0.25)" text-anchor="middle">POST /api/context</text>
+  <line x1="447" y1="168" x2="548" y2="182" stroke="rgba(255,255,255,0.15)" stroke-width="1" marker-end="url(#a2)"/>
+
+  <!-- Sync arrows into registry -->
+  <rect x="230" y="225" width="240" height="40" rx="5" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+  <text x="350" y="241" font-size="8" fill="rgba(232,237,242,0.4)" font-weight="700" text-anchor="middle">Registry Sync</text>
+  <text x="350" y="253" font-size="7.5" fill="rgba(232,237,242,0.25)" text-anchor="middle">Morta tags · Revizto roles · Forma companies/roles</text>
+  <line x1="350" y1="225" x2="350" y2="187" stroke="rgba(52,211,153,0.4)" stroke-width="1" marker-end="url(#a2g)"/>
+</svg>
+</div>
+
+<div class="doc-note ok">
+<span class="doc-note-label ok">Access Rule</span>
+<span>Only <code>oawad@alec.ae</code> (owner) can create, update, or delete registry entries. Write routes use <code>require_owner</code>. <code>GET /api/registry</code> returns a user-scoped subset — non-owners only receive projects where their email appears in <code>admins[]</code>.</span>
+</div>
+
+</div>
+</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     04  CONFIG SYSTEM
+══════════════════════════════════════════════════════════════════ -->
+<div class="doc-section" id="s-config">
+<div class="doc-section-inner">
+<div class="doc-num">04<br>Config</div>
+<div class="doc-body">
+<h2>Config System</h2>
+<p>Every admin has a personal config file in blob: <code>config_{email}.json</code>. The owner's config additionally holds the shared Forma/ACC credentials that all other admins inherit when their own are absent. Before running any extraction script, <code>build_script_config()</code> merges the admin's personal config with the owner's shared Forma block and writes the result to <code>temp/{email}/_cockpit_config.json</code>. Scripts never read from blob directly — they only read this temp file via the <code>COCKPIT_CONFIG</code> environment variable.</p>
+
+<!-- Config merge diagram -->
+<div class="diagram-wrap">
+<svg viewBox="0 0 680 220" xmlns="http://www.w3.org/2000/svg" font-family="'JetBrains Mono',monospace">
+  <defs>
+    <marker id="ca" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L6,3 Z" fill="rgba(255,255,255,0.25)"/>
+    </marker>
+    <marker id="cam" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L6,3 Z" fill="rgba(251,191,36,0.6)"/>
+    </marker>
+  </defs>
+
+  <!-- Admin config -->
+  <rect x="20" y="30" width="160" height="100" rx="6" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.12)" stroke-width="1.5"/>
+  <text x="100" y="50" font-size="9" fill="rgba(232,237,242,0.7)" font-weight="700" text-anchor="middle">config_{email}.json</text>
+  <text x="100" y="65" font-size="7.5" fill="rgba(232,237,242,0.3)" text-anchor="middle">morta.api_key</text>
+  <text x="100" y="77" font-size="7.5" fill="rgba(232,237,242,0.3)" text-anchor="middle">revizto_dubai.access_code</text>
+  <text x="100" y="89" font-size="7.5" fill="rgba(232,237,242,0.3)" text-anchor="middle">revizto_ireland.access_code</text>
+  <text x="100" y="101" font-size="7.5" fill="rgba(255,100,100,0.4)" text-anchor="middle">forma.*  ← absent for non-owner</text>
+  <text x="100" y="115" font-size="7.5" fill="rgba(232,237,242,0.3)" text-anchor="middle">projects.*</text>
+  <text x="100" y="127" font-size="7.5" fill="rgba(232,237,242,0.3)" text-anchor="middle">active_context.*</text>
+
+  <!-- Owner forma block -->
+  <rect x="20" y="150" width="160" height="50" rx="6" fill="rgba(251,191,36,0.08)" stroke="rgba(251,191,36,0.3)" stroke-width="1.5"/>
+  <text x="100" y="168" font-size="9" fill="rgba(251,191,36,0.8)" font-weight="700" text-anchor="middle">Owner Forma Credentials</text>
+  <text x="100" y="181" font-size="7.5" fill="rgba(232,237,242,0.35)" text-anchor="middle">config_oawad_at_alec_ae.json</text>
+  <text x="100" y="193" font-size="7.5" fill="rgba(232,237,242,0.3)" text-anchor="middle">forma.client_id/secret/account_id</text>
+
+  <!-- build_script_config -->
+  <rect x="260" y="60" width="160" height="80" rx="6" fill="rgba(74,158,255,0.1)" stroke="rgba(74,158,255,0.3)" stroke-width="1.5"/>
+  <text x="340" y="80" font-size="9" fill="#4a9eff" font-weight="700" text-anchor="middle">build_script_config()</text>
+  <text x="340" y="95" font-size="7.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">merge personal + owner Forma</text>
+  <text x="340" y="108" font-size="7.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">inject active_context</text>
+  <text x="340" y="121" font-size="7.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">write → temp/{email}/</text>
+  <text x="340" y="133" font-size="7.5" fill="rgba(232,237,242,0.3)" text-anchor="middle">_cockpit_config.json</text>
+
+  <!-- Arrows to build_script_config -->
+  <line x1="180" y1="80" x2="258" y2="95" stroke="rgba(255,255,255,0.2)" stroke-width="1" marker-end="url(#ca)"/>
+  <line x1="180" y1="175" x2="258" y2="120" stroke="rgba(251,191,36,0.4)" stroke-width="1" marker-end="url(#cam)"/>
+  <text x="210" y="134" font-size="7" fill="rgba(251,191,36,0.4)" text-anchor="middle">fallback</text>
+
+  <!-- Output temp file -->
+  <rect x="500" y="70" width="160" height="60" rx="6" fill="rgba(52,211,153,0.1)" stroke="rgba(52,211,153,0.3)" stroke-width="1.5"/>
+  <text x="580" y="90" font-size="9" fill="#34d399" font-weight="700" text-anchor="middle">_cockpit_config.json</text>
+  <text x="580" y="105" font-size="7.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">temp/{safe_email}/</text>
+  <text x="580" y="118" font-size="7.5" fill="rgba(232,237,242,0.3)" text-anchor="middle">passed via COCKPIT_CONFIG</text>
+
+  <!-- Arrow build → output -->
+  <line x1="420" y1="100" x2="498" y2="100" stroke="rgba(52,211,153,0.4)" stroke-width="1" marker-end="url(#ca)"/>
+
+  <!-- Scripts reading config -->
+  <rect x="500" y="155" width="160" height="50" rx="6" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>
+  <text x="580" y="174" font-size="9" fill="rgba(232,237,242,0.6)" font-weight="700" text-anchor="middle">Platform Scripts</text>
+  <text x="580" y="187" font-size="7.5" fill="rgba(232,237,242,0.3)" text-anchor="middle">*_Config.py reads</text>
+  <text x="580" y="199" font-size="7.5" fill="rgba(232,237,242,0.3)" text-anchor="middle">os.environ["COCKPIT_CONFIG"]</text>
+  <line x1="580" y1="155" x2="580" y2="132" stroke="rgba(255,255,255,0.2)" stroke-width="1" marker-end="url(#ca)"/>
+</svg>
+</div>
+
+<div class="doc-table-wrap">
+<table class="doc-table">
+<thead><tr><th>Config Key</th><th>Contents</th><th>Scope</th><th>Fallback</th></tr></thead>
+<tbody>
+<tr><td><code>morta</code></td><td><code>api_key</code>, <code>hub_id</code></td><td>Personal — each admin has their own key</td><td>None — Morta keys are strictly personal</td></tr>
+<tr><td><code>revizto_dubai</code></td><td><code>access_code</code>, <code>license_uuid</code> (runtime-resolved)</td><td>Personal — token namespaced per admin</td><td>None</td></tr>
+<tr><td><code>revizto_ireland</code></td><td><code>access_code</code>, <code>license_uuid</code> (runtime-resolved)</td><td>Personal — separate from Dubai namespace</td><td>None</td></tr>
+<tr><td><code>forma</code></td><td><code>client_id</code>, <code>client_secret</code>, <code>account_id</code>, <code>project_id</code>, <code>admin_user_id</code></td><td>Shared — all admins inherit from owner</td><td>Owner config automatically</td></tr>
+<tr><td><code>projects</code></td><td>Cached platform project lists, filtered to registry membership at read time</td><td>Personal — refreshed via sidebar</td><td>Registry-filtered at API level</td></tr>
+<tr><td><code>active_context</code></td><td>Selected project key, name, platform IDs, region</td><td>Personal — set by sidebar project selector</td><td>Empty until user selects a project</td></tr>
+</tbody>
+</table>
+</div>
+
+</div>
+</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     05  AUTH
+══════════════════════════════════════════════════════════════════ -->
+<div class="doc-section" id="s-auth">
+<div class="doc-section-inner">
+<div class="doc-num">05<br>Auth</div>
+<div class="doc-body">
+<h2>Authentication &amp; Access Control</h2>
+
+<div class="doc-grid-2">
+<div class="doc-card">
+<h4>Login</h4>
+<p>Email and password. Only <code>@alec.ae</code> addresses are accepted at registration. Passwords hashed with bcrypt. Sessions are cookie-based using <code>itsdangerous.URLSafeSerializer</code> with a server-side secret key. No OAuth or SSO integration.</p>
+</div>
+<div class="doc-card">
+<h4>Role Model</h4>
+<p>Two roles: <strong>Owner</strong> (<code>oawad@alec.ae</code>) and <strong>Admin</strong>. Owner sees all projects, manages the registry, holds shared Forma credentials, and can access all pending submissions and invite logs. Admins are strictly scoped to their listed projects.</p>
+</div>
+<div class="doc-card">
+<h4>Route Guards</h4>
+<p><code>require_user</code> validates the session cookie and rejects unauthenticated requests with a redirect to <code>/login</code>. <code>require_owner</code> additionally checks the authenticated email equals <code>OWNER_EMAIL</code>. Both are applied as FastAPI <code>Depends()</code> arguments.</p>
+</div>
+<div class="doc-card">
+<h4>Public Routes</h4>
+<p><code>/login</code> and <code>/portal/platformAccess</code> with its two POST endpoints (<code>/submit</code> and <code>/submit/single</code>) are publicly accessible with no authentication required. The portal is the only intentionally public surface of the system.</p>
+</div>
+</div>
+
+<div class="doc-note warn">
+<span class="doc-note-label w">Security</span>
+<span>The <code>SECRET_KEY</code> used for session signing is currently hardcoded in <code>app.py</code>. It should be moved to an Azure App Service environment variable. The <code>users.json</code> file in blob is the only persistence layer for credentials — there is no database.</span>
+</div>
+
+</div>
+</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     06  WEB APP ROUTES
+══════════════════════════════════════════════════════════════════ -->
+<div class="doc-section" id="s-webapp">
+<div class="doc-section-inner">
+<div class="doc-num">06<br>Web App</div>
+<div class="doc-body">
+<h2>Web Application — app.py</h2>
+<p><code>app.py</code> is a single-file FastAPI application of approximately 2,800 lines. It serves the browser UI via Jinja2 templates, exposes a REST API consumed by frontend JavaScript, calls platform APIs directly for invites and user search, and launches extraction scripts as managed subprocesses. All blob reads and writes use the <code>azure-storage-blob</code> SDK with a connection string from the environment.</p>
+
+<div class="doc-table-wrap">
+<table class="doc-table">
+<thead><tr><th>Group</th><th>Key Routes</th><th>Access</th><th>Purpose</th></tr></thead>
+<tbody>
+<tr><td>Pages</td><td><code>GET /</code> <code>/manage</code> <code>/extractions</code> <code>/registry</code> <code>/settings</code> <code>/scheduler</code> <code>/info</code></td><td>require_user</td><td>Render Jinja2 templates. Registry page and Forma settings locked further by ownership check.</td></tr>
+<tr><td>Auth</td><td><code>POST /api/auth/check-email</code> <code>/api/auth/login</code> <code>/api/auth/register</code> <code>GET /logout</code></td><td>Public</td><td>Cookie-based session management. Domain enforced to <code>@alec.ae</code> at register.</td></tr>
+<tr><td>Registry</td><td><code>GET /api/registry</code> <code>POST /api/registry/project</code> <code>PUT /api/registry/project/{key}</code> <code>DELETE …/{key}</code> <code>POST …/{key}/sync</code></td><td>GET: user · Write: owner</td><td>Full CRUD for project registry. GET returns user-scoped subset.</td></tr>
+<tr><td>Context</td><td><code>GET /api/context</code> <code>POST /api/context</code></td><td>require_user</td><td>Read and write the active sidebar project selection. Non-owner writes validated against registry.</td></tr>
+<tr><td>Projects</td><td><code>GET /api/projects</code> <code>POST /api/projects/fetch</code></td><td>require_user</td><td>Return cached project lists filtered by registry, or fetch fresh from platform APIs.</td></tr>
+<tr><td>Users</td><td><code>GET /api/user/search</code> <code>POST /api/invite/single</code> <code>POST /api/invite/bulk</code> <code>POST /api/invite/preview</code> <code>GET /api/invite/log</code></td><td>require_user</td><td>Registry-scoped user search. Single and bulk invite. Project-scoped invite log.</td></tr>
+<tr><td>Pending</td><td><code>GET /api/pending</code> <code>GET /api/pending/{key}/{idx}</code> <code>POST …/{key}/{idx}/process</code> <code>DELETE …/{key}/{idx}</code></td><td>require_user</td><td>Portal submission management. Per-user access validated against registry.</td></tr>
+<tr><td>Extractions</td><td><code>POST /api/extract</code> <code>GET /api/extractions/files</code> <code>GET /api/extractions/download/{file}</code></td><td>require_user</td><td>Launch scripts as subprocesses, stream output, serve per-admin isolated output files.</td></tr>
+<tr><td>Portal</td><td><code>GET /portal/platformAccess</code> <code>POST …/submit</code> <code>POST …/submit/single</code></td><td>Public</td><td>Subcontractor access request portal. Bulk (Excel upload) and single user modes.</td></tr>
+<tr><td>Settings</td><td><code>GET /settings</code> <code>POST /settings</code></td><td>require_user</td><td>Save personal credentials. Forma block visible and editable by owner only.</td></tr>
+</tbody>
+</table>
+</div>
+
+<h3>Frontend Architecture</h3>
+<p>The frontend is server-rendered HTML (Jinja2) with progressive JavaScript enhancement. There is no frontend build step or bundler. <code>base.html</code> provides the sidebar, navigation, and project context selector. It dispatches a <code>cockpit:projectChanged</code> CustomEvent on <code>window</code> whenever the active project changes — child pages listen to this event to reload their content without a full page refresh. <code>static/utils.js</code> provides the hacker-text scramble animation and local cache helpers.</p>
+
+</div>
+</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     07  PLATFORMS
+══════════════════════════════════════════════════════════════════ -->
+<div class="doc-section" id="s-platforms">
+<div class="doc-section-inner">
+<div class="doc-num">07<br>Platforms</div>
+<div class="doc-body">
+<h2>Platform Integrations</h2>
+
+<div class="plat-bar r">Revizto</div>
+<div class="doc-grid-2">
+<div class="doc-card"><h4 class="r">API Endpoints</h4><p>Two regional servers: <code>api.dubai.revizto.com/v5</code> and <code>api.ireland.revizto.com/v5</code>. The active region is resolved from <code>active_context.revizto_region</code> in the admin's config. Each admin authenticates with their own access code. Tokens are cached per-region per-admin in blob as <code>revizto_tokens_{region}_{email}.json</code>.</p></div>
+<div class="doc-card"><h4 class="r">Auth Flow</h4><p>Access code submitted to <code>POST /oauth/access-code/token</code> to obtain a bearer token (approximately one hour expiry). The token is cached to blob. On expiry, a refresh is attempted automatically using the cached refresh token. License UUID is resolved once via <code>GET /user/licenses</code> and stored in config.</p></div>
+<div class="doc-card"><h4 class="r">Invite Flow</h4><p>Two-step operation: (1) add user to the license via <code>POST /license/{uuid}/member/invite</code>, (2) optionally assign a project role via <code>POST /project/{uuid}/role/member/invite</code>. The "Invite to license" and "Invite to project" toggles in the UI control which steps execute. License Admin (role id 4) is blocked across all UI surfaces.</p></div>
+<div class="doc-card"><h4 class="r">Registry Sync</h4><p>Project roles fetched via <code>GET /project/{uuid}/role/list</code> and stored under <code>platforms.revizto.roles</code>. License roles (Guest, Collaborator, Content Creator) are hardcoded — they do not require an API call and are always written to the registry on sync regardless of token availability.</p></div>
+</div>
+
+<div class="plat-bar b" style="margin-top:20px;">Morta</div>
+<div class="doc-grid-2">
+<div class="doc-card"><h4 class="b">API</h4><p><code>api.morta.io/v1</code>. Authenticated with a personal API key set per-admin in Settings. The key is permanent — no token refresh required. There is no owner fallback for Morta. If an admin has not configured their Morta API key, Morta features (search, invite, extraction) are unavailable to them.</p></div>
+<div class="doc-card"><h4 class="b">Invite Flow</h4><p><code>POST /hub/{hub_id}/member/invite</code>. A permission tag can be assigned in the same call by passing <code>tag_reference_id</code>. Tags are synced into the registry from <code>GET /hub/{id}/tags</code> during the registry sync operation and presented as a dropdown in the invite UI.</p></div>
+<div class="doc-card"><h4 class="b">Search</h4><p>Members fetched from <code>GET /hub/{hub_id}/members</code> and matched by email. Search is scoped to the hub IDs of the admin's registry projects only. Tags assigned to the matched user are extracted from the member record and returned in the search result.</p></div>
+<div class="doc-card"><h4 class="b">Extractions</h4><p>Hub Members (<code>Morta_GET_members</code>), Permission Tags (<code>Morta_GET_Tags</code>), Hub Admins (<code>Morta_GET_Admin</code>). Output written to <code>temp/{email}/</code> as both CSV and JSON.</p></div>
+</div>
+
+<div class="plat-bar bl" style="margin-top:20px;">Forma / ACC — Autodesk</div>
+<div class="doc-grid-2">
+<div class="doc-card"><h4 class="bl">Auth</h4><p>Two flows in parallel: 2-legged (<code>client_credentials</code> grant) for account-level operations (hub users, project management), 3-legged (user OAuth) for model-level access requiring user context. The 2L token is cached as <code>forma_tokens.json</code> in blob. Credentials are shared — all admins inherit from the owner config.</p></div>
+<div class="doc-card"><h4 class="bl">Invite Flow</h4><p>Account-level: <code>POST /hq/v1/accounts/{id}/users/import</code>. Project-level: <code>POST /construction/admin/v1/projects/{id}/users</code>. A single invite call can specify company, role, and product access levels (Docs, Design Collaboration, Model Coordination) simultaneously.</p></div>
+<div class="doc-card"><h4 class="bl">Registry Sync</h4><p>Companies fetched via <code>GET /hq/v2/accounts/{id}/companies</code>. Project roles fetched via <code>GET /construction/admin/v1/projects/{id}/role-templates</code>. Both stored in the registry under <code>platforms.forma.companies</code> and <code>platforms.forma.roles</code>. Always uses owner credentials.</p></div>
+<div class="doc-card"><h4 class="bl">Extractions</h4><p>Account Projects, Hub Users, Project Files, Project Models, Model Properties (2L and 3L auth modes), Processed Model Properties. The <code>Forma_MasterScript.py</code> handles token acquisition and stores the result to blob under the <code>COCKPIT_USER</code> namespace.</p></div>
+</div>
+
+</div>
+</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     08  SCRIPTS
+══════════════════════════════════════════════════════════════════ -->
+<div class="doc-section" id="s-scripts">
+<div class="doc-section-inner">
+<div class="doc-num">08<br>Scripts</div>
+<div class="doc-body">
+<h2>Script Layer</h2>
+<p>All data extraction logic lives in standalone Python scripts. They can run directly from a terminal in local development, or be triggered by the web app as managed subprocesses in production. Each script imports its platform config module (<code>*_Config.py</code>) which reads the merged config from <code>COCKPIT_CONFIG</code> and writes output to <code>COCKPIT_EXPORTS_DIR</code>. Internal files starting with <code>_</code> are excluded from the download list presented to the user.</p>
+
+<div class="doc-table-wrap">
+<table class="doc-table">
+<thead><tr><th>Env Variable</th><th>Value at Runtime</th><th>Purpose</th></tr></thead>
+<tbody>
+<tr><td><code>COCKPIT_CONFIG</code></td><td><code>temp/{email}/_cockpit_config.json</code></td><td>Absolute path to the admin's merged credentials and active context. All <code>*_Config.py</code> files read this instead of local <code>config.json</code>.</td></tr>
+<tr><td><code>COCKPIT_EXPORTS_DIR</code></td><td><code>temp/{email}/</code></td><td>Directory where the script writes CSV and JSON outputs. Per-admin isolation prevents file collisions between concurrent users.</td></tr>
+<tr><td><code>COCKPIT_USER</code></td><td><code>admin@alec.ae</code></td><td>Triggering admin email. Used by MasterScript files to namespace token cache keys in blob storage.</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="doc-table-wrap" style="margin-top:14px;">
+<table class="doc-table">
+<thead><tr><th>Script</th><th>Platform</th><th>Output</th></tr></thead>
+<tbody>
+<tr><td><code>Revizto_GET_License_Members</code></td><td><span class="pill r">Revizto</span></td><td>All license members with roles, status, company, and activation state</td></tr>
+<tr><td><code>Revizto_GET_License_Projects</code></td><td><span class="pill r">Revizto</span></td><td>All projects accessible under the admin's Revizto license</td></tr>
+<tr><td><code>Revizto_GET_Project_Members</code></td><td><span class="pill r">Revizto</span></td><td>Member and role assignments for the active project UUID</td></tr>
+<tr><td><code>Revizto_GET_Project_Roles</code></td><td><span class="pill r">Revizto</span></td><td>Role definitions configured for the active project</td></tr>
+<tr><td><code>Revizto_GET_Clash_Tests</code></td><td><span class="pill r">Revizto</span></td><td>Clash detection test configurations and results</td></tr>
+<tr><td><code>Revizto_GET_Scenes_and_Models_with_Properties</code></td><td><span class="pill r">Revizto</span></td><td>Scene tree and model metadata for the active project</td></tr>
+<tr><td><code>Revizto_GET_Object_Tree_With_Properties</code></td><td><span class="pill r">Revizto</span></td><td>Full object tree with element-level properties</td></tr>
+<tr><td><code>Morta_GET_members</code></td><td><span class="pill b">Morta</span></td><td>Hub member list with assigned permission tags and roles</td></tr>
+<tr><td><code>Morta_GET_Tags</code></td><td><span class="pill b">Morta</span></td><td>All permission tags defined on the hub</td></tr>
+<tr><td><code>Morta_GET_Admin</code></td><td><span class="pill b">Morta</span></td><td>Admin and owner-level users of the hub</td></tr>
+<tr><td><code>Forma_GET_Account_Projects</code></td><td><span class="pill bl">Forma</span></td><td>All projects in the ACC account</td></tr>
+<tr><td><code>Forma_GET_Hub_Users</code></td><td><span class="pill bl">Forma</span></td><td>All users at the account/hub level with their status and role</td></tr>
+<tr><td><code>Forma_GET_Project_Files</code></td><td><span class="pill bl">Forma</span></td><td>File and folder tree for the active Forma project</td></tr>
+<tr><td><code>Forma_GET_Project_Models</code></td><td><span class="pill bl">Forma</span></td><td>Model list for the active project (2L)</td></tr>
+<tr><td><code>Forma_GET_Model_Properties</code></td><td><span class="pill bl">Forma</span></td><td>Element properties for a selected model (3L)</td></tr>
+<tr><td><code>Proccesed_Model_Properties</code></td><td><span class="pill bl">Forma</span></td><td>Post-processes and flattens raw model element property data</td></tr>
+</tbody>
+</table>
+</div>
+
+</div>
+</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     09  DATA FLOWS
+══════════════════════════════════════════════════════════════════ -->
+<div class="doc-section" id="s-flows">
+<div class="doc-section-inner">
+<div class="doc-num">09<br>Flows</div>
+<div class="doc-body">
+<h2>Key Data Flows</h2>
+
+<h3>Portal Submission — Subcontractor to Platform Access</h3>
+<div class="flow-steps">
+  <div class="flow-step">
+    <div class="flow-step-left"><div class="flow-num">1</div><div class="flow-line"></div></div>
+    <div class="flow-content"><strong>Subcontractor opens portal URL</strong><span>URL contains <code>?pid=project-key</code>. The project name is resolved from <code>GET /api/registry</code> and displayed in the project badge. No login required.</span></div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-step-left"><div class="flow-num">2</div><div class="flow-line"></div></div>
+    <div class="flow-content"><strong>Submits access request</strong><span>Bulk mode: uploads an Excel file with user data. Single mode: fills in name, email, company, department, and platform checkboxes. Submitter fields are not duplicated — the person requesting access for themselves is the submitter.</span></div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-step-left"><div class="flow-num">3</div><div class="flow-line"></div></div>
+    <div class="flow-content"><strong>Server parses and stores the submission</strong><span>Bulk: Excel parsed with <code>openpyxl</code>. Both modes write a structured submission record to <code>portal_requests.json</code> in blob, keyed by project ID. Each user entry has status <code>pending</code>.</span></div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-step-left"><div class="flow-num">4</div><div class="flow-line"></div></div>
+    <div class="flow-content"><strong>Email notification dispatched</strong><span>All emails in the project registry's <code>admins[]</code> array receive an HTML notification via Azure Communication Services. The email contains a direct link to <code>/manage</code>.</span></div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-step-left"><div class="flow-num">5</div><div class="flow-line"></div></div>
+    <div class="flow-content"><strong>Admin opens Manage Users — Pending Submissions</strong><span>Submissions are filtered to the active sidebar project. Submission status: <code>pending</code> (awaiting action) / <code>processed</code> (all users done) / <code>rejected</code> (all users declined) / <code>partial</code> (mix).</span></div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-step-left"><div class="flow-num">6</div><div class="flow-line"></div></div>
+    <div class="flow-content"><strong>Admin reviews and configures access</strong><span>Expandable panel shows each user. Admin adjusts Morta tag, Revizto license role, Revizto project role, Forma company, and Forma role. All dropdowns are populated from the registry — no live API call at this stage.</span></div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-step-left"><div class="flow-num">7</div><div class="flow-line"></div></div>
+    <div class="flow-content"><strong>Process invitations</strong><span>Server calls Morta, Revizto, and Forma APIs per the configured access. Each platform invite is attempted independently — a failure on one does not block the others. Results per user are recorded with <code>success</code>, <code>skipped</code>, or <code>error</code> status.</span></div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-step-left"><div class="flow-num">8</div><div class="flow-line"></div></div>
+    <div class="flow-content"><strong>Logged to invite_log.json</strong><span>Each processed user is appended to <code>invite_log.json</code> in blob with date, mode, platform statuses, project key, and user details. Visible in the Invite Log card scoped to the active project.</span></div>
+  </div>
+</div>
+
+<h3 style="margin-top:24px;">Extraction Run — Script Subprocess</h3>
+<div class="flow-steps">
+  <div class="flow-step">
+    <div class="flow-step-left"><div class="flow-num">1</div><div class="flow-line"></div></div>
+    <div class="flow-content"><strong>Admin selects a script and clicks Extract</strong><span>Extractions page sends <code>POST /api/extract</code> with the script name and active context. The active project must be set in the sidebar.</span></div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-step-left"><div class="flow-num">2</div><div class="flow-line"></div></div>
+    <div class="flow-content"><strong>build_script_config() assembles the runtime config</strong><span>Merges the admin's personal credentials with the owner's shared Forma block. Writes the merged object to <code>temp/{safe_email}/_cockpit_config.json</code>.</span></div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-step-left"><div class="flow-num">3</div><div class="flow-line"></div></div>
+    <div class="flow-content"><strong>Subprocess launched with environment variables</strong><span><code>COCKPIT_CONFIG</code>, <code>COCKPIT_EXPORTS_DIR</code>, and <code>COCKPIT_USER</code> are injected into the subprocess environment before launch. The script file path is resolved at startup time.</span></div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-step-left"><div class="flow-num">4</div><div class="flow-line"></div></div>
+    <div class="flow-content"><strong>Script executes against the platform API</strong><span>The platform <code>*_Config.py</code> module reads <code>COCKPIT_CONFIG</code>. The script calls the appropriate endpoints, writes CSV and JSON to <code>COCKPIT_EXPORTS_DIR</code>, and prints progress to stdout.</span></div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-step-left"><div class="flow-num">5</div><div class="flow-line"></div></div>
+    <div class="flow-content"><strong>Web app streams output and serves download links</strong><span>Stdout lines are captured and returned to the browser. Files in <code>temp/{email}/</code> not starting with <code>_</code> are listed as download links. Files persist until manually cleared or cleaned up after 24 hours.</span></div>
+  </div>
+</div>
+
+<h3 style="margin-top:24px;">Registry Sync — Live Platform Data</h3>
+<div class="flow-steps">
+  <div class="flow-step">
+    <div class="flow-step-left"><div class="flow-num">1</div><div class="flow-line"></div></div>
+    <div class="flow-content"><strong>Admin clicks Sync on a registry project</strong><span>Triggers <code>POST /api/registry/project/{key}/sync</code>. Any authenticated user who is an admin of that project can initiate a sync.</span></div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-step-left"><div class="flow-num">2</div><div class="flow-line"></div></div>
+    <div class="flow-content"><strong>Morta tags fetched</strong><span>Uses the syncing admin's Morta API key. If not configured, falls back to the owner's API key. Tags written to <code>platforms.morta.tags[]</code>.</span></div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-step-left"><div class="flow-num">3</div><div class="flow-line"></div></div>
+    <div class="flow-content"><strong>Revizto project roles fetched</strong><span>Uses the admin's token. License roles (Guest, Collaborator, Content Creator) are always written regardless of API result. Project roles require a valid token and accessible project UUID.</span></div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-step-left"><div class="flow-num">4</div><div class="flow-line"></div></div>
+    <div class="flow-content"><strong>Forma companies and roles fetched</strong><span>Always uses owner credentials — Forma sync never uses individual admin credentials. Companies and project role templates are written to the registry.</span></div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-step-left"><div class="flow-num">5</div><div class="flow-line"></div></div>
+    <div class="flow-content"><strong>Registry written to blob storage</strong><span>Updated <code>projects_registry.json</code> is serialised and written to blob. All admins of that project immediately see the updated tags, roles, and companies in their invite forms on next page load.</span></div>
+  </div>
+</div>
+
+</div>
+</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     10  FILE MAP
+══════════════════════════════════════════════════════════════════ -->
+<div class="doc-section" id="s-files">
+<div class="doc-section-inner">
+<div class="doc-num">10<br>Files</div>
+<div class="doc-body">
+<h2>Codebase File Map</h2>
+
+<div class="doc-code"><pre><span class="dc-w">digitalCockpit/</span>                                      <span class="dc-d">  GitHub repo root (private)</span>
+│
+├── <span class="dc-w">app.py</span>                                           <span class="dc-d">  FastAPI server — all routes, helpers, platform logic (~2,800 lines)</span>
+├── requirements.txt                                 <span class="dc-d">  Python dependencies installed by Azure Oryx on each deploy</span>
+├── startup.sh                                       <span class="dc-d">  uvicorn app:app --host 0.0.0.0 --port 8000</span>
+│
+├── <span class="dc-g">── Azure Blob Storage (container: cockpit-data) ─────────────────────────────────</span>
+│   ├── projects_registry.json                       <span class="dc-d">  Project registry — owner-managed, shared across all admins</span>
+│   ├── invite_log.json                              <span class="dc-d">  Append-only log of every invite sent</span>
+│   ├── portal_requests.json                         <span class="dc-d">  Pending portal access submissions from subcontractors</span>
+│   ├── users.json                                   <span class="dc-d">  Admin accounts with bcrypt-hashed passwords</span>
+│   ├── config_{email}.json                          <span class="dc-d">  Per-admin credentials and active context</span>
+│   ├── revizto_tokens_{region}_{email}.json         <span class="dc-d">  Per-admin Revizto bearer tokens (cached)</span>
+│   ├── forma_tokens.json                            <span class="dc-d">  Shared 2-legged Forma OAuth token (cached)</span>
+│   └── forma_models_cache.json                      <span class="dc-d">  Forma model list cache per project</span>
+│
+├── <span class="dc-w">── Templates ─────────────────────────────────────────────────────────────────────</span>
+├── templates/
+│   ├── base.html                                    <span class="dc-d">  Sidebar, nav, project context selector, cockpit:projectChanged event</span>
+│   ├── manage.html                                  <span class="dc-d">  User search, invite modal, pending submissions, project-scoped invite log</span>
+│   ├── extractions.html                             <span class="dc-d">  Script runner with live stdout and per-admin download links</span>
+│   ├── registry.html                                <span class="dc-d">  Project registry CRUD (owner-only access)</span>
+│   ├── settings.html                                <span class="dc-d">  Personal credentials — Forma section locked for non-owners</span>
+│   ├── portal.html                                  <span class="dc-d">  Public access request portal — Bulk Upload and Single User modes</span>
+│   ├── scheduler.html                               <span class="dc-d">  Scheduler UI — frontend prototype, backend not yet implemented</span>
+│   ├── info.html                                    <span class="dc-d">  This page</span>
+│   └── login.html                                   <span class="dc-d">  Login and registration — @alec.ae domain enforced</span>
+│
+├── <span class="dc-w">── Static ────────────────────────────────────────────────────────────────────────</span>
+├── static/
+│   ├── style.css                                    <span class="dc-d">  Global design system: navy + cream palette, CSS variables, all component styles</span>
+│   └── utils.js                                     <span class="dc-d">  Hacker-text scramble animation, local cache helpers</span>
+│
+├── <span class="dc-r">── Revizto Scripts ──────────────────────────────────────────────────────────────</span>
+├── <span class="dc-r">Revizto_Config.py</span>                                <span class="dc-d">  COCKPIT_CONFIG reader — resolves region, BASE_URL, tokens file path, PROJECT_UUID</span>
+├── <span class="dc-r">Revizto_MasterScript.py</span>                          <span class="dc-d">  Token acquisition via access code, refresh, blob write namespaced by COCKPIT_USER</span>
+├── <span class="dc-r">Revizto_GET_License_Members.py</span>
+├── <span class="dc-r">Revizto_GET_License_Projects.py</span>
+├── <span class="dc-r">Revizto_GET_Project_Members.py</span>
+├── <span class="dc-r">Revizto_GET_Project_Roles.py</span>
+├── <span class="dc-r">Revizto_GET_Clash_Tests.py</span>
+├── <span class="dc-r">Revizto_GET_Scenes_and_Models_with_Properties.py</span>
+├── <span class="dc-r">Revizto_GET_Object_Tree_With_Properties.py</span>
+├── <span class="dc-r">Revizto_POST_Assign_Project_Role.py</span>
+├── <span class="dc-r">Revizto_POST_Invite.py</span>
+├── <span class="dc-r">Revizto_POST_Remove_Users_From_Project.py</span>
+│
+├── <span class="dc-b">── Morta Scripts ─────────────────────────────────────────────────────────────────</span>
+├── <span class="dc-b">Morta_Config.py</span>                                  <span class="dc-d">  COCKPIT_CONFIG reader — API_KEY, HUB_ID from active_context, EXPORTS_DIR</span>
+├── <span class="dc-b">Morta_GET_members.py</span>
+├── <span class="dc-b">Morta_GET_Tags.py</span>
+├── <span class="dc-b">Morta_GET_Admin.py</span>
+├── <span class="dc-b">Morta_POST_User.py</span>
+├── <span class="dc-b">Morta_POST_Tag.py</span>
+├── <span class="dc-b">Morta_DELETE_Tag.py</span>
+│
+└── <span class="dc-m">── Forma Scripts ─────────────────────────────────────────────────────────────────</span>
+    ├── <span class="dc-m">Forma_Config.py</span>                              <span class="dc-d">  COCKPIT_CONFIG reader — CLIENT_ID/SECRET, ACCOUNT_ID, PROJECT_ID, EXPORTS_DIR</span>
+    ├── <span class="dc-m">Forma_MasterScript.py</span>                        <span class="dc-d">  2-legged token acquisition, stored to blob under COCKPIT_USER namespace</span>
+    ├── <span class="dc-m">Forma_GET_Account_Projects.py</span>
+    ├── <span class="dc-m">Forma_GET_Hub_Users.py</span>
+    ├── <span class="dc-m">Forma_GET_Project_Files.py</span>
+    ├── <span class="dc-m">Forma_GET_Project_Models.py</span>
+    ├── <span class="dc-m">Forma_GET_Model_Properties.py</span>
+    ├── <span class="dc-m">Forma_GET_2L_Status.py</span>
+    ├── <span class="dc-m">Forma_GET_3L_Status.py</span>
+    └── <span class="dc-m">Proccesed_Model_Properties.py</span>                <span class="dc-d">  Post-processes and flattens raw model element property data</span></pre></div>
+
+</div>
+</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     11  ENVIRONMENT VARIABLES
+══════════════════════════════════════════════════════════════════ -->
+<div class="doc-section" id="s-env">
+<div class="doc-section-inner">
+<div class="doc-num">11<br>Environment</div>
+<div class="doc-body">
+<h2>Environment Variables</h2>
+<p>Set in Azure App Service → Configuration → Environment variables. These are the only secrets held outside of blob storage. The application reads them at startup via <code>os.environ.get()</code>.</p>
+
+<div class="doc-table-wrap">
+<table class="doc-table">
+<thead><tr><th>Variable</th><th>Status</th><th>Purpose</th></tr></thead>
+<tbody>
+<tr><td><code>AZURE_STORAGE_CONNECTION_STRING</code></td><td><span class="pill g">Required</span></td><td>Authenticates all blob storage reads and writes. Without this the application falls back to local filesystem, which has no persistence across restarts.</td></tr>
+<tr><td><code>AZURE_COMMUNICATION_CONNECTION_STRING</code></td><td><span class="pill g">Required for email</span></td><td>ACS connection string for outbound email. Retrieved from <code>cockpit-comms</code> → Keys → Primary Connection String. Email is sent via HMAC-signed REST API — no SDK dependency.</td></tr>
+<tr><td><code>EMAIL_FROM</code></td><td><span class="pill g">Required for email</span></td><td>Sender address used in all outbound notifications. Currently the Azure managed subdomain. Should be updated to a custom <code>alec.ae</code> subdomain once IT configures the required DNS records.</td></tr>
+<tr><td><code>SCM_DO_BUILD_DURING_DEPLOYMENT</code></td><td><span class="pill g">Required</span></td><td>Set to <code>true</code>. Instructs the Oryx build system to run <code>pip install -r requirements.txt</code> on each deployment.</td></tr>
+<tr><td><code>WEBSITE_RUN_FROM_PACKAGE</code></td><td><span class="pill">Set to 0</span></td><td>Must be <code>0</code>. If set to <code>1</code> the zip is mounted read-only and Oryx cannot install packages, causing startup failure.</td></tr>
+<tr><td><code>SECRET_KEY</code></td><td><span class="pill">Recommended</span></td><td>Should be moved from the hardcoded value in <code>app.py</code> to this environment variable. Used for signing session cookies via <code>itsdangerous.URLSafeSerializer</code>.</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="doc-note">
+<span class="doc-note-label n">Deploy</span>
+<span><code>git add -A &amp;&amp; git commit -m "message" &amp;&amp; git archive --format=zip --output=deploy.zip HEAD &amp;&amp; az webapp deploy --resource-group digitalcockpit-rg --name digitalcockpit-alec --src-path deploy.zip --type zip</code></span>
+</div>
+
+</div>
+</div>
+</div>
 
 {% endblock %}
