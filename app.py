@@ -109,8 +109,11 @@ EMAIL_FROM_NAME       = "Digital Construction Cockpit"
 
 def send_email(to_emails: list, subject: str, html_body: str) -> bool:
     """Send email via Azure Communication Services. Returns True on success."""
+    print(f"[Email] Attempting to send to {to_emails}, subject: {subject}")
+    print(f"[Email] ACS_CONNECTION_STRING set: {bool(ACS_CONNECTION_STRING)}")
+    print(f"[Email] EMAIL_FROM: {EMAIL_FROM}")
     if not ACS_CONNECTION_STRING or not to_emails:
-        print("[Email] ACS connection string not configured.")
+        print("[Email] ACS connection string not configured or no recipients.")
         return False
     try:
         from azure.communication.email import EmailClient
@@ -120,13 +123,31 @@ def send_email(to_emails: list, subject: str, html_body: str) -> bool:
             "recipients":    {"to": [{"address": e} for e in to_emails]},
             "content":       {"subject": subject, "html": html_body},
         }
+        print(f"[Email] Sending message: {message['senderAddress']} → {[r['address'] for r in message['recipients']['to']]}")
         poller = client.begin_send(message)
         result = poller.result()
-        print(f"[Email] Sent to {to_emails} — status: {result.get('status')}")
+        print(f"[Email] Result: {result}")
         return True
     except Exception as e:
-        print(f"[Email] Send failed: {e}")
+        print(f"[Email] Send failed: {type(e).__name__}: {e}")
         return False
+
+@app.get("/api/test-email")
+async def test_email(user: str = Depends(require_user)):
+    """Owner-only: fire a test email to verify ACS is working."""
+    if not is_owner(user):
+        raise HTTPException(status_code=403)
+    success = send_email(
+        [user],
+        "Cockpit Email Test",
+        "<p>If you receive this, Azure Communication Services email is working correctly.</p>"
+    )
+    return JSONResponse({
+        "status":     "sent" if success else "failed",
+        "to":         user,
+        "acs_configured": bool(ACS_CONNECTION_STRING),
+        "from":       EMAIL_FROM,
+    })
 
 # ── Project Registry helpers ───────────────────────────────────────────────
 def load_registry() -> dict:
