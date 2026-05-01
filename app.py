@@ -1725,8 +1725,15 @@ async def registry_page(request: Request, user: str = Depends(require_owner)):
 
 @app.get("/api/registry")
 async def api_registry_get(user: str = Depends(require_user)):
-    """All logged-in users can read the registry (needed for sidebar + manage page)."""
-    return JSONResponse(load_registry())
+    """Return registry projects scoped to the logged-in user.
+    Owner sees all projects. Admins only see projects they are listed in.
+    """
+    registry = load_registry()
+    if is_owner(user):
+        return JSONResponse(registry)
+    # Non-owners only get their own projects
+    user_registry = {k: v for k, v in registry.items() if user in v.get("admins", [])}
+    return JSONResponse(user_registry)
 
 @app.post("/api/registry/project")
 async def api_registry_create(request: Request, user: str = Depends(require_owner)):
@@ -2574,6 +2581,21 @@ async def api_user_search(email: str, user: str = Depends(require_user)):
             name = r["name"]
             break
 
+    # Build a helpful detail message if not found, explaining why each platform returned nothing
+    detail = None
+    if not found:
+        reasons = []
+        if not config.get("morta", {}).get("api_key"):
+            reasons.append("Morta API key not set in Settings")
+        if not allowed_revizto_uuids:
+            reasons.append("no Revizto project in your registry")
+        if not allowed_morta_hubs:
+            reasons.append("no Morta hub in your registry")
+        if reasons:
+            detail = "User not found. Note: " + " · ".join(reasons)
+        else:
+            detail = None  # genuinely not found, no config issues
+
     return JSONResponse({
         "found":   found,
         "name":    name,
@@ -2581,6 +2603,7 @@ async def api_user_search(email: str, user: str = Depends(require_user)):
         "morta":   morta_result,
         "revizto": revizto_result,
         "forma":   forma_result,
+        "detail":  detail,
     })
 
 # ---------------------------------------------------------------------------

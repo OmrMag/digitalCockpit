@@ -693,22 +693,33 @@ async function loadInviteLog(projectKey) {
     const countEl = document.getElementById('logCount');
     const labelEl = document.getElementById('logProjectLabel');
 
+    // If no project selected, show message immediately without an API call
+    if (!projectKey) {
+        labelEl.textContent = '';
+        countEl.textContent = '—';
+        body.innerHTML = `<div class="empty-state">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197"/></svg>
+            <h3>No project selected</h3>
+            <p>Select a project from the sidebar to see its invite log.</p>
+        </div>`;
+        return;
+    }
+
     body.innerHTML = `<div style="padding:16px;text-align:center;color:var(--text-dark-muted);font-size:var(--fs-xs);">Loading...</div>`;
 
     try {
-        const url = projectKey ? `/api/invite/log?project_key=${encodeURIComponent(projectKey)}` : '/api/invite/log';
-        const res  = await fetch(url);
+        const res  = await fetch(`/api/invite/log?project_key=${encodeURIComponent(projectKey)}`);
         const data = await res.json();
         const entries = data.entries || [];
 
-        labelEl.textContent = projectKey ? `· ${activeCtx.active_project_name || projectKey}` : '';
+        labelEl.textContent = `· ${activeCtx.active_project_name || projectKey}`;
         countEl.textContent = `${entries.length} record(s)`;
 
         if (!entries.length) {
             body.innerHTML = `<div class="empty-state">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197"/></svg>
                 <h3>No activity yet</h3>
-                <p>${projectKey ? 'No invites logged for this project.' : 'Select a project to see its invite log.'}</p>
+                <p>No invites logged for this project.</p>
             </div>`;
             return;
         }
@@ -773,7 +784,8 @@ async function searchUser(){
             setTimeout(()=>{document.querySelectorAll('.hacker-animate').forEach(el=>{hackerText(el,el.textContent,{duration:600});});},150);
         } else {
             detail.classList.remove('visible');
-            showBanner('User not found on any platform. Click "+ Invite" to add them.','warning');
+            const msg = data.detail || 'User not found on any platform. Click "+ Invite" to add them.';
+            showBanner(msg, data.detail ? 'error' : 'warning');
         }
     } catch(err){
         clearInterval(hackInterval);
