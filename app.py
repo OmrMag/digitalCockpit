@@ -164,22 +164,8 @@ def send_email(to_emails: list, subject: str, html_body: str) -> bool:
         print(f"[Email] Send failed: {type(e).__name__}: {e}")
         return False
 
-@app.get("/api/test-email")
-async def test_email(user: str = Depends(require_user)):
-    """Owner-only: fire a test email to verify ACS is working."""
-    if not is_owner(user):
-        raise HTTPException(status_code=403)
-    success = send_email(
-        [user],
-        "Cockpit Email Test",
-        "<p>If you receive this, Azure Communication Services email is working correctly.</p>"
-    )
-    return JSONResponse({
-        "status":         "sent" if success else "failed",
-        "to":             user,
-        "acs_configured": bool(ACS_CONNECTION_STRING),
-        "from":           EMAIL_FROM,
-    })
+
+
 
 # ── Project Registry helpers ───────────────────────────────────────────────
 def load_registry() -> dict:
@@ -252,6 +238,23 @@ def require_owner(user: str = Depends(require_user)):
     if user != OWNER_EMAIL:
         raise HTTPException(status_code=403, detail="Access restricted to system owner.")
     return user
+
+@app.get("/api/test-email")
+async def test_email(user: str = Depends(require_user)):
+    """Owner-only: fire a test email to verify ACS is working."""
+    if not is_owner(user):
+        raise HTTPException(status_code=403)
+    success = send_email(
+        [user],
+        "Cockpit Email Test",
+        "<p>If you receive this, Azure Communication Services email is working correctly.</p>"
+    )
+    return JSONResponse({
+        "status":         "sent" if success else "failed",
+        "to":             user,
+        "acs_configured": bool(ACS_CONNECTION_STRING),
+        "from":           EMAIL_FROM,
+    })
 
 # ---------------------------------------------------------------------------
 # Config & Log
