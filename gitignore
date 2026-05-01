@@ -1,36 +1,37 @@
-# Sensitive config — never commit these
-config.json
-config_*.json
+# ── Credentials & tokens — NEVER commit these ─────────────────────────────
+config*.json
 users.json
+revizto_tokens*.json
+forma_tokens*.json
+morta_tokens*.json
+*_tokens*.json
+
+# ── Runtime data files ─────────────────────────────────────────────────────
 invite_log.json
 portal_requests.json
-forma_models_cache.json
 projects_registry.json
+morta_members.json
+morta_tags.json
+morta_Admin.json
+morta_admin.json
+forma_models_cache.json
 
-# Token files
-forma_tokens.json
-forma_tokens_3l.json
-revizto_tokens_dubai.json
-revizto_tokens_ireland.json
-
-# Exports folder
+# ── Per-user temp & exports ────────────────────────────────────────────────
+temp/
 exports/
 
-# Python
+# ── Deploy artifacts ───────────────────────────────────────────────────────
+deploy.zip
+*.zip
+
+# ── Python ────────────────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
 *.pyo
 .env
 venv/
-env/
 .venv/
 
-# VS Code
+# ── VS Code ───────────────────────────────────────────────────────────────
 .vscode/
-
-# Deployment
-deploy.zip
-
-# OS
-.DS_Store
-Thumbs.db
+*.code-workspace
