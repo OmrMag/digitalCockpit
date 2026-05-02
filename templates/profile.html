@@ -41,7 +41,7 @@
                 <span class="cc-status-pill cc-status-pill--pending" title="Status not yet checked"><span class="cc-dot"></span>unchecked</span>
             {% endif %}
         </div>
-        <div><span>User ID</span><code>{{ p.user_id or '—' }}</code></div>
+        <div><span>Cockpit ID</span><code class="cc-mono-id">{{ p.cockpit_id or '—' }}</code></div>
         <div><span>Joined cockpit</span><strong>{{ p.member_since or '—' }}</strong></div>
         <div><span>Last sign-in</span><strong>{{ p.last_seen or '—' }}</strong></div>
         <div><span>Time zone</span><strong>{{ p.timezone or '—' }}</strong></div>

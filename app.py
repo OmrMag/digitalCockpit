@@ -18,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from itsdangerous import URLSafeSerializer
 import subprocess, sys
+import uuid
 
 # Lightweight readiness probe for /profile (Morta API + Revizto access).
 # Lives in a separate module so it doesn't touch the import-time-cached
@@ -32,9 +33,9 @@ EXPORTS_DIR.mkdir(exist_ok=True)
 TEMP_DIR    = BASE_DIR / "temp"
 TEMP_DIR.mkdir(exist_ok=True)
 SCRIPT_DIRS = {
-    "revizto": BASE_DIR,
-    "morta":   BASE_DIR,
-    "forma":   BASE_DIR,
+    "revizto": BASE_DIR / "codeRevizto" / "vsCode",
+    "morta":   BASE_DIR / "codeMorta"   / "vsCode",
+    "forma":   BASE_DIR / "codeForma"   / "vsCode",
 }
 
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
@@ -1406,11 +1407,51 @@ async def auth_register(request: Request):
     users = load_users()
     if email in users:
         return JSONResponse({"detail": "This email is already registered."}, status_code=400)
-    users[email] = {"password": hash_password(p1), "created": datetime.now().isoformat()}
+    users[email] = {
+        "password":    hash_password(p1),
+        "created":     datetime.now().isoformat(),
+        "cockpit_id":  str(uuid.uuid4()),    # globally unique admin ID, surfaced on /profile and home
+    }
     save_users(users)
     resp = JSONResponse({"ok": True})
     resp.set_cookie("session", make_session(email), httponly=True, samesite="lax")
     return resp
+
+
+def get_user_record(email: str) -> dict:
+    """Return the user record for `email`, lazily backfilling `cockpit_id`
+    for accounts that registered before the field existed. The backfill is
+    idempotent — once written, it sticks. Safe to call on every request.
+    """
+    if not email:
+        return {}
+    users = load_users()
+    rec = users.get(email)
+    if not rec:
+        return {}
+    if not rec.get("cockpit_id"):
+        rec["cockpit_id"] = str(uuid.uuid4())
+        users[email] = rec
+        save_users(users)
+    return rec
+
+
+def get_user_first_name(email: str) -> str:
+    """Resolve the admin's first name for the welcome line.
+
+    Order of preference:
+      1. user record's `first_name` field (if you ever populate it later)
+      2. parse from email local-part — split on '.' and take the first chunk
+         (e.g. omar.awad@alec.ae → 'Omar', oawad@alec.ae → 'Oawad')
+    """
+    if not email:
+        return ""
+    rec = get_user_record(email)
+    if rec.get("first_name"):
+        return rec["first_name"].strip().title()
+    local = email.split("@")[0]
+    first = local.split(".")[0] if "." in local else local
+    return first.capitalize()
 
 @app.get("/logout")
 async def logout():
@@ -1428,6 +1469,48 @@ async def home(request: Request, user: str = Depends(require_user)):
     log            = load_invite_log()
     ctx            = config.get("active_context", {})
     recent_invites = log[-10:][::-1] if log else []
+
+    # ── Resolve admin metadata for the redesigned home header ─────────────
+    user_rec   = get_user_record(user)
+    first_name = get_user_first_name(user)
+    cockpit_id = user_rec.get("cockpit_id", "")
+
+    # ── Scope strip counts (registry-driven) ─────────────────────────────
+    registry = load_registry()
+    if is_owner(user):
+        scoped_registry = registry
+    else:
+        scoped_registry = {k: v for k, v in registry.items() if user in v.get("admins", [])}
+
+    morta_hubs = {
+        p.get("platforms", {}).get("morta", {}).get("hub_id")
+        for p in scoped_registry.values()
+        if p.get("platforms", {}).get("morta", {}).get("hub_id")
+    }
+
+    # ── Platform-members counts for the active project (sidebar selection) ─
+    # Each platform's count is computed from cached data we already have
+    # locally — no live API calls on home page render. Numbers update via
+    # the `cockpit:projectChanged` event handler in home.html when the user
+    # picks a different project from the sidebar.
+    active_key = ctx.get("active_project_key", "")
+    plat_members = {"morta": None, "revizto": None, "forma": None}
+    if active_key:
+        # Morta: count entries in morta_members.json scoped to the active hub.
+        try:
+            mp = BASE_DIR / "morta_members.json"
+            if mp.exists():
+                with open(mp) as f:
+                    mdata = json.load(f)
+                # File can be a flat list or a dict keyed by hub_id — handle both
+                if isinstance(mdata, list):
+                    plat_members["morta"] = len(mdata)
+                elif isinstance(mdata, dict):
+                    hub = ctx.get("morta_hub_id", "")
+                    plat_members["morta"] = len(mdata.get(hub, [])) if hub else None
+        except Exception:
+            pass
+
     return templates.TemplateResponse(request=request, name="home.html", context={
         "active_page": "home", "config": config,
         "morta_count": None, "revizto_count": None, "forma_count": None,
@@ -1436,7 +1519,11 @@ async def home(request: Request, user: str = Depends(require_user)):
         "revizto_region": config["revizto_dubai"]["region"].title() if config["revizto_dubai"].get("region") else None,
         "forma_account":  config["forma"]["account_id"][:12]  + "..." if config["forma"]["account_id"] else None,
         "recent_invites": recent_invites, "insights": [],
-        "current_user": user,
+        "current_user":   user,
+        "first_name":     first_name,
+        "cockpit_id":     cockpit_id,
+        "scope":          {"hubs": len(morta_hubs), "projects": len(scoped_registry)},
+        "plat_members":   plat_members,
     })
 
 
@@ -1451,6 +1538,19 @@ async def profile(request: Request, user: str = Depends(require_user)):
     # Pass `email` so it reads per-admin Revizto tokens, matching the
     # naming scheme used by load_revizto_tokens()/save_revizto_tokens().
     status = check_admin_status(config, email=user)
+
+    # Resolve admin metadata from users.json (cockpit_id, created date, etc.)
+    user_rec    = get_user_record(user)
+    first_name  = get_user_first_name(user)
+    cockpit_id  = user_rec.get("cockpit_id", "")
+    member_since = user_rec.get("created", "")
+    if member_since:
+        # Format as "Aug 12, 2024" if it's an ISO timestamp
+        try:
+            dt = datetime.fromisoformat(member_since)
+            member_since = dt.strftime("%b %d, %Y")
+        except (ValueError, TypeError):
+            pass
 
     # Allocated projects: registry is keyed by project id, each entry has
     # {name, platforms: {morta,revizto,forma}, admins: [emails]}.
@@ -1492,10 +1592,10 @@ async def profile(request: Request, user: str = Depends(require_user)):
         "active_page":  "profile",
         "current_user": user,
         "profile": {
-            "name":         user.split("@")[0].replace(".", " ").title(),
+            "name":         first_name,
             "role":         "Owner" if is_owner(user) else "Project Admin",
-            "user_id":      "—",
-            "member_since": "—",                                # wire when you have a user store
+            "cockpit_id":   cockpit_id,
+            "member_since": member_since or "—",
             "last_seen":    datetime.now().strftime("%Y-%m-%d %H:%M"),
             "timezone":     "Asia/Dubai (UTC+4)",
             "mfa":          "Not configured",

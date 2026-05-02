@@ -724,6 +724,8 @@ table .status-dot.skipped { background: var(--text-muted); }
 /* ── SCOPE STRIP ─────────────────────────────────────────── */
 .cc-scope-strip {
     display: grid;
+    /* 4-column grid: Hubs (1) | Members tile spans 2 | Invites (1).
+       The .cc-scope-tile--wide rule below claims columns 2-3.        */
     grid-template-columns: repeat(4, 1fr);
     gap: 0;
     background: var(--navy);
@@ -1397,4 +1399,87 @@ table .status-dot.skipped { background: var(--text-muted); }
     overflow-x: auto;
     max-height: 460px;
     overflow-y: auto;
+}
+
+
+/* ──────────────────────────────────────────────────────────────
+   Home page additions: scramble cursor, merged members tile,
+   cockpit ID monospace pill
+   ────────────────────────────────────────────────────────────── */
+
+/* Blinking underscore cursor next to the welcome line */
+.cc-cursor {
+    display: inline-block;
+    color: var(--accent);
+    font-weight: 700;
+    margin-left: 2px;
+    animation: cc-cursor-blink 1s steps(2) infinite;
+}
+@keyframes cc-cursor-blink {
+    0%, 50%   { opacity: 1; }
+    50.1%, 100% { opacity: 0; }
+}
+
+/* Welcome scramble — make sure the text doesn't reflow during scramble */
+.cc-scramble {
+    display: inline-block;
+    font-variant-ligatures: none;
+}
+
+/* Cockpit ID pill in the page subtitle */
+.cc-mono-id {
+    font-family: var(--font);
+    font-size: var(--fs-xs);
+    background: var(--cream);
+    color: var(--navy);
+    padding: 2px 7px;
+    border-radius: 3px;
+    border: 1px solid var(--border-cream);
+    letter-spacing: 0.5px;
+}
+
+/* Merged "Members on active project" tile — spans the middle 2
+   columns of the scope strip and shows three platform counts evenly
+   distributed across the full width on one row. */
+.cc-scope-tile--wide {
+    grid-column: span 2;
+}
+.cc-members-row {
+    display: flex;
+    align-items: center;
+    /* Distribute three cells evenly across the full tile width.
+       Disable wrapping so platforms stay on one line at any tile size. */
+    justify-content: space-between;
+    gap: 16px;
+    margin: 4px 0 6px;
+    flex-wrap: nowrap;
+}
+.cc-members-cell {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    flex: 1 1 0;     /* equal share of the tile width */
+}
+.cc-members-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+.cc-members-platform {
+    font-size: var(--fs-xs);
+    color: var(--text-light);
+    opacity: 0.75;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+}
+.cc-members-count {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--text-light);
+    font-family: var(--font);
+    min-width: 28px;
+    display: inline-block;
+    margin-left: auto;   /* push count to the right edge of its cell */
 }

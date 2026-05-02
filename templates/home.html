@@ -2,8 +2,8 @@
 
 {% block title %}Home — Digital Construction Cockpit{% endblock %}
 
-{% block page_title %}Welcome back{% if current_user %}, {{ current_user.split('@')[0]|capitalize }}{% endif %}{% endblock %}
-{% block page_subtitle %}{% if current_user %}{{ current_user }} · {% endif %}{{ active_project or 'No active project' }}</p>{% endblock %}
+{% block page_title %}<span class="cc-scramble" id="cc-welcome">Welcome back{% if first_name %}, {{ first_name }}{% endif %}</span><span class="cc-cursor" aria-hidden="true">_</span>{% endblock %}
+{% block page_subtitle %}{% if cockpit_id %}<span class="cc-mono-dim">cockpit ID:</span> <code class="cc-mono-id">{{ cockpit_id }}</code>{% else %}{{ current_user }}{% endif %}{% endblock %}
 
 {# Profile button — top-right of page header. Lives in base.html's
    header_actions slot so it can appear on any page. #}
@@ -41,15 +41,26 @@
         <div class="cc-scope-value">{{ scope.hubs if scope and scope.hubs else '—' }}</div>
         <div class="cc-scope-hint">{{ scope.regions|join(', ') if scope and scope.regions else 'Not configured' }}</div>
     </div>
-    <div class="cc-scope-tile">
-        <div class="cc-scope-label">Projects watched</div>
-        <div class="cc-scope-value">{{ scope.projects if scope and scope.projects else '—' }}</div>
-        <div class="cc-scope-hint">across all platforms</div>
-    </div>
-    <div class="cc-scope-tile">
-        <div class="cc-scope-label">Members managed</div>
-        <div class="cc-scope-value">{{ scope.members if scope and scope.members else '—' }}</div>
-        <div class="cc-scope-hint">{{ scope.synced_label if scope and scope.synced_label else 'Awaiting sync' }}</div>
+    <div class="cc-scope-tile cc-scope-tile--wide" id="cc-members-tile">
+        <div class="cc-scope-label">Members on active project</div>
+        <div class="cc-members-row">
+            <div class="cc-members-cell">
+                <span class="cc-members-dot" style="background:var(--plat-morta)"></span>
+                <span class="cc-members-platform">Morta</span>
+                <span class="cc-members-count cc-scramble-num" id="cc-mem-morta" data-target="{{ plat_members.morta if plat_members and plat_members.morta is not none else '' }}">{{ plat_members.morta if plat_members and plat_members.morta is not none else '—' }}</span>
+            </div>
+            <div class="cc-members-cell">
+                <span class="cc-members-dot" style="background:var(--plat-revizto)"></span>
+                <span class="cc-members-platform">Revizto</span>
+                <span class="cc-members-count cc-scramble-num" id="cc-mem-revizto" data-target="{{ plat_members.revizto if plat_members and plat_members.revizto is not none else '' }}">{{ plat_members.revizto if plat_members and plat_members.revizto is not none else '—' }}</span>
+            </div>
+            <div class="cc-members-cell">
+                <span class="cc-members-dot" style="background:var(--plat-forma)"></span>
+                <span class="cc-members-platform">Forma</span>
+                <span class="cc-members-count cc-scramble-num" id="cc-mem-forma" data-target="{{ plat_members.forma if plat_members and plat_members.forma is not none else '' }}">{{ plat_members.forma if plat_members and plat_members.forma is not none else '—' }}</span>
+            </div>
+        </div>
+        <div class="cc-scope-hint" id="cc-members-hint">{% if active_project %}{{ active_project }}{% else %}Select a project from the sidebar{% endif %}</div>
     </div>
     <div class="cc-scope-tile">
         <div class="cc-scope-label">Invites sent (30d)</div>
@@ -136,43 +147,25 @@
    ============================================================ #}
 <div class="cc-grid-2-uneven" style="margin-bottom: 20px;">
 
-    <!-- Activity log -->
+    <!-- Activity log — populated client-side from /api/invite/log -->
     <div class="cc-card cc-card--terminal">
         <div class="cc-card-header">
-            <span class="cc-card-title">// Live Activity{% if current_user %} · scoped to {{ current_user.split('@')[0] }}{% endif %}</span>
-            <div class="cc-tabs">
-                <button class="active">All</button>
-                <button>Syncs</button>
-                <button>Invites</button>
-                <button>Alerts</button>
+            <span class="cc-card-title">// Live Activity{% if first_name %} · scoped to {{ first_name|lower }}{% endif %}</span>
+            <div class="cc-tabs" id="cc-activity-tabs">
+                <button class="active" data-filter="all">All</button>
+                <button data-filter="syncs">Syncs</button>
+                <button data-filter="invites">Invites</button>
+                <button data-filter="alerts">Alerts</button>
             </div>
         </div>
-        <div class="cc-log">
-            {% if activity %}
-                {% for a in activity %}
-                <div class="cc-log-row cc-log-row--{{ a.kind }}">
-                    <span class="cc-log-time">{{ a.t }}</span>
-                    <span class="cc-log-kind cc-log-kind--{{ a.kind }}">{{ a.kind|upper }}</span>
-                    <span class="cc-log-plat cc-log-plat--{{ a.plat }}">[{{ 'cross' if a.plat == 'all' else a.plat }}]</span>
-                    <span class="cc-log-msg">{{ a.msg }}</span>
-                    <span class="cc-log-delta">{{ a.delta }}</span>
-                </div>
-                {% endfor %}
-            {% else %}
-                <div class="cc-log-empty">
-                    <div class="cc-log-empty-glyph">$ tail -f activity.log</div>
-                    <div class="cc-log-empty-msg">No events yet. Run a sync, send an invite, or trigger an extraction to see live activity here.</div>
-                </div>
-            {% endif %}
+        <div class="cc-log" id="cc-activity-log">
+            <div class="cc-log-empty">
+                <div class="cc-log-empty-glyph">$ tail -f activity.log</div>
+                <div class="cc-log-empty-msg">Loading…</div>
+            </div>
         </div>
         <div class="cc-log-footer">
-            <span>
-                {% if activity %}
-                    showing {{ activity|length }} events · last 7d
-                {% else %}
-                    awaiting first event
-                {% endif %}
-            </span>
+            <span id="cc-activity-footer-count">awaiting first event</span>
             <a href="/manage">view full log →</a>
         </div>
     </div>
@@ -259,97 +252,9 @@
 </div>
 
 {# ============================================================
-   MY RECENT INVITES — wider, with status pills + segment filter
-   Uses existing recent_invites data from the route.
+   "My recent invites" was here. Removed — invites now appear in
+   the Live Activity feed above (filterable via Invites tab).
    ============================================================ #}
-{% if recent_invites %}
-    {% set ok_count = recent_invites|selectattr('morta_status', 'equalto', 'success')|list|length %}
-{% else %}
-    {% set ok_count = 0 %}
-{% endif %}
-<div class="cc-card" style="margin-bottom: 20px;">
-    <div class="cc-card-header">
-        <span class="cc-card-title">My recent invites{% if current_user %} · {{ current_user.split('@')[0] }}{% endif %}</span>
-        <div class="cc-header-actions">
-            {% if recent_invites %}
-            <div class="cc-segment">
-                <button class="active">All ({{ recent_invites|length }})</button>
-                <button>Success</button>
-                <button>Partial</button>
-                <button>Pending</button>
-            </div>
-            {% endif %}
-            <a href="/invite" class="cc-btn cc-btn--secondary">+ New Invite</a>
-        </div>
-    </div>
-
-    {% if recent_invites %}
-    <table class="cc-table">
-        <thead>
-            <tr>
-                <th>Email</th>
-                <th>Platforms</th>
-                <th>Status</th>
-                <th>Date</th>
-                <th></th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for invite in recent_invites %}
-            <tr>
-                <td><span class="cc-email">{{ invite.email }}</span></td>
-                <td>
-                    <div style="display: flex; gap: 4px;">
-                        {% if invite.morta_status != 'skipped' %}<span class="cc-tag morta">Morta</span>{% endif %}
-                        {% if invite.revizto_status != 'skipped' %}<span class="cc-tag revizto">Revizto</span>{% endif %}
-                        {% if invite.forma_status != 'skipped' %}<span class="cc-tag forma">Forma</span>{% endif %}
-                    </div>
-                </td>
-                <td>
-                    {% set statuses = [] %}
-                    {% for p in ['morta_status', 'revizto_status', 'forma_status'] %}
-                        {% if invite[p] != 'skipped' %}
-                            {% if invite[p] == 'success' %}{% set _ = statuses.append('success') %}
-                            {% else %}{% set _ = statuses.append('error') %}{% endif %}
-                        {% endif %}
-                    {% endfor %}
-                    {% if 'error' in statuses and 'success' in statuses %}
-                        <span class="cc-status-pill cc-status-pill--partial"><span class="cc-dot"></span>partial</span>
-                    {% elif 'error' in statuses %}
-                        <span class="cc-status-pill cc-status-pill--error"><span class="cc-dot"></span>error</span>
-                    {% elif 'success' in statuses %}
-                        <span class="cc-status-pill cc-status-pill--success"><span class="cc-dot"></span>success</span>
-                    {% else %}
-                        <span class="cc-status-pill cc-status-pill--pending"><span class="cc-dot"></span>pending</span>
-                    {% endif %}
-                </td>
-                <td class="cc-mono-dim">{{ invite.date }}</td>
-                <td class="cc-row-actions">
-                    <button class="cc-btn-icon" title="Resend">
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><polyline points="21 3 21 8 16 8"/>
-                        </svg>
-                    </button>
-                    <button class="cc-btn-icon" title="Details">
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/>
-                        </svg>
-                    </button>
-                </td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-    {% else %}
-    <div class="empty-state">
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z"/>
-        </svg>
-        <h3>No invites yet</h3>
-        <p>Start by inviting your first user.</p>
-    </div>
-    {% endif %}
-</div>
 
 {# ============================================================
    ANALYTICS WIDGETS (preserved from previous home — unchanged)
@@ -558,6 +463,249 @@
 {% endblock %}
 
 {% block scripts %}
+{# ============================================================
+   HOME PAGE INTERACTIONS
+     1. Scramble animation on welcome line + member counts
+     2. Live Activity tab filtering + initial fetch
+     3. cockpit:projectChanged → re-fetch members + activity
+   ============================================================ #}
+<script>
+(function() {
+    // ── 1. SCRAMBLE ANIMATION ─────────────────────────────────────────
+    // Cycles random characters through the target text for ~600ms,
+    // settling into the real text. Used on the welcome line on page
+    // load, and on member counts when the active project changes.
+
+    const SCRAMBLE_CHARS = '!<>-_\\/[]{}—=+*^?#________';
+
+    function scrambleText(el, finalText, durationMs = 600) {
+        if (!el) return;
+        finalText = String(finalText);
+        const startTime = performance.now();
+        const len = finalText.length;
+
+        function tick(now) {
+            const elapsed = now - startTime;
+            const progress = Math.min(elapsed / durationMs, 1);
+            const settled = Math.floor(progress * len);
+            let out = '';
+            for (let i = 0; i < len; i++) {
+                if (i < settled) {
+                    out += finalText[i];
+                } else if (finalText[i] === ' ') {
+                    out += ' ';
+                } else {
+                    out += SCRAMBLE_CHARS[Math.floor(Math.random() * SCRAMBLE_CHARS.length)];
+                }
+            }
+            el.textContent = out;
+            if (progress < 1) requestAnimationFrame(tick);
+        }
+        requestAnimationFrame(tick);
+    }
+
+    function scrambleNumber(el, finalValue, durationMs = 500) {
+        if (!el) return;
+        const finalText = (finalValue === null || finalValue === undefined || finalValue === '')
+            ? '—' : String(finalValue);
+        if (finalText === '—') {
+            el.textContent = '—';
+            return;
+        }
+        const startTime = performance.now();
+        function tick(now) {
+            const elapsed = now - startTime;
+            const progress = Math.min(elapsed / durationMs, 1);
+            if (progress < 1) {
+                // Show a random number with same digit count as final
+                const digits = finalText.length;
+                const max = Math.pow(10, digits) - 1;
+                el.textContent = String(Math.floor(Math.random() * (max + 1))).padStart(digits, '0');
+                requestAnimationFrame(tick);
+            } else {
+                el.textContent = finalText;
+            }
+        }
+        requestAnimationFrame(tick);
+    }
+
+    // Run on welcome line at page load
+    document.addEventListener('DOMContentLoaded', () => {
+        const welcome = document.getElementById('cc-welcome');
+        if (welcome) {
+            const final = welcome.textContent;
+            scrambleText(welcome, final, 700);
+        }
+        // Scramble each member count tile
+        document.querySelectorAll('.cc-scramble-num').forEach(el => {
+            const target = el.dataset.target;
+            scrambleNumber(el, target, 600);
+        });
+    });
+
+    // ── 2. LIVE ACTIVITY — fetch + tab filtering ──────────────────────
+    // Pulls /api/invite/log (which is already scoped to the user's
+    // registry projects) and renders entries into the terminal panel.
+    // Tabs filter client-side.
+
+    let _activityCache = [];
+    let _activeFilter = 'all';
+
+    function classifyEntry(entry) {
+        // Determines which tab(s) an entry belongs to.
+        // Currently invite_log only contains invite events, but the
+        // structure is ready for syncs and alerts when we add them.
+        if (entry.mode === 'single' || entry.mode === 'bulk') return 'invites';
+        if (entry.kind === 'sync') return 'syncs';
+        if (entry.kind === 'alert' || entry.kind === 'error') return 'alerts';
+        return 'other';
+    }
+
+    function entryStatus(entry) {
+        // Roll up the three platform statuses into one pill state.
+        const statuses = ['morta_status', 'revizto_status', 'forma_status']
+            .map(k => entry[k])
+            .filter(s => s && s !== 'skipped');
+        if (statuses.length === 0) return 'pending';
+        const allSuccess = statuses.every(s => s === 'success');
+        const anyError = statuses.some(s => s && s.startsWith('error'));
+        if (allSuccess) return 'success';
+        if (anyError && statuses.includes('success')) return 'partial';
+        if (anyError) return 'error';
+        return 'pending';
+    }
+
+    function renderActivity() {
+        const log = document.getElementById('cc-activity-log');
+        const footer = document.getElementById('cc-activity-footer-count');
+        if (!log) return;
+
+        const filtered = _activeFilter === 'all'
+            ? _activityCache
+            : _activityCache.filter(e => classifyEntry(e) === _activeFilter);
+
+        if (filtered.length === 0) {
+            const msg = _activityCache.length === 0
+                ? 'No events yet. Run a sync, send an invite, or trigger an extraction to see live activity here.'
+                : `No ${_activeFilter} events yet.`;
+            log.innerHTML = `
+                <div class="cc-log-empty">
+                    <div class="cc-log-empty-glyph">$ tail -f activity.log</div>
+                    <div class="cc-log-empty-msg">${msg}</div>
+                </div>`;
+            footer.textContent = _activityCache.length === 0 ? 'awaiting first event' : `0 ${_activeFilter} events`;
+            return;
+        }
+
+        log.innerHTML = filtered.map(e => {
+            const kind = classifyEntry(e);
+            const status = entryStatus(e);
+            const platforms = ['morta', 'revizto', 'forma']
+                .filter(p => e[p + '_status'] && e[p + '_status'] !== 'skipped');
+            const platTag = platforms.length === 1 ? platforms[0] : 'all';
+            const platLabel = platforms.length === 1 ? platforms[0] : 'cross';
+            return `
+                <div class="cc-log-row cc-log-row--${status}">
+                    <span class="cc-log-time">${escapeHtml(e.date || '')}</span>
+                    <span class="cc-log-kind cc-log-kind--${kind}">${kind.toUpperCase()}</span>
+                    <span class="cc-log-plat cc-log-plat--${platTag}">[${platLabel}]</span>
+                    <span class="cc-log-msg">${escapeHtml(e.email || '')}</span>
+                    <span class="cc-log-delta">${escapeHtml(e.project_key || '')}</span>
+                </div>`;
+        }).join('');
+        footer.textContent = `showing ${filtered.length} of ${_activityCache.length} events`;
+    }
+
+    function escapeHtml(s) {
+        return String(s).replace(/[&<>"']/g, c => ({
+            '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+        }[c]));
+    }
+
+    async function fetchActivity() {
+        try {
+            const r = await fetch('/api/invite/log?limit=50', { credentials: 'same-origin' });
+            if (!r.ok) throw new Error(r.statusText);
+            const data = await r.json();
+            _activityCache = data.entries || [];
+            renderActivity();
+        } catch (err) {
+            const log = document.getElementById('cc-activity-log');
+            if (log) log.innerHTML = `<div class="cc-log-empty"><div class="cc-log-empty-msg">Could not load activity log.</div></div>`;
+        }
+    }
+
+    // Tab click handlers
+    document.addEventListener('DOMContentLoaded', () => {
+        const tabs = document.getElementById('cc-activity-tabs');
+        if (tabs) {
+            tabs.addEventListener('click', (ev) => {
+                const btn = ev.target.closest('button[data-filter]');
+                if (!btn) return;
+                tabs.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                _activeFilter = btn.dataset.filter;
+                renderActivity();
+            });
+        }
+        fetchActivity();
+    });
+
+    // ── 3. PROJECT CHANGE → re-scramble member counts ─────────────────
+    // base.html dispatches `cockpit:projectChanged` whenever the user
+    // picks a project from the sidebar. We re-fetch the member counts
+    // for the new project and animate them in.
+
+    window.addEventListener('cockpit:projectChanged', async (ev) => {
+        const detail = ev.detail || {};
+        const hint = document.getElementById('cc-members-hint');
+        if (hint) {
+            hint.textContent = detail.name || 'Select a project from the sidebar';
+        }
+
+        // Reset all to em-dash with scramble effect, then fetch real numbers
+        ['morta', 'revizto', 'forma'].forEach(p => {
+            const el = document.getElementById('cc-mem-' + p);
+            if (el) {
+                el.textContent = '—';
+                el.dataset.target = '';
+            }
+        });
+
+        if (!detail.key) return;
+
+        // Fetch current project's member counts. This endpoint returns
+        // 503 / 404 today since we haven't built it yet — the catch
+        // block leaves the dashes in place. When the endpoint exists,
+        // it should return {morta:N, revizto:N, forma:N}.
+        try {
+            const r = await fetch('/api/project/' + encodeURIComponent(detail.key) + '/members', { credentials: 'same-origin' });
+            if (!r.ok) return;
+            const counts = await r.json();
+            ['morta', 'revizto', 'forma'].forEach(p => {
+                const el = document.getElementById('cc-mem-' + p);
+                if (el && counts[p] !== undefined && counts[p] !== null) {
+                    el.dataset.target = counts[p];
+                    scrambleNumber(el, counts[p], 600);
+                }
+            });
+        } catch (err) {
+            // Silently leave dashes in place
+        }
+
+        // Also re-fetch activity scoped to the new project
+        try {
+            const r = await fetch('/api/invite/log?project_key=' + encodeURIComponent(detail.key) + '&limit=50', { credentials: 'same-origin' });
+            if (r.ok) {
+                const data = await r.json();
+                _activityCache = data.entries || [];
+                renderActivity();
+            }
+        } catch (err) {}
+    });
+})();
+</script>
+
 {# ============================================================
    WIDGET BUILDER JS — preserved verbatim from previous home.
    Loads /api/extractions, builds Chart.js charts, supports
