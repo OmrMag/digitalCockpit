@@ -162,12 +162,18 @@
     /* ── Inline preview ─────────────────────────────────────────────────── */
     .pkg-preview {
         margin-top: 10px;
-        padding: 10px;
         background: #f8f9fb;
         border-radius: var(--radius);
         border: 1px solid var(--border-cream);
-        max-height: 480px;
-        overflow: auto;
+    }
+    /* Toolbar sits above the scroll area, not inside it. */
+    .pkg-preview-bar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 8px 12px;
+        border-bottom: 1px solid var(--border-cream);
+        gap: 12px;
     }
     .pkg-preview-title {
         font-size: var(--fs-xs);
@@ -175,7 +181,86 @@
         color: var(--text-dark-muted);
         text-transform: uppercase;
         letter-spacing: 0.6px;
-        margin-bottom: 8px;
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .pkg-preview-tools {
+        display: flex;
+        gap: 6px;
+        flex-shrink: 0;
+        position: relative;
+    }
+    .pkg-preview-tool-btn {
+        appearance: none;
+        background: white;
+        border: 1px solid var(--border-cream);
+        border-radius: var(--radius);
+        padding: 3px 9px;
+        font: inherit;
+        font-size: var(--fs-xs);
+        cursor: pointer;
+        color: var(--navy);
+        white-space: nowrap;
+    }
+    .pkg-preview-tool-btn:hover { background: var(--bg-cream); border-color: var(--accent); }
+
+    /* Columns dropdown panel — absolute under the Columns button */
+    .pkg-cols-panel {
+        position: absolute;
+        top: calc(100% + 4px);
+        right: 0;
+        background: white;
+        border: 1px solid var(--border-cream);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow-lg);
+        padding: 6px 0;
+        min-width: 200px;
+        max-height: 320px;
+        overflow-y: auto;
+        z-index: 20;
+        display: none;
+    }
+    .pkg-cols-panel.open { display: block; }
+    .pkg-cols-panel-head {
+        display: flex;
+        justify-content: space-between;
+        padding: 4px 12px 6px;
+        border-bottom: 1px solid var(--border-cream);
+        margin-bottom: 4px;
+        font-size: var(--fs-xs);
+        font-weight: 600;
+        color: var(--text-dark-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    .pkg-cols-panel-head a {
+        color: var(--accent);
+        cursor: pointer;
+        text-transform: none;
+        letter-spacing: 0;
+        font-weight: 500;
+    }
+    .pkg-cols-panel-head a:hover { text-decoration: underline; }
+    .pkg-cols-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 4px 12px;
+        font-size: var(--fs-xs);
+        cursor: pointer;
+        color: var(--navy);
+        font-family: 'JetBrains Mono', monospace;
+    }
+    .pkg-cols-row:hover { background: var(--bg-cream); }
+    .pkg-cols-row input[type="checkbox"] { margin: 0; cursor: pointer; }
+
+    /* Scrollable body — this is what infinite-scroll listens to */
+    .pkg-preview-body {
+        max-height: 440px;
+        overflow: auto;
     }
     .pkg-preview-table {
         width: 100%;
@@ -186,39 +271,51 @@
     .pkg-preview-table th,
     .pkg-preview-table td {
         padding: 5px 8px;
-        border-bottom: 1px solid var(--border-cream);
         text-align: left;
         white-space: nowrap;
     }
+    .pkg-preview-table td {
+        color: var(--text-dark);
+        border-bottom: 1px solid var(--border-cream);
+    }
+    /* Sticky header — fully opaque so rows scrolling underneath don't bleed
+       through. The shadow draws a clean separator line that's part of the
+       header (so border-bottom doesn't disappear when sticky). */
     .pkg-preview-table th {
-        background: rgba(11, 37, 69, 0.04);
+        background: #eef1f5;
         font-weight: 600;
         color: var(--navy);
         position: sticky;
         top: 0;
+        z-index: 1;
+        box-shadow: inset 0 -1px 0 var(--border-cream);
     }
-    .pkg-preview-table td { color: var(--text-dark); }
+    /* Hidden columns: th + td both collapse so the row stays tidy. */
+    .pkg-preview-table th.hidden,
+    .pkg-preview-table td.hidden {
+        display: none;
+    }
 
-    .pkg-preview-pager {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-top: 8px;
+    /* Loading-more indicator pinned at the bottom of the scroll area */
+    .pkg-preview-foot {
+        padding: 8px 12px;
+        text-align: center;
         font-size: var(--fs-xs);
         color: var(--text-dark-muted);
+        font-style: italic;
     }
-    .pkg-preview-pager button {
-        appearance: none;
-        background: white;
-        border: 1px solid var(--border-cream);
-        border-radius: var(--radius);
-        padding: 3px 8px;
-        font: inherit;
-        font-size: var(--fs-xs);
-        cursor: pointer;
-        color: var(--navy);
+    .pkg-preview-foot .dot {
+        display: inline-block;
+        width: 6px; height: 6px;
+        border-radius: 50%;
+        background: var(--accent);
+        margin-right: 6px;
+        animation: pkg-dot-pulse 1.2s ease-in-out infinite;
     }
-    .pkg-preview-pager button:disabled { opacity: 0.3; cursor: not-allowed; }
+    @keyframes pkg-dot-pulse {
+        0%, 100% { opacity: 0.3; }
+        50%      { opacity: 1; }
+    }
 
     .pkg-preview-json {
         white-space: pre-wrap;
@@ -227,6 +324,7 @@
         line-height: 1.55;
         color: var(--navy);
         margin: 0;
+        padding: 12px;
     }
 
     /* ── Empty state ────────────────────────────────────────────────────── */
@@ -394,69 +492,246 @@ async function previewFile(e, pkgId, filename) {
     const card = document.querySelector(`.pkg-card[data-pkg-id="${pkgId}"]`);
     if (!card) return;
     const host = card.querySelector('.pkg-preview-host');
-    host.innerHTML = '<div class="pkg-preview"><div class="pkg-preview-title">Loading preview...</div></div>';
+    // Cancel any in-flight previous preview's scroll listener / fetches
+    if (host.__previewState) host.__previewState.cancelled = true;
+    host.innerHTML = '<div class="pkg-preview"><div class="pkg-preview-bar"><div class="pkg-preview-title">Loading preview…</div></div></div>';
     try {
         const res = await fetch(`/api/packages/${encodeURIComponent(pkgId)}/preview/${encodeURIComponent(filename)}`);
         if (!res.ok) {
             const err = await res.json().catch(() => ({}));
-            host.innerHTML = `<div class="pkg-preview"><div class="pkg-preview-title">${esc(err.detail || 'Preview failed')}</div></div>`;
+            host.innerHTML = `<div class="pkg-preview"><div class="pkg-preview-bar"><div class="pkg-preview-title">${esc(err.detail || 'Preview failed')}</div></div></div>`;
             return;
         }
         const data = await res.json();
         if (data.kind === 'csv') {
-            renderCsvPreview(host, pkgId, filename, data, 1);
+            renderCsvPreview(host, pkgId, filename, data);
         } else if (data.kind === 'json') {
             const pretty = JSON.stringify(data.data, null, 2);
             host.innerHTML = `
                 <div class="pkg-preview">
-                    <div class="pkg-preview-title">${esc(filename)}</div>
+                    <div class="pkg-preview-bar">
+                        <div class="pkg-preview-title">${esc(filename)}</div>
+                    </div>
                     <pre class="pkg-preview-json">${esc(pretty)}</pre>
                 </div>`;
         } else {
-            host.innerHTML = `<div class="pkg-preview"><div class="pkg-preview-title">Unsupported preview type.</div></div>`;
+            host.innerHTML = `<div class="pkg-preview"><div class="pkg-preview-bar"><div class="pkg-preview-title">Unsupported preview type.</div></div></div>`;
         }
     } catch (err) {
-        host.innerHTML = `<div class="pkg-preview"><div class="pkg-preview-title">Preview failed: ${esc(err.message)}</div></div>`;
+        host.innerHTML = `<div class="pkg-preview"><div class="pkg-preview-bar"><div class="pkg-preview-title">Preview failed: ${esc(err.message)}</div></div></div>`;
     }
 }
 
-async function renderCsvPreview(host, pkgId, filename, data, page) {
-    const totalPages = Math.max(1, Math.ceil((data.total || 0) / (data.page_size || 25)));
+// ── Column visibility persistence ───────────────────────────────────────────
+// Hidden columns are remembered per (package, file) in localStorage so that
+// reopening the same preview later restores the user's view. A failed
+// localStorage call (private mode, quota, etc.) silently falls back to
+// per-session memory, which is fine — preferences just don't persist.
+function _colsKey(pkgId, filename) {
+    return `cockpit:pkg:cols:${pkgId}:${filename}`;
+}
+function _loadHiddenCols(pkgId, filename) {
+    try {
+        const raw = localStorage.getItem(_colsKey(pkgId, filename));
+        if (!raw) return new Set();
+        const parsed = JSON.parse(raw);
+        return new Set(Array.isArray(parsed) ? parsed : []);
+    } catch { return new Set(); }
+}
+function _saveHiddenCols(pkgId, filename, hiddenSet) {
+    try {
+        localStorage.setItem(_colsKey(pkgId, filename), JSON.stringify([...hiddenSet]));
+    } catch {}
+}
+
+// ── CSV preview with infinite-scroll + columns dropdown ─────────────────────
+// Rather than paginating with prev/next buttons, the user scrolls and we
+// fetch the next page when they near the bottom. State for the in-flight
+// load is kept on the host element so the scroll handler can read/update it
+// without closure capture issues.
+async function renderCsvPreview(host, pkgId, filename, firstPageData) {
+    // State machine for the active preview. Stashed on the host so
+    // re-opening replaces it cleanly (see `previewState.cancelled`).
+    const state = {
+        pkgId,
+        filename,
+        columns:    firstPageData.columns || [],
+        pageSize:   firstPageData.page_size || 25,
+        total:      firstPageData.total    || 0,
+        loadedRows: 0,
+        nextPage:   1,
+        hasMore:    true,
+        isLoading:  false,
+        hidden:     _loadHiddenCols(pkgId, filename),
+        cancelled:  false,
+    };
+    host.__previewState = state;
+
+    // Initial render: bar + scroll body with header + first page rows
     host.innerHTML = `
         <div class="pkg-preview">
-            <div class="pkg-preview-title">${esc(filename)} — ${data.total} row${data.total === 1 ? '' : 's'}</div>
-            <table class="pkg-preview-table">
-                <thead>
-                    <tr>${data.columns.map(c => `<th>${esc(c)}</th>`).join('')}</tr>
-                </thead>
-                <tbody>
-                    ${data.rows.map(row => `<tr>${row.map(c => `<td>${esc(c)}</td>`).join('')}</tr>`).join('')}
-                </tbody>
-            </table>
-            <div class="pkg-preview-pager">
-                <span>Page ${data.page} of ${totalPages}</span>
-                <span>
-                    <button id="prevBtn-${pkgId}-${filename}" ${data.page <= 1 ? 'disabled' : ''}>← Prev</button>
-                    <button id="nextBtn-${pkgId}-${filename}" ${data.page >= totalPages ? 'disabled' : ''}>Next →</button>
-                </span>
+            <div class="pkg-preview-bar">
+                <div class="pkg-preview-title">${esc(filename)} · ${state.total.toLocaleString()} row${state.total === 1 ? '' : 's'}</div>
+                <div class="pkg-preview-tools">
+                    <button class="pkg-preview-tool-btn" data-cols-btn>Columns ▾</button>
+                    <div class="pkg-cols-panel" data-cols-panel></div>
+                </div>
+            </div>
+            <div class="pkg-preview-body" data-scroll>
+                <table class="pkg-preview-table">
+                    <thead>
+                        <tr>${state.columns.map((c, i) =>
+                            `<th data-col-idx="${i}" data-col-name="${esc(c)}">${esc(c)}</th>`
+                        ).join('')}</tr>
+                    </thead>
+                    <tbody data-tbody></tbody>
+                </table>
+                <div class="pkg-preview-foot" data-foot></div>
             </div>
         </div>
     `;
 
-    // Wire up paging
-    const prev = host.querySelector(`#prevBtn-${CSS.escape(pkgId)}-${CSS.escape(filename)}`);
-    const next = host.querySelector(`#nextBtn-${CSS.escape(pkgId)}-${CSS.escape(filename)}`);
-    if (prev) prev.onclick = async (e) => { e.stopPropagation(); await loadCsvPage(host, pkgId, filename, data.page - 1); };
-    if (next) next.onclick = async (e) => { e.stopPropagation(); await loadCsvPage(host, pkgId, filename, data.page + 1); };
-}
+    const tbody     = host.querySelector('[data-tbody]');
+    const scroller  = host.querySelector('[data-scroll]');
+    const foot      = host.querySelector('[data-foot]');
+    const colsBtn   = host.querySelector('[data-cols-btn]');
+    const colsPanel = host.querySelector('[data-cols-panel]');
 
-async function loadCsvPage(host, pkgId, filename, page) {
-    try {
-        const res = await fetch(`/api/packages/${encodeURIComponent(pkgId)}/preview/${encodeURIComponent(filename)}?page=${page}`);
-        if (!res.ok) return;
-        const data = await res.json();
-        renderCsvPreview(host, pkgId, filename, data, page);
-    } catch (e) { console.error('paging failed', e); }
+    // Helpers --------------------------------------------------------------
+    function appendRows(rows) {
+        const html = rows.map(row =>
+            `<tr>${row.map((c, i) =>
+                `<td data-col-idx="${i}">${esc(c)}</td>`
+            ).join('')}</tr>`
+        ).join('');
+        tbody.insertAdjacentHTML('beforeend', html);
+        applyHiddenColumns();  // newly-appended cells need to inherit the hide state
+    }
+
+    function applyHiddenColumns() {
+        // Iterate columns once; for each, toggle the .hidden class on its
+        // header cell and on every td in that column index.
+        state.columns.forEach((name, i) => {
+            const isHidden = state.hidden.has(name);
+            const th = host.querySelector(`th[data-col-idx="${i}"]`);
+            if (th) th.classList.toggle('hidden', isHidden);
+            host.querySelectorAll(`td[data-col-idx="${i}"]`).forEach(td => {
+                td.classList.toggle('hidden', isHidden);
+            });
+        });
+    }
+
+    function setFootText(html) {
+        foot.innerHTML = html;
+    }
+
+    // Append first page rows
+    appendRows(firstPageData.rows || []);
+    state.loadedRows = (firstPageData.rows || []).length;
+    state.nextPage   = 2;
+    state.hasMore    = state.loadedRows < state.total;
+
+    if (!state.hasMore) {
+        setFootText(`<span style="opacity:0.6;">End of file · ${state.total.toLocaleString()} row${state.total === 1 ? '' : 's'}</span>`);
+    } else {
+        setFootText(`<span style="opacity:0.5;">Scroll for more…</span>`);
+    }
+
+    // ── Infinite scroll ──────────────────────────────────────────────
+    async function loadMore() {
+        if (state.cancelled || state.isLoading || !state.hasMore) return;
+        state.isLoading = true;
+        setFootText(`<span class="dot"></span>Loading more…`);
+        try {
+            const url = `/api/packages/${encodeURIComponent(state.pkgId)}/preview/${encodeURIComponent(state.filename)}?page=${state.nextPage}`;
+            const res = await fetch(url);
+            if (state.cancelled) return;
+            if (!res.ok) {
+                setFootText(`<span style="color:var(--error);">Failed to load more (HTTP ${res.status})</span>`);
+                state.hasMore = false;
+                return;
+            }
+            const data = await res.json();
+            if (state.cancelled) return;
+            const newRows = data.rows || [];
+            appendRows(newRows);
+            state.loadedRows += newRows.length;
+            state.nextPage   += 1;
+            // Source of truth for hasMore: server's reported total, since a
+            // short final page means we're done even if newRows.length > 0.
+            state.hasMore = state.loadedRows < state.total && newRows.length > 0;
+            if (!state.hasMore) {
+                setFootText(`<span style="opacity:0.6;">End of file · ${state.total.toLocaleString()} row${state.total === 1 ? '' : 's'}</span>`);
+            } else {
+                setFootText(`<span style="opacity:0.5;">Scroll for more…</span>`);
+            }
+        } catch (err) {
+            if (state.cancelled) return;
+            setFootText(`<span style="color:var(--error);">Failed: ${esc(err.message)}</span>`);
+            state.hasMore = false;
+        } finally {
+            state.isLoading = false;
+        }
+    }
+
+    scroller.addEventListener('scroll', () => {
+        if (state.cancelled) return;
+        const nearBottom = scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 100;
+        if (nearBottom) loadMore();
+    });
+
+    // ── Columns dropdown ─────────────────────────────────────────────
+    function renderColsPanel() {
+        const rowsHtml = state.columns.map(name => `
+            <label class="pkg-cols-row">
+                <input type="checkbox" data-col-toggle="${esc(name)}" ${state.hidden.has(name) ? '' : 'checked'}>
+                <span>${esc(name)}</span>
+            </label>
+        `).join('');
+        colsPanel.innerHTML = `
+            <div class="pkg-cols-panel-head">
+                <span>Show columns</span>
+                <a data-cols-reset>Reset</a>
+            </div>
+            ${rowsHtml}
+        `;
+        colsPanel.querySelectorAll('input[data-col-toggle]').forEach(inp => {
+            inp.addEventListener('change', () => {
+                const name = inp.dataset.colToggle;
+                if (inp.checked) state.hidden.delete(name);
+                else              state.hidden.add(name);
+                _saveHiddenCols(state.pkgId, state.filename, state.hidden);
+                applyHiddenColumns();
+            });
+        });
+        colsPanel.querySelector('[data-cols-reset]')?.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            state.hidden.clear();
+            _saveHiddenCols(state.pkgId, state.filename, state.hidden);
+            applyHiddenColumns();
+            renderColsPanel();
+        });
+    }
+
+    colsBtn.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        const isOpen = colsPanel.classList.toggle('open');
+        if (isOpen) renderColsPanel();
+    });
+
+    // Close the dropdown on outside click
+    function outsideClick(ev) {
+        if (!colsPanel.contains(ev.target) && ev.target !== colsBtn) {
+            colsPanel.classList.remove('open');
+        }
+    }
+    document.addEventListener('click', outsideClick);
+
+    // Restore any previously-hidden columns
+    applyHiddenColumns();
+
+    // If the first page was already enough to show everything, no scroll
+    // listener will ever fire — but also no infinite scroll is needed.
 }
 
 async function deletePackage(e, pkgId) {
