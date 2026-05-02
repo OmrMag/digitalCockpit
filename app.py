@@ -43,7 +43,8 @@ templates = Jinja2Templates(directory=BASE_DIR / "templates")
 
 CONFIG_FILE       = BASE_DIR / "config.json"
 LOG_FILE          = BASE_DIR / "invite_log.json"
-AUTH_FILE         = BASE_DIR / "users.json"
+AUTH_FILE         = BASE_DIR / "admins.json"      # renamed from users.json — see migrate_users_to_admins()
+LEGACY_USERS_FILE = BASE_DIR / "users.json"       # only read during migration; never written
 MODELS_CACHE_FILE = BASE_DIR / "forma_models_cache.json"
 
 SECRET_KEY  = "change-this-to-a-long-random-string"   # ← change this!
@@ -205,8 +206,11 @@ def is_owner(user: str) -> bool:
 # ---------------------------------------------------------------------------
 
 def load_users():
+    """Load admin records. Reads admins.json from blob (USE_BLOB=true)
+    or local disk. The function name is preserved for backward compat
+    with all the existing call sites — what changed is just the file."""
     if USE_BLOB:
-        data = blob_read("users.json")
+        data = blob_read("admins.json")
         if data is not None:
             return data
     if AUTH_FILE.exists():
@@ -215,11 +219,100 @@ def load_users():
     return {}
 
 def save_users(users):
+    """Persist admin records to admins.json (blob or local disk)."""
     if USE_BLOB:
-        blob_write("users.json", users)
+        blob_write("admins.json", users)
     else:
         with open(AUTH_FILE, "w") as f:
             json.dump(users, f, indent=2)
+
+
+# ── One-time migration: users.json → admins.json ─────────────────────
+# Runs on app startup. Idempotent — if admins.json already exists this
+# is a no-op. Backs up users.json before the migration so a corrupted
+# rename can be rolled back manually.
+def migrate_users_to_admins():
+    """Migrate the legacy users.json to admins.json.
+
+    Steps:
+      1. If admins.json already exists (blob or disk), skip — already migrated.
+      2. Read users.json (blob first, then legacy local disk).
+      3. For each record, ensure `first_name` is present (default "").
+      4. Write to admins.json.
+      5. On disk: rename users.json → users.json.backup-{timestamp}.
+         On blob: leave the legacy users.json alone — admins.json is the
+         new source of truth, and we don't blob_delete in case anything
+         else references it. You can delete it from the Azure portal
+         after verifying the migration worked.
+
+    Safe to run on every startup. After the first successful run it's
+    a fast no-op (one blob_read or one Path.exists() check).
+    """
+    # ── 1. Already migrated? ─────────────────────────────────────────
+    if USE_BLOB:
+        if blob_read("admins.json") is not None:
+            return
+    elif AUTH_FILE.exists():
+        return
+
+    # ── 2. Read legacy users.json ────────────────────────────────────
+    legacy = None
+    if USE_BLOB:
+        legacy = blob_read("users.json")
+    if legacy is None and LEGACY_USERS_FILE.exists():
+        try:
+            with open(LEGACY_USERS_FILE) as f:
+                legacy = json.load(f)
+        except (OSError, ValueError):
+            legacy = None
+
+    if not legacy:
+        # Nothing to migrate — fresh install. Leave admins.json absent;
+        # next register call will create it.
+        print("[migrate] No legacy users.json found — fresh install, skipping migration.")
+        return
+
+    # ── 3. Add first_name field if missing ───────────────────────────
+    migrated = {}
+    for email, rec in legacy.items():
+        if not isinstance(rec, dict):
+            continue
+        new_rec = dict(rec)
+        new_rec.setdefault("first_name", "")
+        # Ensure cockpit_id exists (was added in an earlier round)
+        if not new_rec.get("cockpit_id"):
+            import uuid as _uuid
+            new_rec["cockpit_id"] = str(_uuid.uuid4())
+        migrated[email] = new_rec
+
+    # ── 4. Write admins.json ─────────────────────────────────────────
+    if USE_BLOB:
+        blob_write("admins.json", migrated)
+    else:
+        with open(AUTH_FILE, "w") as f:
+            json.dump(migrated, f, indent=2)
+
+    # ── 5. Backup the legacy file (local disk only) ──────────────────
+    if not USE_BLOB and LEGACY_USERS_FILE.exists():
+        from datetime import datetime as _dt
+        ts = _dt.now().strftime("%Y%m%d-%H%M%S")
+        backup = BASE_DIR / f"users.json.backup-{ts}"
+        try:
+            LEGACY_USERS_FILE.rename(backup)
+            print(f"[migrate] Migrated {len(migrated)} record(s) to admins.json. Legacy backed up → {backup.name}")
+        except OSError as e:
+            print(f"[migrate] Migrated to admins.json but couldn't rename legacy: {e}")
+    else:
+        print(f"[migrate] Migrated {len(migrated)} record(s) to admins.json. Legacy users.json blob still exists — delete from Azure portal once verified.")
+
+
+# Run the migration once at import time so it's done before any route
+# handler tries to read admin records. Failure prints but doesn't crash
+# the app — better to serve broken than to refuse to boot.
+try:
+    migrate_users_to_admins()
+except Exception as _migrate_err:
+    print(f"[migrate] Migration failed: {type(_migrate_err).__name__}: {_migrate_err}")
 
 def hash_password(pw: str) -> str:
     return hashlib.sha256(pw.encode()).hexdigest()
@@ -1411,6 +1504,7 @@ async def auth_register(request: Request):
         "password":    hash_password(p1),
         "created":     datetime.now().isoformat(),
         "cockpit_id":  str(uuid.uuid4()),    # globally unique admin ID, surfaced on /profile and home
+        "first_name":  "",                   # populated later by editing admins.json (Round B)
     }
     save_users(users)
     resp = JSONResponse({"ok": True})
@@ -1419,9 +1513,10 @@ async def auth_register(request: Request):
 
 
 def get_user_record(email: str) -> dict:
-    """Return the user record for `email`, lazily backfilling `cockpit_id`
-    for accounts that registered before the field existed. The backfill is
-    idempotent — once written, it sticks. Safe to call on every request.
+    """Return the user record for `email`, lazily backfilling missing
+    fields (cockpit_id, first_name) so old accounts gain them on first
+    access. Idempotent — fields are only set if missing, and only one
+    save is performed per call regardless of how many fields backfilled.
     """
     if not email:
         return {}
@@ -1429,8 +1524,19 @@ def get_user_record(email: str) -> dict:
     rec = users.get(email)
     if not rec:
         return {}
+
+    changed = False
     if not rec.get("cockpit_id"):
         rec["cockpit_id"] = str(uuid.uuid4())
+        changed = True
+    if "first_name" not in rec:
+        # Empty string, not a derived guess — first_name is owner-controlled.
+        # Leaving it "" makes get_user_first_name() fall through to the
+        # email-derived default, so the welcome line still works.
+        rec["first_name"] = ""
+        changed = True
+
+    if changed:
         users[email] = rec
         save_users(users)
     return rec
@@ -1539,7 +1645,7 @@ async def profile(request: Request, user: str = Depends(require_user)):
     # naming scheme used by load_revizto_tokens()/save_revizto_tokens().
     status = check_admin_status(config, email=user)
 
-    # Resolve admin metadata from users.json (cockpit_id, created date, etc.)
+    # Resolve admin metadata from admins.json (cockpit_id, created date, etc.)
     user_rec    = get_user_record(user)
     first_name  = get_user_first_name(user)
     cockpit_id  = user_rec.get("cockpit_id", "")
