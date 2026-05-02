@@ -2803,6 +2803,216 @@ async def api_extract(request: Request, user: str = Depends(require_user)):
         return JSONResponse({"status": "error", "message": str(e), "output": [], "files": []})
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# /api/extract/stream — Server-Sent Events version of /api/extract
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# Same behavior as /api/extract above, but streams the script's stdout/stderr
+# line-by-line as they arrive (rather than waiting for the script to finish
+# and dumping everything at once). Used by the Extractions page terminal
+# to give a live "VS Code"-like feel during a run.
+#
+# Wire format: text/event-stream
+#   - Each line of output:        data: {"type":"line","text":"..."}\n\n
+#   - Periodic heartbeat:         :keepalive\n\n   (SSE comment, no data)
+#   - Final completion event:     event: done
+#                                 data: {"status":"...","files":[...],...}\n\n
+#
+# Why an additive endpoint instead of replacing /api/extract:
+#   - The scheduler / any future programmatic caller may rely on the batch
+#     JSON shape — leaving it untouched eliminates regression risk
+#   - Frontend opt-in: extractions.html switches to this; everywhere else
+#     stays on the old endpoint
+#
+# Per-line latency: subprocess.Popen + readline + PYTHONUNBUFFERED=1 in the
+# child env means each print() in the script flushes immediately. The
+# StreamingResponse writes each yielded chunk to the wire on-the-fly.
+
+@app.post("/api/extract/stream")
+async def api_extract_stream(request: Request, user: str = Depends(require_user)):
+    from fastapi.responses import StreamingResponse
+
+    body         = await request.json()
+    script_name  = body.get("script", "")
+    project_uuid = body.get("project_uuid")
+
+    # ── Validation (same checks as /api/extract; we just emit them as
+    #    SSE events so the client renders them in the terminal). ────────
+    if not script_name:
+        async def _err():
+            yield 'event: done\ndata: {"status":"error","message":"No script specified.","files":[]}\n\n'
+        return StreamingResponse(_err(), media_type="text/event-stream")
+
+    PLATFORM_MAP = {"Revizto": "revizto", "Morta": "morta", "Forma": "forma", "Proccesed": "forma"}
+    platform_key = next((v for k, v in PLATFORM_MAP.items() if script_name.startswith(k)), None)
+    if not platform_key:
+        async def _err():
+            payload = json.dumps({"status": "error", "message": f"Unknown platform for: {script_name}", "files": []})
+            yield f'event: done\ndata: {payload}\n\n'
+        return StreamingResponse(_err(), media_type="text/event-stream")
+
+    script_path = SCRIPT_DIRS[platform_key] / f"{script_name}.py"
+    if not script_path.exists():
+        async def _err():
+            payload = json.dumps({"status": "error", "message": f"Script not found: {script_name}.py", "files": []})
+            yield f'event: done\ndata: {payload}\n\n'
+        return StreamingResponse(_err(), media_type="text/event-stream")
+
+    # Resolve per-user temp dir and clean up stale ones opportunistically
+    cleanup_stale_temp_dirs()
+    user_temp = get_user_temp_dir(user)
+
+    if project_uuid:
+        config = load_config(user)
+        if platform_key == "revizto":
+            config.setdefault("revizto", {})["project_uuid"] = project_uuid
+        elif platform_key == "forma":
+            config.setdefault("forma", {})["project_id"] = project_uuid
+        save_config(config, user)
+
+    # Same env contract as /api/extract, plus PYTHONUNBUFFERED so the
+    # script's print() flushes immediately instead of getting batched.
+    config_path = write_script_config(user, user_temp)
+    script_env = os.environ.copy()
+    script_env["COCKPIT_USER"]        = user
+    script_env["COCKPIT_EXPORTS_DIR"] = str(user_temp)
+    script_env["COCKPIT_CONFIG"]      = str(config_path)
+    script_env["PYTHONUNBUFFERED"]    = "1"
+
+    # Snapshot existing files' mtimes for the "files produced by this run"
+    # filter (same logic as /api/extract).
+    pre_run_mtimes = {}
+    for ext in [".csv", ".json"]:
+        for f in user_temp.glob(f"*{ext}"):
+            if not f.name.startswith("_"):
+                pre_run_mtimes[f.name] = f.stat().st_mtime
+
+    cwd_str = str(SCRIPT_DIRS[platform_key])
+
+    async def event_stream():
+        import time as _time
+        loop = asyncio.get_event_loop()
+
+        # Open the subprocess with stdout+stderr merged into one stream so
+        # output arrives in chronological order (a script that prints to
+        # stderr immediately followed by stdout would otherwise interleave
+        # incorrectly).
+        try:
+            proc = subprocess.Popen(
+                [sys.executable, "-u", str(script_path)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                cwd=cwd_str,
+                env=script_env,
+                text=True,
+                bufsize=1,  # line-buffered
+            )
+        except Exception as e:
+            payload = json.dumps({"status": "error", "message": f"Failed to start: {e}", "files": []})
+            yield f'event: done\ndata: {payload}\n\n'
+            return
+
+        last_heartbeat = _time.time()
+        timeout_sec = 300
+        start_ts = _time.time()
+        collected_lines = []
+
+        try:
+            while True:
+                # Check timeout
+                if _time.time() - start_ts > timeout_sec:
+                    try: proc.kill()
+                    except Exception: pass
+                    payload = json.dumps({"status": "error", "message": "Timed out after 5 minutes.", "files": []})
+                    yield f'event: done\ndata: {payload}\n\n'
+                    return
+
+                # Read one line in a thread so we don't block the event loop.
+                # Use a short timeout-style approach: try reading, if no data
+                # within 1s, send a heartbeat and loop.
+                line = await loop.run_in_executor(None, proc.stdout.readline)
+                if line == "":
+                    # EOF — process likely exited
+                    if proc.poll() is not None:
+                        break
+                    # Spurious empty read; emit heartbeat if we've been
+                    # quiet long enough, and continue
+                    if _time.time() - last_heartbeat > 20:
+                        yield ":keepalive\n\n"
+                        last_heartbeat = _time.time()
+                    await asyncio.sleep(0.1)
+                    continue
+
+                stripped = line.rstrip("\r\n")
+                # Skip purely-blank lines so the terminal stays compact
+                if stripped.strip():
+                    collected_lines.append(stripped)
+                    payload = json.dumps({"type": "line", "text": stripped})
+                    yield f'data: {payload}\n\n'
+                    last_heartbeat = _time.time()
+
+            # Drain any remaining bytes (sometimes a few lines are sitting
+            # in the pipe after EOF)
+            try:
+                rest = proc.stdout.read()
+                if rest:
+                    for ln in rest.splitlines():
+                        if ln.strip():
+                            collected_lines.append(ln)
+                            payload = json.dumps({"type": "line", "text": ln})
+                            yield f'data: {payload}\n\n'
+            except Exception:
+                pass
+
+            returncode = proc.wait()
+            saved = any("saved" in l.lower() or "export" in l.lower() for l in collected_lines)
+            ok    = returncode == 0 or saved
+
+            # Collect new/modified files (same logic as /api/extract)
+            files = []
+            for ext in [".csv", ".json"]:
+                for f in sorted(user_temp.glob(f"*{ext}")):
+                    if f.name.startswith("_"):
+                        continue
+                    cur_mtime = f.stat().st_mtime
+                    prev = pre_run_mtimes.get(f.name)
+                    if prev is None or cur_mtime > prev + 0.001:
+                        files.append({
+                            "filename": f.name,
+                            "ext":      ext.lstrip("."),
+                            "url":      f"/api/extractions/download/{f.name}",
+                            "size_kb":  round(f.stat().st_size / 1024, 1),
+                        })
+
+            done_payload = json.dumps({
+                "status":  "success" if ok else "error",
+                "message": "Extraction complete." if ok else f"Script exited with code {returncode}.",
+                "files":   files,
+            })
+            yield f'event: done\ndata: {done_payload}\n\n'
+
+        except asyncio.CancelledError:
+            # Client disconnected — kill the subprocess so we don't leak it.
+            try: proc.kill()
+            except Exception: pass
+            raise
+        except Exception as e:
+            try: proc.kill()
+            except Exception: pass
+            payload = json.dumps({"status": "error", "message": f"Stream error: {e}", "files": []})
+            yield f'event: done\ndata: {payload}\n\n'
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control":  "no-cache, no-transform",
+            "X-Accel-Buffering": "no",  # disables proxy buffering on nginx-style proxies
+            "Connection":     "keep-alive",
+        },
+    )
+
+
 @app.get("/api/extractions/download/{filename}")
 async def api_extraction_download(filename: str, user: str = Depends(require_user)):
     """Stream a file from the user's temp folder as a browser download."""

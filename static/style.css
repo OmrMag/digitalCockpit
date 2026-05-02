@@ -556,7 +556,7 @@ table .status-dot.skipped { background: var(--text-muted); }
     background: rgba(11, 37, 69, 0.04);
     color: rgba(11, 37, 69, 0.35);
     border-color: rgba(11, 37, 69, 0.08);
-    cursor: not-allowed;
+    cursor: default;
 }
 .btn-bake.baked {
     background: var(--success, #34d399);
