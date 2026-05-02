@@ -543,8 +543,20 @@
         requestAnimationFrame(tick);
     }
 
-    // Run on welcome line at page load
-    document.addEventListener('DOMContentLoaded', () => {
+    // Run on welcome line at page load. The script tag for this lives
+    // at the end of <body>, which means DOMContentLoaded may have
+    // already fired by the time we register the listener — in that case
+    // the function below would never run. Use a runWhenReady() helper
+    // that handles both cases.
+    function runWhenReady(fn) {
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', fn);
+        } else {
+            fn();   // DOM already parsed — run immediately
+        }
+    }
+
+    runWhenReady(() => {
         const welcome = document.getElementById('cc-welcome');
         if (welcome) {
             const final = welcome.textContent;
@@ -650,7 +662,7 @@
     }
 
     // Tab click handlers
-    document.addEventListener('DOMContentLoaded', () => {
+    runWhenReady(() => {
         const tabs = document.getElementById('cc-activity-tabs');
         if (tabs) {
             tabs.addEventListener('click', (ev) => {
@@ -668,16 +680,18 @@
     // ── 3. PROJECT CHANGE → re-scramble member counts ─────────────────
     // base.html dispatches `cockpit:projectChanged` whenever the user
     // picks a project from the sidebar. We re-fetch the member counts
-    // for the new project and animate them in.
+    // for the new project and animate them in. We also call this on
+    // initial page load if a project is already selected — otherwise
+    // a refresh would leave the member counts as dashes forever.
 
-    window.addEventListener('cockpit:projectChanged', async (ev) => {
-        const detail = ev.detail || {};
+    async function fetchProjectMembers(projectKey, projectName) {
+        // Update the project-name hint
         const hint = document.getElementById('cc-members-hint');
         if (hint) {
-            hint.textContent = detail.name || 'Select a project from the sidebar';
+            hint.textContent = projectName || 'Select a project from the sidebar';
         }
 
-        // Reset all to em-dash with scramble effect, then fetch real numbers
+        // Reset all cells to em-dash before fetching
         ['morta', 'revizto', 'forma'].forEach(p => {
             const el = document.getElementById('cc-mem-' + p);
             if (el) {
@@ -686,14 +700,11 @@
             }
         });
 
-        if (!detail.key) return;
+        if (!projectKey) return;
 
-        // Fetch current project's member counts. This endpoint returns
-        // 503 / 404 today since we haven't built it yet — the catch
-        // block leaves the dashes in place. When the endpoint exists,
-        // it should return {morta:N, revizto:N, forma:N}.
+        // Live API fetch (server-side cached 5 minutes per project)
         try {
-            const r = await fetch('/api/project/' + encodeURIComponent(detail.key) + '/members', { credentials: 'same-origin' });
+            const r = await fetch('/api/project/' + encodeURIComponent(projectKey) + '/members', { credentials: 'same-origin' });
             if (!r.ok) return;
             const counts = await r.json();
             ['morta', 'revizto', 'forma'].forEach(p => {
@@ -707,15 +718,32 @@
             // Silently leave dashes in place
         }
 
-        // Also re-fetch activity scoped to the new project
+        // Also re-fetch activity scoped to this project
         try {
-            const r = await fetch('/api/invite/log?project_key=' + encodeURIComponent(detail.key) + '&limit=50', { credentials: 'same-origin' });
+            const r = await fetch('/api/invite/log?project_key=' + encodeURIComponent(projectKey) + '&limit=50', { credentials: 'same-origin' });
             if (r.ok) {
                 const data = await r.json();
                 _activityCache = data.entries || [];
                 renderActivity();
             }
         } catch (err) {}
+    }
+
+    // Sidebar change → fetch
+    window.addEventListener('cockpit:projectChanged', (ev) => {
+        const detail = ev.detail || {};
+        fetchProjectMembers(detail.key, detail.name);
+    });
+
+    // Initial page load → fetch if a project is already selected
+    runWhenReady(() => {
+        const initialKey  = {{ active_project_key|tojson if active_project_key else '""' }};
+        const initialName = {{ active_project|tojson if active_project else '""' }};
+        if (initialKey) {
+            fetchProjectMembers(initialKey, initialName);
+        }
+    });
+
     // ── 4. INVITES STATS — Sent + Received with time filter ──────────
     // Fetches /api/invites/stats?period=7d|30d|all and animates the
     // numbers into the two cells. Re-fetches when the dropdown changes.
@@ -742,7 +770,7 @@
         }
     }
 
-    document.addEventListener('DOMContentLoaded', () => {
+    runWhenReady(() => {
         const sel = document.getElementById('cc-invites-period');
         if (sel) {
             // Initial fetch with whatever the dropdown says

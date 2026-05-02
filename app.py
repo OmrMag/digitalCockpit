@@ -176,14 +176,22 @@ def send_email(to_emails: list, subject: str, html_body: str) -> bool:
 
 # ── Project Registry helpers ───────────────────────────────────────────────
 def load_registry() -> dict:
+    cached = _cache_get("projects_registry.json")
+    if cached is not None:
+        return cached
+
     if USE_BLOB:
         data = blob_read("projects_registry.json")
         if data is not None:
+            _cache_set("projects_registry.json", data)
             return data
     p = BASE_DIR / "projects_registry.json"
     if p.exists():
         with open(p) as f:
-            return json.load(f)
+            data = json.load(f)
+            _cache_set("projects_registry.json", data)
+            return data
+    _cache_set("projects_registry.json", {})
     return {}
 
 def save_registry(data: dict):
@@ -192,6 +200,7 @@ def save_registry(data: dict):
     else:
         with open(BASE_DIR / "projects_registry.json", "w") as f:
             json.dump(data, f, indent=2)
+    _cache_invalidate("projects_registry.json")
 
 def get_user_projects(email: str) -> list[str]:
     """Return list of project keys the user is admin of."""
@@ -201,21 +210,64 @@ def get_user_projects(email: str) -> list[str]:
 def is_owner(user: str) -> bool:
     return user == OWNER_EMAIL
 
+
+# ── Tiny TTL cache for blob/disk reads ──────────────────────────────
+# Without this, every page load makes 3-5 blob round-trips because the
+# loaders (load_users, load_registry, load_config, load_invite_log) are
+# called from multiple spots in the same request. A 5-second TTL means
+# back-to-back reads coalesce to one fetch while still picking up changes
+# from blob storage within ~5s of a write.
+#
+# Save functions explicitly invalidate the matching cache key so writes
+# are reflected immediately on the next read.
+import time as _time_for_cache
+
+_blob_cache: dict = {}                    # key -> (expires_at, data)
+_BLOB_CACHE_TTL_SEC = 5
+
+def _cache_get(key: str):
+    """Return cached value or None if missing/expired."""
+    entry = _blob_cache.get(key)
+    if not entry:
+        return None
+    if entry[0] < _time_for_cache.time():
+        _blob_cache.pop(key, None)
+        return None
+    return entry[1]
+
+def _cache_set(key: str, value):
+    """Store value with TTL."""
+    _blob_cache[key] = (_time_for_cache.time() + _BLOB_CACHE_TTL_SEC, value)
+
+def _cache_invalidate(key: str):
+    """Remove a key so the next read forces a blob fetch."""
+    _blob_cache.pop(key, None)
+
+
 # ---------------------------------------------------------------------------
 # Auth Helpers
 # ---------------------------------------------------------------------------
 
 def load_users():
     """Load admin records. Reads admins.json from blob (USE_BLOB=true)
-    or local disk. The function name is preserved for backward compat
-    with all the existing call sites — what changed is just the file."""
+    or local disk. Cached in-memory for 5s to coalesce repeated calls
+    within the same request. The function name is preserved for backward
+    compat with all the existing call sites."""
+    cached = _cache_get("admins.json")
+    if cached is not None:
+        return cached
+
     if USE_BLOB:
         data = blob_read("admins.json")
         if data is not None:
+            _cache_set("admins.json", data)
             return data
     if AUTH_FILE.exists():
         with open(AUTH_FILE) as f:
-            return json.load(f)
+            data = json.load(f)
+            _cache_set("admins.json", data)
+            return data
+    _cache_set("admins.json", {})
     return {}
 
 def save_users(users):
@@ -225,6 +277,7 @@ def save_users(users):
     else:
         with open(AUTH_FILE, "w") as f:
             json.dump(users, f, indent=2)
+    _cache_invalidate("admins.json")
 
 
 # ── One-time migration: users.json → admins.json ─────────────────────
@@ -388,6 +441,11 @@ def _config_blob_name(email: str = None) -> str:
     return "config.json"
 
 def load_config(email: str = None):
+    cache_key = f"config:{email or 'default'}"
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+
     default = get_default_config()
     # Try blob first
     if USE_BLOB:
@@ -398,6 +456,7 @@ def load_config(email: str = None):
                 else:
                     for k in default[p]:
                         if k not in saved[p]: saved[p][k] = default[p][k]
+            _cache_set(cache_key, saved)
             return saved
     # Fall back to local file
     path = get_user_config_file(email)
@@ -409,7 +468,9 @@ def load_config(email: str = None):
             else:
                 for k in default[p]:
                     if k not in saved[p]: saved[p][k] = default[p][k]
+        _cache_set(cache_key, saved)
         return saved
+    _cache_set(cache_key, default)
     return default
 
 def save_config(config, email: str = None):
@@ -419,15 +480,24 @@ def save_config(config, email: str = None):
         path = get_user_config_file(email)
         with open(path, "w") as f:
             json.dump(config, f, indent=2)
+    _cache_invalidate(f"config:{email or 'default'}")
 
 def load_invite_log():
+    cached = _cache_get("invite_log.json")
+    if cached is not None:
+        return cached
+
     if USE_BLOB:
         data = blob_read("invite_log.json")
         if data is not None:
+            _cache_set("invite_log.json", data)
             return data
     if LOG_FILE.exists():
         with open(LOG_FILE, "r") as f:
-            return json.load(f)
+            data = json.load(f)
+            _cache_set("invite_log.json", data)
+            return data
+    _cache_set("invite_log.json", [])
     return []
 
 def save_invite_log(log):
@@ -436,6 +506,7 @@ def save_invite_log(log):
     else:
         with open(LOG_FILE, "w") as f:
             json.dump(log, f, indent=2)
+    _cache_invalidate("invite_log.json")
 
 def load_models_cache() -> dict:
     """Load per-project model cache."""
@@ -1542,17 +1613,22 @@ def get_user_record(email: str) -> dict:
     return rec
 
 
-def get_user_first_name(email: str) -> str:
+def get_user_first_name(email: str, rec: dict | None = None) -> str:
     """Resolve the admin's first name for the welcome line.
 
     Order of preference:
-      1. user record's `first_name` field (if you ever populate it later)
+      1. user record's `first_name` field (set manually in admins.json)
       2. parse from email local-part — split on '.' and take the first chunk
          (e.g. omar.awad@alec.ae → 'Omar', oawad@alec.ae → 'Oawad')
+
+    `rec` is an optional pre-fetched user record. Passing it avoids a
+    redundant load_users() call when the caller already has the record
+    in hand (e.g. home/profile routes that call get_user_record first).
     """
     if not email:
         return ""
-    rec = get_user_record(email)
+    if rec is None:
+        rec = get_user_record(email)
     if rec.get("first_name"):
         return rec["first_name"].strip().title()
     local = email.split("@")[0]
@@ -1578,7 +1654,7 @@ async def home(request: Request, user: str = Depends(require_user)):
 
     # ── Resolve admin metadata for the redesigned home header ─────────────
     user_rec   = get_user_record(user)
-    first_name = get_user_first_name(user)
+    first_name = get_user_first_name(user, rec=user_rec)
     cockpit_id = user_rec.get("cockpit_id", "")
 
     # ── Scope strip counts (registry-driven) ─────────────────────────────
@@ -1620,7 +1696,8 @@ async def home(request: Request, user: str = Depends(require_user)):
     return templates.TemplateResponse(request=request, name="home.html", context={
         "active_page": "home", "config": config,
         "morta_count": None, "revizto_count": None, "forma_count": None,
-        "active_project": ctx.get("active_project_name", ""),
+        "active_project":      ctx.get("active_project_name", ""),
+        "active_project_key":  ctx.get("active_project_key", ""),    # used by JS to fetch member counts on page load
         "morta_hub":      config["morta"]["hub_id"][:12]      + "..." if config["morta"]["hub_id"]      else None,
         "revizto_region": config["revizto_dubai"]["region"].title() if config["revizto_dubai"].get("region") else None,
         "forma_account":  config["forma"]["account_id"][:12]  + "..." if config["forma"]["account_id"] else None,
@@ -1647,7 +1724,7 @@ async def profile(request: Request, user: str = Depends(require_user)):
 
     # Resolve admin metadata from admins.json (cockpit_id, created date, etc.)
     user_rec    = get_user_record(user)
-    first_name  = get_user_first_name(user)
+    first_name  = get_user_first_name(user, rec=user_rec)
     cockpit_id  = user_rec.get("cockpit_id", "")
     member_since = user_rec.get("created", "")
     if member_since:
@@ -1979,15 +2056,24 @@ async def api_portal_link(request: Request, user: str = Depends(require_user)):
 # ── Pending submissions API ───────────────────────────────────────────────
 
 def _load_portal_requests() -> dict:
+    cached = _cache_get("portal_requests.json")
+    if cached is not None:
+        return cached
+
     if USE_BLOB:
         data = blob_read("portal_requests.json")
         if data is not None:
-            return data if isinstance(data, dict) else {}
+            result = data if isinstance(data, dict) else {}
+            _cache_set("portal_requests.json", result)
+            return result
     p = BASE_DIR / "portal_requests.json"
     if p.exists():
         with open(p) as f:
             loaded = json.load(f)
-        return loaded if isinstance(loaded, dict) else {}
+        result = loaded if isinstance(loaded, dict) else {}
+        _cache_set("portal_requests.json", result)
+        return result
+    _cache_set("portal_requests.json", {})
     return {}
 
 def _save_portal_requests(data: dict):
@@ -1996,6 +2082,7 @@ def _save_portal_requests(data: dict):
     else:
         with open(BASE_DIR / "portal_requests.json", "w") as f:
             json.dump(data, f, indent=2)
+    _cache_invalidate("portal_requests.json")
 
 
 @app.get("/api/pending")
