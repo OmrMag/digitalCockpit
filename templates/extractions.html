@@ -521,8 +521,30 @@ async function runExtractor(btn) {
     termAdd('info', 'Sending request...');
     termAdd('info', 'Script running...');
 
+    // Filter we apply to every emitted line (in both streaming and final
+    // status path) — strips path-leaking "Saved ... to /tmp/..." rows.
+    const TEMP_PATH_RE = /\/tmp\/[A-Za-z0-9_]+\/temp\//;
+    function _shouldSkipLine(line) {
+        const lower = line.toLowerCase();
+        if (lower.startsWith('saved ') && TEMP_PATH_RE.test(line)) return true;
+        if (TEMP_PATH_RE.test(line)) return true;
+        return false;
+    }
+    function _classifyLine(line) {
+        const lower = line.toLowerCase();
+        const startsCheck = line.trimStart().startsWith('✓') || line.trimStart().startsWith('✔');
+        if (lower.includes('error') || lower.includes('failed') || lower.includes('traceback')) return 'err';
+        if (startsCheck || lower.includes('extraction complete')) return 'ok';
+        return 'out';
+    }
+
+    let finalData = null;  // populated by the 'done' SSE event
+
     try {
-        const res = await fetch('/api/extract', {
+        // ── Server-Sent Events streaming via fetch + ReadableStream ─────
+        // Each line of the script's stdout/stderr arrives as it's emitted
+        // (not batched at the end). Final status comes as a 'done' event.
+        const res = await fetch('/api/extract/stream', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -531,34 +553,67 @@ async function runExtractor(btn) {
                 project_name: activeCtx.revizto_project_name || activeCtx.forma_project_name || activeCtx.morta_hub_name || null,
             })
         });
-        const data = await res.json();
 
-        // Echo each line of the script's stdout/stderr with auto-color
-        // detection. We filter out a few patterns that aren't useful to
-        // the user:
-        //  • "Saved <N> ... to /tmp/<...>" — leaks the server's temp
-        //    directory path; the file is already presented through the
-        //    Bake/download flow
-        //  • lines that are JUST a server temp path with no other content
-        const TEMP_PATH_RE = /\/tmp\/[A-Za-z0-9_]+\/temp\//;
-        (data.output || []).forEach(rawLine => {
-            const line = rawLine;
-            const lower = line.toLowerCase();
-            // Suppress path-leaking "Saved ... to /tmp/..." lines
-            if (lower.startsWith('saved ') && TEMP_PATH_RE.test(line)) return;
-            // Suppress any other line that surfaces a server temp path
-            if (TEMP_PATH_RE.test(line)) return;
+        if (!res.ok || !res.body) {
+            // Fall back to a simple error — shouldn't normally happen
+            termAdd('err', `✗ Stream failed: HTTP ${res.status}`);
+            throw new Error(`HTTP ${res.status}`);
+        }
 
-            const startsCheck = line.trimStart().startsWith('✓') || line.trimStart().startsWith('✔');
-            let cls = 'out';
-            if (lower.includes('error') || lower.includes('failed') || lower.includes('traceback')) cls = 'err';
-            else if (startsCheck || lower.includes('extraction complete')) cls = 'ok';
-            termAdd(cls, line);
-        });
+        const reader  = res.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let buffer = '';
 
-        // Final status. We deliberately do NOT print the synthetic
-        // "→ filename (size) /api/extractions/download/..." rows — the
-        // user can see file output via the Bake button + Packages page.
+        // SSE frames are separated by \n\n. Within a frame, fields are
+        // newline-separated and each starts with a label like 'data:' or
+        // 'event:'. Comments start with ':' and are ignored (heartbeats).
+        function _processFrame(frame) {
+            let event = 'message';
+            let data  = '';
+            for (const rawLine of frame.split('\n')) {
+                if (!rawLine || rawLine.startsWith(':')) continue;  // comment / heartbeat
+                const colon = rawLine.indexOf(':');
+                if (colon < 0) continue;
+                const field = rawLine.slice(0, colon);
+                let   value = rawLine.slice(colon + 1);
+                if (value.startsWith(' ')) value = value.slice(1);
+                if (field === 'event') event = value;
+                else if (field === 'data') data += (data ? '\n' : '') + value;
+            }
+            if (!data) return;
+            let parsed;
+            try { parsed = JSON.parse(data); }
+            catch { return; }
+
+            if (event === 'done') {
+                finalData = parsed;
+                return;
+            }
+            // default 'message' event = a stdout/stderr line
+            if (parsed.type === 'line' && typeof parsed.text === 'string') {
+                if (_shouldSkipLine(parsed.text)) return;
+                termAdd(_classifyLine(parsed.text), parsed.text);
+            }
+        }
+
+        while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            // Process all complete frames in the buffer
+            let frameEnd;
+            while ((frameEnd = buffer.indexOf('\n\n')) >= 0) {
+                const frame = buffer.slice(0, frameEnd);
+                buffer = buffer.slice(frameEnd + 2);
+                _processFrame(frame);
+            }
+        }
+        // Drain any partial trailing frame
+        if (buffer.trim()) _processFrame(buffer);
+
+        // ── Apply final status / file metadata from the 'done' event ────
+        const data = finalData || { status: 'error', message: 'Stream ended without a done event.', files: [] };
+
         if (data.status !== 'success') {
             termAdd('err', `✗ ${data.message || 'Extraction failed.'}`);
         }
@@ -679,9 +734,6 @@ function printBootBanner() {
     const lines = [
         { cls: 'banner',     html: 'Digital Construction Cockpit [Version 0.2.0]' },
         { cls: 'banner dim', html: `(c) ${year} ALEC Holdings. Internal use only.` },
-        { cls: 'banner',     html: '' },
-        { cls: 'banner dim', html: 'Active extractions: Revizto · Morta · Forma / ACC' },
-        { cls: 'banner dim', html: 'Click Run on any card below to begin.' },
         { cls: 'banner',     html: '' },
     ];
     lines.forEach(l => {
