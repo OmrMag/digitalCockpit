@@ -2794,7 +2794,7 @@ async def api_extract(request: Request, user: str = Depends(require_user)):
         return JSONResponse({
             "status":  "success" if ok else "error",
             "message": "Extraction complete." if ok else f"Script exited with code {result.returncode}.",
-            "output":  lines[:10],
+            "output":  lines,
             "files":   files,
         })
     except subprocess.TimeoutExpired:

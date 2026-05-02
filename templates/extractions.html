@@ -7,6 +7,25 @@
 
 {% block content %}
 
+<!-- ── Shared terminal (in-house extraction shell) ─────────────────────
+     Sits above the platform tabs. Single shared instance, accumulates
+     every run across the session. Replaces the per-run modal popup.
+     Auto-scroll keeps the latest output pinned to the bottom; toggle
+     to off to inspect history without the view jumping. -->
+<div class="ext-terminal" id="extTerminal">
+    <div class="ext-term-head">
+        <span class="ext-term-title">// TERMINAL · IN-HOUSE EXTRACTION SHELL</span>
+        <div class="ext-term-controls">
+            <span class="ext-term-runs"><span id="termRuns">0</span> runs</span>
+            <button class="ext-term-btn" id="termAutoScrollBtn" onclick="toggleAutoScroll()">↓ AUTO-SCROLL: ON</button>
+            <button class="ext-term-btn" onclick="clearTerminal()">🗑 CLEAR</button>
+        </div>
+    </div>
+    <div class="ext-term-body" id="termBody">
+        <span class="ext-term-empty">Run an extraction to see output here.</span>
+    </div>
+</div>
+
 <!-- Platform Tabs -->
 <div class="ext-tabs">
     <button class="ext-tab active" onclick="switchTab('revizto', this)">
@@ -209,37 +228,6 @@
     </div>
 </div>
 
-<!-- ── Run Output Modal ───────────────────────────────────────── -->
-<div id="runModalOverlay" style="display:none; position:fixed; inset:0; background:rgba(15,27,45,0.55); z-index:200; align-items:center; justify-content:center;">
-    <div style="background:white; border-radius:var(--radius-lg); border:1px solid var(--border-cream); width:560px; max-width:95vw; box-shadow:var(--shadow-lg);">
-        <div style="display:flex; align-items:center; justify-content:space-between; padding:16px 20px; border-bottom:1px solid var(--border-cream);">
-            <span style="font-size:var(--fs-xs); font-weight:600; text-transform:uppercase; letter-spacing:1px; color:var(--navy);" id="runModalTitle">Running</span>
-            <div style="display:flex; align-items:center; gap:10px;">
-                <span id="runModalStatus" class="card-badge" style="display:none;"></span>
-                <button onclick="closeRunModal()" style="background:none; border:none; cursor:pointer; color:var(--text-dark-muted); font-size:18px; line-height:1; padding:0 4px;">&times;</button>
-            </div>
-        </div>
-        <div style="padding:20px;">
-            <div style="margin-bottom:16px;">
-                <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">
-                    <div id="runSpinner" style="width:14px; height:14px; border:2px solid var(--border-cream); border-top-color:var(--accent); border-radius:50%; animation:spin 0.7s linear infinite;"></div>
-                    <span id="runStatusText" style="font-size:var(--fs-sm); color:var(--text-dark-muted);">Starting...</span>
-                </div>
-                <div style="height:3px; background:var(--cream-dark); border-radius:2px; overflow:hidden;">
-                    <div id="runProgressBar" style="height:100%; width:0%; background:var(--accent); border-radius:2px; transition:width 0.4s ease;"></div>
-                </div>
-            </div>
-            <div style="background:var(--navy); border-radius:var(--radius); padding:12px 14px; font-family:var(--font); font-size:var(--fs-xs); color:#8899aa; min-height:120px; max-height:200px; overflow-y:auto;" id="runOutput">
-                <span style="opacity:0.4;">Waiting for output...</span>
-            </div>
-            <div id="runResult" style="display:none; margin-top:14px; padding:10px 14px; border-radius:var(--radius); font-size:var(--fs-sm);"></div>
-        </div>
-        <div style="padding:12px 20px; border-top:1px solid var(--border-cream); display:flex; justify-content:flex-end;">
-            <button onclick="closeRunModal()" class="btn btn-secondary btn-sm">Close</button>
-        </div>
-    </div>
-</div>
-
 <style>
 :root {
     --revizto: #e05a5a;
@@ -268,6 +256,94 @@
 .ext-badge.revizto { background:rgba(224,90,90,0.1); color:var(--revizto); }
 .ext-badge.morta    { background:rgba(74,158,255,0.1); color:var(--accent); }
 .ext-badge.forma    { background:rgba(37,99,168,0.1); color:var(--forma); }
+
+/* ── Shared terminal ──────────────────────────────────────────────── */
+.ext-terminal {
+    background: #0e1f37;            /* slightly lighter than sidebar navy */
+    border-radius: var(--radius-lg);
+    margin-bottom: 24px;
+    overflow: hidden;
+    box-shadow: var(--shadow);
+}
+.ext-term-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 11px 18px;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+.ext-term-title {
+    font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: rgba(255,255,255,0.55);
+    font-weight: 600;
+}
+.ext-term-controls { display: flex; align-items: center; gap: 12px; }
+.ext-term-runs {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: rgba(255,255,255,0.5);
+}
+.ext-term-btn {
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.10);
+    color: rgba(255,255,255,0.75);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    padding: 5px 10px;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background 0.12s, border-color 0.12s;
+}
+.ext-term-btn:hover {
+    background: rgba(255,255,255,0.08);
+    border-color: rgba(255,255,255,0.18);
+}
+.ext-term-body {
+    padding: 14px 18px;
+    height: 360px;
+    max-height: 360px;
+    overflow-y: auto;
+    font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px;
+    line-height: 1.65;
+    color: #cbd5e1;
+    white-space: pre;
+}
+.ext-term-body::-webkit-scrollbar           { width: 8px; }
+.ext-term-body::-webkit-scrollbar-track     { background: transparent; }
+.ext-term-body::-webkit-scrollbar-thumb     { background: rgba(255,255,255,0.10); border-radius: 4px; }
+.ext-term-body::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.18); }
+.ext-term-empty { color: rgba(255,255,255,0.35); font-style: italic; }
+
+/* Each line: timestamp prefix + content. Color classes drive the
+   semantic color of the content half. Display:grid keeps timestamps
+   vertically aligned even when the content wraps long URLs. */
+.tline {
+    display: grid;
+    grid-template-columns: 60px 1fr;
+    gap: 12px;
+    align-items: baseline;
+}
+.tline .ts    { color: rgba(255,255,255,0.30); white-space: nowrap; }
+.tline .msg   { white-space: pre-wrap; word-break: break-word; }
+.tline.cmd  .msg { color: #7dd3fc; }              /* blue: command */
+.tline.info .msg { color: #cbd5e1; }              /* light: info */
+.tline.out  .msg { color: #cbd5e1; }              /* light: stdout */
+.tline.err  .msg { color: #f87171; }              /* red: errors */
+.tline.ok   .msg { color: #34d399; }              /* green: success */
+.tline.file .msg { color: #34d399; }              /* green: file output */
+.tline.sep  .msg { color: rgba(255,255,255,0.15); }
+.tline.divider {
+    grid-column: 1 / -1;
+    height: 1px;
+    background: rgba(255,255,255,0.06);
+    margin: 8px 0;
+}
 </style>
 
 {% endblock %}
@@ -395,11 +471,21 @@ async function runExtractor(btn) {
     if (isRunning) return;
     const card   = btn.closest('.extractor-card');
     const script = card.dataset.script;
-    const title  = card.querySelector('.ext-title').textContent;
     isRunning = true;
-    openRunModal(title);
+
+    // Update Run button to busy state
+    const runOriginalText = btn.textContent;
+    btn.textContent = 'Running…';
+    btn.disabled = true;
+
+    // Visual separator between runs in the terminal
+    if (totalRuns > 0) termAddDivider();
+
+    termAdd('cmd',  `$ python3 ${script.toLowerCase()}.py`);
+    termAdd('info', 'Sending request...');
+    termAdd('info', 'Script running...');
+
     try {
-        setProgress(20, 'Sending request...');
         const res = await fetch('/api/extract', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -409,15 +495,39 @@ async function runExtractor(btn) {
                 project_name: activeCtx.revizto_project_name || activeCtx.forma_project_name || activeCtx.morta_hub_name || null,
             })
         });
-        setProgress(60, 'Script running...');
         const data = await res.json();
-        setProgress(100, 'Done.');
-        showOutput((data.output || []).slice(0, 10), data.status === 'success');
-        showResult(data);
+
+        // Echo each line of the script's stdout/stderr with auto-color
+        // detection: lines containing 'error'/'fail' get red, lines that
+        // start with check marks or 'saved' get green, everything else is
+        // neutral light.
+        (data.output || []).forEach(line => {
+            const lower = line.toLowerCase();
+            const startsCheck = line.trimStart().startsWith('✓') || line.trimStart().startsWith('✔');
+            let cls = 'out';
+            if (lower.includes('error') || lower.includes('failed') || lower.includes('traceback')) cls = 'err';
+            else if (startsCheck || lower.includes('saved') || lower.includes('extraction complete')) cls = 'ok';
+            termAdd(cls, line);
+        });
+
+        // Final status + file list
+        if (data.status === 'success') {
+            if (Array.isArray(data.files) && data.files.length) {
+                data.files.forEach(f => {
+                    termAdd('file', `  → ${f.filename} (${f.size_kb}kb)  ${f.url}`);
+                });
+            }
+        } else {
+            termAdd('err', `✗ ${data.message || 'Extraction failed.'}`);
+        }
+        // Trailing blank line for visual breathing room
+        termAdd('sep', '');
+
         // After Scenes & Models run, try to load model list from the output CSV
         if (script === 'Revizto_GET_Scenes_and_Models_with_Properties' && data.status === 'success') {
             loadReviztoModelsFromExport();
         }
+
         // ── Bake-state tracking ─────────────────────────────────────────────
         // On success, stash the file list on the card so the Bake button
         // can post it later. Activate the button visually.
@@ -432,12 +542,14 @@ async function runExtractor(btn) {
             }
         }
     } catch(e) {
-        setProgress(100, 'Request failed.');
-        showOutput([`Error: ${e.message}`], false);
-        showResult({ status: 'error', message: e.message });
+        termAdd('err', `✗ Request failed: ${e.message}`);
+        termAdd('sep', '');
     } finally {
         isRunning = false;
-        document.getElementById('runSpinner').style.display = 'none';
+        btn.textContent = runOriginalText;
+        btn.disabled = false;
+        totalRuns++;
+        document.getElementById('termRuns').textContent = totalRuns;
     }
 }
 
@@ -450,55 +562,78 @@ async function loadReviztoModelsFromExport() {
     } catch(e) { console.warn('Could not load Revizto models from export', e); }
 }
 
-function openRunModal(title) {
-    document.getElementById('runModalTitle').textContent = title;
-    document.getElementById('runModalStatus').style.display = 'none';
-    document.getElementById('runOutput').innerHTML = '<span style="opacity:0.4;">Waiting for output...</span>';
-    document.getElementById('runResult').style.display = 'none';
-    document.getElementById('runProgressBar').style.width = '0%';
-    document.getElementById('runStatusText').textContent = 'Starting...';
-    document.getElementById('runSpinner').style.display = 'inline-block';
-    document.getElementById('runModalOverlay').style.display = 'flex';
+// ═══════════════════════════════════════════════════════════════════════════
+// TERMINAL — shared output panel at the top of the page
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Single instance, accumulates every run for the current session. Lines
+// are appended with timestamps. Auto-scroll keeps the latest line in view
+// unless the user has explicitly toggled it off.
+
+let totalRuns      = 0;
+let autoScroll     = true;
+
+function _termTimestamp() {
+    const d = new Date();
+    const pad = n => String(n).padStart(2, '0');
+    return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
-function closeRunModal() {
-    if (isRunning) return;
-    document.getElementById('runModalOverlay').style.display = 'none';
+function _termEscape(s) {
+    return String(s ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 }
 
-function setProgress(pct, text) {
-    document.getElementById('runProgressBar').style.width = pct + '%';
-    document.getElementById('runStatusText').textContent = text;
+function termAdd(kind, msg) {
+    const body = document.getElementById('termBody');
+    if (!body) return;
+    // Clear empty-state placeholder on first write
+    const empty = body.querySelector('.ext-term-empty');
+    if (empty) body.innerHTML = '';
+
+    const div = document.createElement('div');
+    div.className = `tline ${kind}`;
+    div.innerHTML = `<span class="ts">${_termTimestamp()}</span><span class="msg">${_termEscape(msg)}</span>`;
+    body.appendChild(div);
+    if (autoScroll) body.scrollTop = body.scrollHeight;
 }
 
-function showOutput(lines, success) {
-    const out = document.getElementById('runOutput');
-    if (!lines.length) { out.innerHTML = '<span style="opacity:0.4;">No output returned.</span>'; return; }
-    out.innerHTML = lines.map(l => {
-        const color = l.toLowerCase().includes('error') ? '#f87171'
-                    : l.toLowerCase().includes('saved') ? '#34d399' : '#c8d8e8';
-        return `<div style="color:${color}; margin-bottom:3px;">${l.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>`;
-    }).join('');
-    if (lines.length === 10) out.innerHTML += `<div style="opacity:0.4; margin-top:6px;">… full output saved to exports/</div>`;
+function termAddDivider() {
+    const body = document.getElementById('termBody');
+    if (!body) return;
+    const empty = body.querySelector('.ext-term-empty');
+    if (empty) return;
+    const div = document.createElement('div');
+    div.className = 'tline divider';
+    body.appendChild(div);
+    if (autoScroll) body.scrollTop = body.scrollHeight;
 }
 
-function showResult(data) {
-    const el    = document.getElementById('runResult');
-    const badge = document.getElementById('runModalStatus');
-    const ok    = data.status === 'success';
-    el.style.display    = 'block';
-    el.style.background = ok ? 'rgba(52,211,153,0.08)' : 'rgba(248,113,113,0.08)';
-    el.style.border     = ok ? '1px solid rgba(52,211,153,0.2)' : '1px solid rgba(248,113,113,0.2)';
-    el.style.color      = ok ? '#065f46' : '#991b1b';
-    el.textContent      = data.message || (ok ? 'Extraction complete.' : 'Extraction failed.');
-    badge.style.display = 'inline-block';
-    badge.className     = `card-badge ${ok ? 'success' : 'error'}`;
-    badge.textContent   = ok ? 'Success' : 'Failed';
+function clearTerminal() {
+    const body = document.getElementById('termBody');
+    if (!body) return;
+    body.innerHTML = '<span class="ext-term-empty">Run an extraction to see output here.</span>';
+    totalRuns = 0;
+    document.getElementById('termRuns').textContent = '0';
 }
 
-document.getElementById('runModalOverlay').addEventListener('click', function(e) {
-    if (e.target === this && !isRunning) closeRunModal();
-});
+function toggleAutoScroll() {
+    autoScroll = !autoScroll;
+    const btn = document.getElementById('termAutoScrollBtn');
+    btn.textContent = autoScroll ? '↓ AUTO-SCROLL: ON' : '↓ AUTO-SCROLL: OFF';
+    if (autoScroll) {
+        const body = document.getElementById('termBody');
+        if (body) body.scrollTop = body.scrollHeight;
+    }
+}
+
+// If the user manually scrolls up, turn auto-scroll off so we don't fight
+// them. They can toggle back on with the button.
+document.getElementById('termBody').addEventListener('wheel', function(e) {
+    if (e.deltaY < 0 && autoScroll) {
+        autoScroll = false;
+        document.getElementById('termAutoScrollBtn').textContent = '↓ AUTO-SCROLL: OFF';
+    }
+}, { passive: true });
 
 // ═══════════════════════════════════════════════════════════════════════════
 // BAKE — stash a successful extraction into the persistent Packages page
@@ -508,11 +643,6 @@ document.getElementById('runModalOverlay').addEventListener('click', function(e)
 // to its footer — except Forma L1 cards, which can't be baked (per ALEC's
 // spec: account-wide Forma data isn't useful as a per-admin shareable
 // package).
-//
-// The button starts in a faded state. After a successful Run on that
-// card, runExtractor() flips its state to active and stashes the
-// run's file list on `card.dataset.lastRunFiles`. Clicking Bake POSTs
-// that file list (plus context) to /api/extractions/bake.
 
 const FORMA_L1_SCRIPTS = new Set([
     'Forma_GET_Account_Projects',
@@ -579,7 +709,7 @@ async function bakeExtractor(btn) {
         if (res.ok && data.status === 'ok') {
             btn.textContent = '✓ Baked';
             btn.classList.add('baked');
-            // After 3s, restore the active state so the admin can bake again
+            termAdd('ok', `Baked: ${label} → /packages`);
             setTimeout(() => {
                 btn.textContent = 'Bake';
                 btn.disabled    = false;
