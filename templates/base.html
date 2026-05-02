@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Digital Construction Cockpit{% endblock %}</title>
+    <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
     <link rel="stylesheet" href="/static/style.css">
     <link rel="prefetch" href="/">
     <link rel="prefetch" href="/manage">
@@ -284,6 +285,15 @@
 
     let _registry = {};
 
+    // Public surface so child pages can read the registry + context
+    // without making their own HTTP calls. base.html's
+    // loadRegistryProjects() runs once on every page; child pages
+    // should `await window.cockpit.ready` and then read the cached
+    // values from window.cockpit.registry / window.cockpit.context.
+    window.cockpit = window.cockpit || {};
+    let _readyResolve;
+    window.cockpit.ready = new Promise(res => { _readyResolve = res; });
+
     // ── Load projects from registry ───────────────────────────────
     async function loadRegistryProjects() {
         try {
@@ -295,6 +305,10 @@
             _registry = regRes.ok ? await regRes.json() : {};
             const ctxData = ctxRes.ok ? await ctxRes.json() : {};
             const activeKey = ctxData.active_project_key || '';
+
+            // Stash for child pages
+            window.cockpit.registry = _registry;
+            window.cockpit.context  = ctxData;
 
             const sel = document.getElementById('ctxProject');
             sel.innerHTML = '<option value="">— select project —</option>';
@@ -309,7 +323,13 @@
             if (activeKey && _registry[activeKey]) {
                 showPlatformRefs(_registry[activeKey]);
             }
-        } catch(e) { console.error('Failed to load registry', e); }
+        } catch(e) {
+            console.error('Failed to load registry', e);
+        } finally {
+            // Always resolve, even on error — child pages can fall back
+            // to their own fetches if needed.
+            _readyResolve();
+        }
     }
 
     function showPlatformRefs(proj) {
