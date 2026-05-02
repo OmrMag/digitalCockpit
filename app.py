@@ -2568,6 +2568,187 @@ async def api_projects(user: str = Depends(require_user)):
 
     return JSONResponse({"projects": projects, "active_context": context})
 
+
+# ── Per-project member counts (live API + 5-min cache) ─────────────────
+# Used by /home's "Members on active project" tile to show live counts
+# when the user picks a project from the sidebar. Cache is in-memory so
+# it resets on every server restart — that's fine, 5 minutes is short.
+_members_cache: dict = {}      # key: project_key -> (timestamp, counts dict)
+_MEMBERS_TTL_SEC = 300         # 5 minutes
+
+
+@app.get("/api/project/{project_key}/members")
+async def api_project_members(project_key: str, user: str = Depends(require_user)):
+    """Return per-platform member counts for a registry project.
+
+    Response shape: {"morta": int|None, "revizto": int|None, "forma": int|None}
+    Each value is the count for that platform's project, or None if the
+    platform isn't configured / the API call failed.
+
+    Cached for 5 minutes per project_key. Cache survives across users
+    because the counts are project-level, not admin-level (any admin
+    on the project sees the same numbers).
+    """
+    import time as _time
+
+    registry = load_registry()
+    proj = registry.get(project_key)
+    if not proj:
+        raise HTTPException(status_code=404, detail="Project not found in registry.")
+
+    # Access check — owner sees all, admins must be on the project
+    if not is_owner(user) and user not in proj.get("admins", []):
+        raise HTTPException(status_code=403, detail="Not an admin of this project.")
+
+    # Cache hit
+    cached = _members_cache.get(project_key)
+    if cached and (_time.time() - cached[0]) < _MEMBERS_TTL_SEC:
+        return JSONResponse(cached[1])
+
+    config = load_config(user)
+    platforms = proj.get("platforms", {})
+    counts = {"morta": None, "revizto": None, "forma": None}
+
+    # ── Morta ────────────────────────────────────────────────────────
+    morta_hub = platforms.get("morta", {}).get("hub_id", "")
+    if morta_hub:
+        api_key = config.get("morta", {}).get("api_key", "")
+        if not api_key:
+            api_key = load_config(OWNER_EMAIL).get("morta", {}).get("api_key", "")
+        if api_key:
+            try:
+                r = http_requests.get(
+                    f"https://api.morta.io/v1/hub/{morta_hub}/members",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                    timeout=10,
+                )
+                if r.status_code == 200:
+                    counts["morta"] = len(r.json().get("data", []))
+            except Exception as e:
+                print(f"[members/{project_key}] Morta error: {e}")
+
+    # ── Revizto ──────────────────────────────────────────────────────
+    rev_uuid   = platforms.get("revizto", {}).get("project_uuid", "")
+    rev_region = platforms.get("revizto", {}).get("region", "dubai")
+    if rev_uuid:
+        try:
+            token = revizto_get_token_for_region(config, rev_region, email=user)
+            if token:
+                base_url = f"https://api.{rev_region}.revizto.com/v5"
+                r = http_requests.get(
+                    f"{base_url}/project/{rev_uuid}/role/member/list",
+                    headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+                    timeout=10,
+                )
+                if r.status_code == 200:
+                    members_data = r.json().get("data", {})
+                    counts["revizto"] = len(members_data) if isinstance(members_data, dict) else 0
+        except Exception as e:
+            print(f"[members/{project_key}] Revizto error: {e}")
+
+    # ── Forma ────────────────────────────────────────────────────────
+    forma_pid = platforms.get("forma", {}).get("project_id", "")
+    if forma_pid:
+        try:
+            token = forma_get_token(config)
+            if token:
+                clean_pid = forma_pid.lstrip("b.") if forma_pid.startswith("b.") else forma_pid
+                offset = 0
+                total = 0
+                while True:
+                    r = http_requests.get(
+                        f"https://developer.api.autodesk.com/construction/admin/v1/projects/{clean_pid}/users",
+                        headers={"Authorization": f"Bearer {token}"},
+                        params={"limit": 200, "offset": offset},
+                        timeout=10,
+                    )
+                    if r.status_code != 200:
+                        break
+                    batch = r.json().get("results", [])
+                    if not batch:
+                        break
+                    total += len(batch)
+                    offset += len(batch)
+                    if len(batch) < 200:
+                        break
+                counts["forma"] = total
+        except Exception as e:
+            print(f"[members/{project_key}] Forma error: {e}")
+
+    # Cache + respond
+    _members_cache[project_key] = (_time.time(), counts)
+    return JSONResponse(counts)
+
+
+# ── Invite stats — sent + received with time filter ─────────────────────
+@app.get("/api/invites/stats")
+async def api_invites_stats(
+    period: str = "30d",                       # one of '7d', '30d', 'all'
+    user: str = Depends(require_user)
+):
+    """Count invites SENT and RECEIVED by the current admin, scoped to
+    their registry projects, within the requested time window.
+
+    SENT     = entries where this admin acted as the inviter. The invite
+               log doesn't currently track who sent the invite, so we
+               approximate by counting all invite events on projects this
+               admin manages (matches what /profile uses).
+    RECEIVED = entries where the invited email == this admin's email.
+
+    period: '7d', '30d', or 'all'. Anything else is treated as '30d'.
+    """
+    from datetime import timedelta
+
+    log = load_invite_log() or []
+
+    # Resolve scope (registry projects user admins) — same logic as /profile
+    registry = load_registry()
+    if is_owner(user):
+        scoped_keys = set(registry.keys())
+    else:
+        scoped_keys = {k for k, v in registry.items() if user in v.get("admins", [])}
+
+    # Build the time-window cutoff
+    now = datetime.now()
+    if period == "7d":
+        cutoff = now - timedelta(days=7)
+    elif period == "all":
+        cutoff = None
+    else:
+        cutoff = now - timedelta(days=30)
+        period = "30d"   # normalise
+
+    def in_window(entry):
+        if cutoff is None:
+            return True
+        try:
+            d = datetime.strptime(entry.get("date", "")[:19], "%Y-%m-%d %H:%M:%S")
+            return d >= cutoff
+        except (ValueError, TypeError):
+            return False
+
+    sent = 0
+    received = 0
+    user_lower = user.lower()
+    for e in log:
+        if not in_window(e):
+            continue
+        # received: the invitee email is this admin
+        if (e.get("email") or "").lower() == user_lower:
+            received += 1
+        # sent: any entry on a project this admin manages (proxy for
+        # "this admin's team sent an invite", since invite_log doesn't
+        # record who clicked the button)
+        if e.get("project_key") in scoped_keys:
+            sent += 1
+
+    return JSONResponse({
+        "period":   period,
+        "sent":     sent,
+        "received": received,
+    })
+
+
 # ---------------------------------------------------------------------------
 # API — Fetch & Save Projects (live API calls, triggered from Settings)
 # ---------------------------------------------------------------------------

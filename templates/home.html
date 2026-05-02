@@ -62,12 +62,26 @@
         </div>
         <div class="cc-scope-hint" id="cc-members-hint">{% if active_project %}{{ active_project }}{% else %}Select a project from the sidebar{% endif %}</div>
     </div>
-    <div class="cc-scope-tile">
-        <div class="cc-scope-label">Invites sent (30d)</div>
-        <div class="cc-scope-value">{{ recent_invites|length if recent_invites else '—' }}</div>
-        <div class="cc-scope-hint">
-            {% set ok = recent_invites|selectattr('morta_status', 'equalto', 'success')|list|length if recent_invites else 0 %}
-            {{ ok }} provisioned
+    <div class="cc-scope-tile cc-scope-tile--invites" id="cc-invites-tile">
+        <div class="cc-scope-label-row">
+            <div class="cc-scope-label">Invites</div>
+            <select class="cc-period-select" id="cc-invites-period" aria-label="Invite stats time window">
+                <option value="7d">7D</option>
+                <option value="30d" selected>30D</option>
+                <option value="all">All</option>
+            </select>
+        </div>
+        <div class="cc-invites-row">
+            <div class="cc-invites-cell">
+                <span class="cc-invites-arrow">↗</span>
+                <span class="cc-invites-label">SENT</span>
+                <span class="cc-invites-count cc-scramble-num" id="cc-inv-sent" data-target="">—</span>
+            </div>
+            <div class="cc-invites-cell">
+                <span class="cc-invites-arrow cc-invites-arrow--in">↙</span>
+                <span class="cc-invites-label">RECEIVED</span>
+                <span class="cc-invites-count cc-scramble-num" id="cc-inv-received" data-target="">—</span>
+            </div>
         </div>
     </div>
 </div>
@@ -702,7 +716,41 @@
                 renderActivity();
             }
         } catch (err) {}
+    // ── 4. INVITES STATS — Sent + Received with time filter ──────────
+    // Fetches /api/invites/stats?period=7d|30d|all and animates the
+    // numbers into the two cells. Re-fetches when the dropdown changes.
+
+    async function fetchInvitesStats(period) {
+        const sentEl     = document.getElementById('cc-inv-sent');
+        const receivedEl = document.getElementById('cc-inv-received');
+        if (!sentEl || !receivedEl) return;
+
+        // Visual reset to em-dash before scramble lands
+        sentEl.textContent = '—';
+        receivedEl.textContent = '—';
+
+        try {
+            const r = await fetch('/api/invites/stats?period=' + encodeURIComponent(period), { credentials: 'same-origin' });
+            if (!r.ok) return;
+            const data = await r.json();
+            sentEl.dataset.target = data.sent;
+            receivedEl.dataset.target = data.received;
+            scrambleNumber(sentEl, data.sent, 500);
+            scrambleNumber(receivedEl, data.received, 500);
+        } catch (err) {
+            // Silently leave dashes
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        const sel = document.getElementById('cc-invites-period');
+        if (sel) {
+            // Initial fetch with whatever the dropdown says
+            fetchInvitesStats(sel.value);
+            sel.addEventListener('change', () => fetchInvitesStats(sel.value));
+        }
     });
+
 })();
 </script>
 
