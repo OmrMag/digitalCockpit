@@ -60,16 +60,35 @@ AZURE_STORAGE_CONNECTION_STRING = os.environ.get(
 BLOB_CONTAINER = "cockpit-data"
 _blob_client = None
 
+# Eagerly import the Azure SDK at module load. The import itself takes
+# ~200-300ms the first time (it's a chunky library). Doing it here means
+# the cost is paid ONCE when the worker starts, not on the first user
+# request that needs blob storage.
+if AZURE_STORAGE_CONNECTION_STRING:
+    try:
+        from azure.storage.blob import BlobServiceClient as _BlobServiceClient
+        _blob_client = _BlobServiceClient.from_connection_string(
+            AZURE_STORAGE_CONNECTION_STRING
+        )
+        print(f"[Blob] Connected at module import (cold-start tax paid here, not on first request).")
+    except Exception as e:
+        print(f"[Blob] Could not connect at module import: {e}")
+
 def get_blob_service():
+    """Returns the cached BlobServiceClient. The import + connect happens
+    once at module load (above), so this is a near-free dictionary
+    lookup on every call."""
     global _blob_client
     if _blob_client is None and AZURE_STORAGE_CONNECTION_STRING:
+        # Fallback in case the eager init above failed but credentials
+        # later become valid. Should be very rare.
         try:
             from azure.storage.blob import BlobServiceClient
             _blob_client = BlobServiceClient.from_connection_string(
                 AZURE_STORAGE_CONNECTION_STRING
             )
         except Exception as e:
-            print(f"[Blob] Could not connect: {e}")
+            print(f"[Blob] Could not connect (lazy retry): {e}")
     return _blob_client
 
 def blob_read(name: str) -> dict | list | None:
@@ -373,6 +392,27 @@ try:
     migrate_users_to_admins()
 except Exception as _migrate_err:
     print(f"[migrate] Migration failed: {type(_migrate_err).__name__}: {_migrate_err}")
+
+
+# ── Pre-warm the cache at module load ────────────────────────────────
+# The actual call is at the END of this module (after all loaders are
+# defined). Keep the function definition here for proximity to the
+# cache machinery.
+def _prewarm_cache():
+    """Pre-load the common shared blobs into _blob_cache.
+
+    Per-user files (config_*.json) can't be pre-warmed because we don't
+    know which user will hit the worker first. They'll be cached on the
+    first hit per user. The shared files below are the same for everyone.
+    """
+    try:
+        load_users()
+        load_registry()
+        load_invite_log()
+        _load_portal_requests()
+        print(f"[prewarm] Cache pre-warmed with {len(_blob_cache)} entries.")
+    except Exception as e:
+        print(f"[prewarm] Failed (non-fatal): {type(e).__name__}: {e}")
 
 def hash_password(pw: str) -> str:
     return hashlib.sha256(pw.encode()).hexdigest()
@@ -3488,6 +3528,14 @@ async def api_user_search(email: str, user: str = Depends(require_user)):
 # ---------------------------------------------------------------------------
 # Run
 # ---------------------------------------------------------------------------
+
+# Pre-warm the cache now that all loaders are defined. This pays the
+# blob round-trip cost once at worker startup so the first user request
+# lands on an already-warm cache.
+try:
+    _prewarm_cache()
+except Exception as _prewarm_err:
+    print(f"[prewarm] Outer error (non-fatal): {type(_prewarm_err).__name__}: {_prewarm_err}")
 
 if __name__ == "__main__":
     import uvicorn
