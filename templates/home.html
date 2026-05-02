@@ -684,6 +684,8 @@
     // initial page load if a project is already selected — otherwise
     // a refresh would leave the member counts as dashes forever.
 
+    let _membersPollTimer = null;
+
     async function fetchProjectMembers(projectKey, projectName) {
         // Update the project-name hint
         const hint = document.getElementById('cc-members-hint');
@@ -700,25 +702,57 @@
             }
         });
 
+        // Cancel any in-flight poll loop from a previous project
+        if (_membersPollTimer) {
+            clearTimeout(_membersPollTimer);
+            _membersPollTimer = null;
+        }
+
         if (!projectKey) return;
 
-        // Live API fetch (server-side cached 5 minutes per project)
-        try {
-            const r = await fetch('/api/project/' + encodeURIComponent(projectKey) + '/members', { credentials: 'same-origin' });
-            if (!r.ok) return;
-            const counts = await r.json();
+        // The endpoint returns immediately with cached values (or all-None
+        // on first hit), and starts a background refresh server-side. We
+        // poll every 2.5s until we get fresh data or hit the max attempts.
+        async function loadOnce() {
+            try {
+                const r = await fetch('/api/project/' + encodeURIComponent(projectKey) + '/members', { credentials: 'same-origin' });
+                if (!r.ok) return { fresh: true };       // 4xx/5xx — give up quietly
+                return await r.json();
+            } catch {
+                return { fresh: true };                  // network error — give up
+            }
+        }
+
+        function applyCounts(counts) {
             ['morta', 'revizto', 'forma'].forEach(p => {
                 const el = document.getElementById('cc-mem-' + p);
                 if (el && counts[p] !== undefined && counts[p] !== null) {
-                    el.dataset.target = counts[p];
-                    scrambleNumber(el, counts[p], 600);
+                    if (el.dataset.target !== String(counts[p])) {
+                        el.dataset.target = counts[p];
+                        scrambleNumber(el, counts[p], 600);
+                    }
                 }
             });
-        } catch (err) {
-            // Silently leave dashes in place
         }
 
-        // Also re-fetch activity scoped to this project
+        const initial = await loadOnce();
+        applyCounts(initial);
+
+        // Poll up to 12 times (= 30s max) until fresh or no longer refreshing
+        if (!initial.fresh) {
+            let attempts = 0;
+            const poll = async () => {
+                attempts++;
+                const r = await loadOnce();
+                applyCounts(r);
+                if (!r.fresh && r.refreshing && attempts < 12) {
+                    _membersPollTimer = setTimeout(poll, 2500);
+                }
+            };
+            _membersPollTimer = setTimeout(poll, 2500);
+        }
+
+        // Re-fetch activity scoped to this project (separate, non-blocking)
         try {
             const r = await fetch('/api/invite/log?project_key=' + encodeURIComponent(projectKey) + '&limit=50', { credentials: 'same-origin' });
             if (r.ok) {

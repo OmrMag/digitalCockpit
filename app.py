@@ -73,7 +73,14 @@ def get_blob_service():
     return _blob_client
 
 def blob_read(name: str) -> dict | list | None:
-    """Read a JSON blob. Returns None if not found or blob storage unavailable."""
+    """Read a JSON blob. Returns None if not found or blob storage unavailable.
+
+    NOTE: This is the SYNC version. Safe to call from sync code or in
+    cases where event-loop blocking isn't a concern (e.g. one-off
+    startup migration). Async route handlers should prefer the cached
+    loaders (load_users / load_registry / load_config / load_invite_log)
+    which avoid the network call most of the time.
+    """
     svc = get_blob_service()
     if not svc:
         return None
@@ -1671,27 +1678,11 @@ async def home(request: Request, user: str = Depends(require_user)):
     }
 
     # ── Platform-members counts for the active project (sidebar selection) ─
-    # Each platform's count is computed from cached data we already have
-    # locally — no live API calls on home page render. Numbers update via
-    # the `cockpit:projectChanged` event handler in home.html when the user
-    # picks a different project from the sidebar.
-    active_key = ctx.get("active_project_key", "")
+    # The JS in home.html calls /api/project/{key}/members on page load
+    # and on project change. That endpoint returns cached counts instantly
+    # and refreshes in the background. So we don't need to do any server-side
+    # member-count work here — pass empty values and the JS fills them in.
     plat_members = {"morta": None, "revizto": None, "forma": None}
-    if active_key:
-        # Morta: count entries in morta_members.json scoped to the active hub.
-        try:
-            mp = BASE_DIR / "morta_members.json"
-            if mp.exists():
-                with open(mp) as f:
-                    mdata = json.load(f)
-                # File can be a flat list or a dict keyed by hub_id — handle both
-                if isinstance(mdata, list):
-                    plat_members["morta"] = len(mdata)
-                elif isinstance(mdata, dict):
-                    hub = ctx.get("morta_hub_id", "")
-                    plat_members["morta"] = len(mdata.get(hub, [])) if hub else None
-        except Exception:
-            pass
 
     return templates.TemplateResponse(request=request, name="home.html", context={
         "active_page": "home", "config": config,
@@ -2762,53 +2753,91 @@ async def api_projects(user: str = Depends(require_user)):
     return JSONResponse({"projects": projects, "active_context": context})
 
 
+# ── Diagnostic endpoint — reports timings to find slow paths ──────────
+@app.get("/api/_diag")
+async def api_diag(user: str = Depends(require_user)):
+    """Run a quick suite of timed operations and return ms per call.
+
+    Useful for confirming the cache is doing its job, comparing cold
+    vs warm reads, and isolating where a slow page load is spending
+    its time. Owner-only output is detailed; admins get a summary.
+    """
+    import time as _time
+
+    timings = {}
+
+    def t(label, fn):
+        s = _time.perf_counter()
+        result = fn()
+        timings[label] = round((_time.perf_counter() - s) * 1000, 1)
+        return result
+
+    # Cache state before
+    cache_before = list(_blob_cache.keys())
+    timings["_cache_keys_before"] = cache_before
+    timings["_cache_size"] = len(cache_before)
+
+    # Time individual loaders (will hit cache if warm, blob/disk if cold)
+    t("load_users",          lambda: load_users())
+    t("load_registry",       lambda: load_registry())
+    t("load_config",         lambda: load_config(user))
+    t("load_invite_log",     lambda: load_invite_log())
+    t("_load_portal_reqs",   lambda: _load_portal_requests())
+    t("get_user_record",     lambda: get_user_record(user))
+    t("get_user_first_name", lambda: get_user_first_name(user))
+
+    # Force a cold read directly (bypasses cache)
+    if USE_BLOB:
+        t("blob_read_admins_RAW", lambda: blob_read("admins.json"))
+        t("blob_read_registry_RAW", lambda: blob_read("projects_registry.json"))
+
+    timings["_use_blob"] = USE_BLOB
+    timings["_members_cache_size"] = len(_members_cache)
+    timings["_members_refreshing"] = list(_members_refreshing)
+
+    return JSONResponse(timings)
+
+
 # ── Per-project member counts (live API + 5-min cache) ─────────────────
 # Used by /home's "Members on active project" tile to show live counts
 # when the user picks a project from the sidebar. Cache is in-memory so
 # it resets on every server restart — that's fine, 5 minutes is short.
 _members_cache: dict = {}      # key: project_key -> (timestamp, counts dict)
 _MEMBERS_TTL_SEC = 300         # 5 minutes
+_members_refreshing: set = set()   # project_keys currently being refreshed in background
 
 
-@app.get("/api/project/{project_key}/members")
-async def api_project_members(project_key: str, user: str = Depends(require_user)):
-    """Return per-platform member counts for a registry project.
+async def _refresh_members_background(project_key: str, user: str):
+    """Background task: do the live API fetches and update the cache.
 
-    Response shape: {"morta": int|None, "revizto": int|None, "forma": int|None}
-    Each value is the count for that platform's project, or None if the
-    platform isn't configured / the API call failed.
-
-    Cached for 5 minutes per project_key. Cache survives across users
-    because the counts are project-level, not admin-level (any admin
-    on the project sees the same numbers).
+    Runs Morta/Revizto/Forma in parallel via asyncio.gather. Each platform
+    call uses a thread executor since the underlying http_requests/blob
+    libraries are sync. Marks the project_key as 'refreshing' so we don't
+    fire duplicate background fetches for the same project.
     """
     import time as _time
+    import asyncio as _asyncio
+    if project_key in _members_refreshing:
+        return
+    _members_refreshing.add(project_key)
+    try:
+        registry = load_registry()
+        proj = registry.get(project_key)
+        if not proj:
+            return
+        config = load_config(user)
+        platforms = proj.get("platforms", {})
 
-    registry = load_registry()
-    proj = registry.get(project_key)
-    if not proj:
-        raise HTTPException(status_code=404, detail="Project not found in registry.")
+        # Each helper returns int or None and runs sync work in a thread
+        loop = _asyncio.get_event_loop()
 
-    # Access check — owner sees all, admins must be on the project
-    if not is_owner(user) and user not in proj.get("admins", []):
-        raise HTTPException(status_code=403, detail="Not an admin of this project.")
-
-    # Cache hit
-    cached = _members_cache.get(project_key)
-    if cached and (_time.time() - cached[0]) < _MEMBERS_TTL_SEC:
-        return JSONResponse(cached[1])
-
-    config = load_config(user)
-    platforms = proj.get("platforms", {})
-    counts = {"morta": None, "revizto": None, "forma": None}
-
-    # ── Morta ────────────────────────────────────────────────────────
-    morta_hub = platforms.get("morta", {}).get("hub_id", "")
-    if morta_hub:
-        api_key = config.get("morta", {}).get("api_key", "")
-        if not api_key:
-            api_key = load_config(OWNER_EMAIL).get("morta", {}).get("api_key", "")
-        if api_key:
+        def fetch_morta():
+            morta_hub = platforms.get("morta", {}).get("hub_id", "")
+            if not morta_hub:
+                return None
+            api_key = config.get("morta", {}).get("api_key", "") or load_config(OWNER_EMAIL).get("morta", {}).get("api_key", "")
+            if not api_key:
+                return None
             try:
                 r = http_requests.get(
                     f"https://api.morta.io/v1/hub/{morta_hub}/members",
@@ -2816,17 +2845,20 @@ async def api_project_members(project_key: str, user: str = Depends(require_user
                     timeout=10,
                 )
                 if r.status_code == 200:
-                    counts["morta"] = len(r.json().get("data", []))
+                    return len(r.json().get("data", []))
             except Exception as e:
                 print(f"[members/{project_key}] Morta error: {e}")
+            return None
 
-    # ── Revizto ──────────────────────────────────────────────────────
-    rev_uuid   = platforms.get("revizto", {}).get("project_uuid", "")
-    rev_region = platforms.get("revizto", {}).get("region", "dubai")
-    if rev_uuid:
-        try:
-            token = revizto_get_token_for_region(config, rev_region, email=user)
-            if token:
+        def fetch_revizto():
+            rev_uuid = platforms.get("revizto", {}).get("project_uuid", "")
+            rev_region = platforms.get("revizto", {}).get("region", "dubai")
+            if not rev_uuid:
+                return None
+            try:
+                token = revizto_get_token_for_region(config, rev_region, email=user)
+                if not token:
+                    return None
                 base_url = f"https://api.{rev_region}.revizto.com/v5"
                 r = http_requests.get(
                     f"{base_url}/project/{rev_uuid}/role/member/list",
@@ -2835,16 +2867,19 @@ async def api_project_members(project_key: str, user: str = Depends(require_user
                 )
                 if r.status_code == 200:
                     members_data = r.json().get("data", {})
-                    counts["revizto"] = len(members_data) if isinstance(members_data, dict) else 0
-        except Exception as e:
-            print(f"[members/{project_key}] Revizto error: {e}")
+                    return len(members_data) if isinstance(members_data, dict) else 0
+            except Exception as e:
+                print(f"[members/{project_key}] Revizto error: {e}")
+            return None
 
-    # ── Forma ────────────────────────────────────────────────────────
-    forma_pid = platforms.get("forma", {}).get("project_id", "")
-    if forma_pid:
-        try:
-            token = forma_get_token(config)
-            if token:
+        def fetch_forma():
+            forma_pid = platforms.get("forma", {}).get("project_id", "")
+            if not forma_pid:
+                return None
+            try:
+                token = forma_get_token(config)
+                if not token:
+                    return None
                 clean_pid = forma_pid.lstrip("b.") if forma_pid.startswith("b.") else forma_pid
                 offset = 0
                 total = 0
@@ -2864,13 +2899,63 @@ async def api_project_members(project_key: str, user: str = Depends(require_user
                     offset += len(batch)
                     if len(batch) < 200:
                         break
-                counts["forma"] = total
-        except Exception as e:
-            print(f"[members/{project_key}] Forma error: {e}")
+                return total
+            except Exception as e:
+                print(f"[members/{project_key}] Forma error: {e}")
+            return None
 
-    # Cache + respond
-    _members_cache[project_key] = (_time.time(), counts)
-    return JSONResponse(counts)
+        # Run all three in parallel via the default thread executor
+        morta_task   = loop.run_in_executor(None, fetch_morta)
+        revizto_task = loop.run_in_executor(None, fetch_revizto)
+        forma_task   = loop.run_in_executor(None, fetch_forma)
+        m, r, f = await _asyncio.gather(morta_task, revizto_task, forma_task)
+
+        counts = {"morta": m, "revizto": r, "forma": f}
+        _members_cache[project_key] = (_time.time(), counts)
+    finally:
+        _members_refreshing.discard(project_key)
+
+
+@app.get("/api/project/{project_key}/members")
+async def api_project_members(project_key: str, user: str = Depends(require_user)):
+    """Return per-platform member counts for a registry project.
+
+    Always returns immediately:
+      - If we have fresh cached counts (< 5 min old), return them.
+      - If cache is stale or missing, return last-known values (or
+        {None, None, None}) AND kick off a background refresh.
+      - Frontend can poll this endpoint every 2-3s to pick up
+        the refreshed values.
+
+    Response: {morta, revizto, forma, fresh: bool, refreshing: bool}
+    """
+    import time as _time
+    import asyncio as _asyncio
+
+    registry = load_registry()
+    proj = registry.get(project_key)
+    if not proj:
+        raise HTTPException(status_code=404, detail="Project not found in registry.")
+    if not is_owner(user) and user not in proj.get("admins", []):
+        raise HTTPException(status_code=403, detail="Not an admin of this project.")
+
+    cached = _members_cache.get(project_key)
+    now = _time.time()
+    fresh = bool(cached and (now - cached[0]) < _MEMBERS_TTL_SEC)
+
+    # Always respond immediately with whatever we have
+    counts = cached[1] if cached else {"morta": None, "revizto": None, "forma": None}
+
+    # If cache is stale (or missing), kick off a background refresh.
+    # We don't await it — the caller polls.
+    if not fresh:
+        _asyncio.create_task(_refresh_members_background(project_key, user))
+
+    return JSONResponse({
+        **counts,
+        "fresh": fresh,
+        "refreshing": project_key in _members_refreshing,
+    })
 
 
 # ── Invite stats — sent + received with time filter ─────────────────────

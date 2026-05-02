@@ -287,12 +287,12 @@
     // ── Load projects from registry ───────────────────────────────
     async function loadRegistryProjects() {
         try {
-            // Load registry
-            const regRes = await fetch('/api/registry');
+            // Fetch registry + context in parallel — they're independent
+            const [regRes, ctxRes] = await Promise.all([
+                fetch('/api/registry'),
+                fetch('/api/context'),
+            ]);
             _registry = regRes.ok ? await regRes.json() : {};
-
-            // Load saved active context
-            const ctxRes  = await fetch('/api/context');
             const ctxData = ctxRes.ok ? await ctxRes.json() : {};
             const activeKey = ctxData.active_project_key || '';
 
