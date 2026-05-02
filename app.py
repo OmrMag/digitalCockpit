@@ -27,6 +27,34 @@ from Profile_Status_Check import check_admin_status
 
 app = FastAPI(title="Digital Construction Cockpit", version="0.2")
 
+
+# ── Request timing middleware ────────────────────────────────────────
+# Every response gets a `Server-Timing` header that browsers parse and
+# display in DevTools → Network tab → Timing column. Values are in
+# milliseconds. The header looks like:
+#
+#     Server-Timing: total;dur=42.7
+#
+# Browser DevTools also surfaces these in the waterfall view, so you
+# can see at a glance which endpoints are slow without opening each
+# response. Also logs slow requests (>500ms) to stderr so they show up
+# in Azure log stream — useful for spotting regressions without active
+# monitoring.
+#
+# Adds <1ms of overhead per request (one perf_counter call before,
+# one after, one header set).
+@app.middleware("http")
+async def server_timing_middleware(request: Request, call_next):
+    import time as _time
+    start = _time.perf_counter()
+    response = await call_next(request)
+    elapsed_ms = (_time.perf_counter() - start) * 1000
+    response.headers["Server-Timing"] = f"total;dur={elapsed_ms:.1f}"
+    # Surface slow paths in the log stream — easy to grep for in Azure
+    if elapsed_ms > 500:
+        print(f"[slow] {request.method} {request.url.path} → {elapsed_ms:.0f}ms")
+    return response
+
 BASE_DIR    = Path(__file__).parent
 EXPORTS_DIR = BASE_DIR / "exports"
 EXPORTS_DIR.mkdir(exist_ok=True)
