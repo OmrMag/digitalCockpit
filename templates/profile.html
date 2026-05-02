@@ -1,0 +1,153 @@
+{% extends "base.html" %}
+
+{% block title %}Profile — Digital Construction Cockpit{% endblock %}
+
+{% block page_title %}{{ profile.name if profile and profile.name else (current_user.split('@')[0]|capitalize if current_user else 'Profile') }}{% endblock %}
+{% block page_subtitle %}Admin profile · projects allocated{% endblock %}
+
+{% block header_actions %}
+<a href="/" class="cc-btn cc-btn--secondary" title="Back to home">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M19 12H5"/><polyline points="12 19 5 12 12 5"/>
+    </svg>
+    Back to home
+</a>
+{% endblock %}
+
+{% block content %}
+
+{% set p = profile or {} %}
+
+{# ============================================================
+   CARD 1 — Admin personal info
+   Cockpit-level info only. Project/platform-specific data lives
+   inside each project's expanded view in Card 2.
+   ============================================================ #}
+<div class="cc-card cc-profile-section">
+    <h3>Admin Info</h3>
+    <div class="cc-kv-grid">
+        <div><span>Name</span><strong>{{ p.name or (current_user.split('@')[0]|capitalize if current_user else '—') }}</strong></div>
+        <div><span>Email</span><strong>{{ current_user or '—' }}</strong></div>
+        <div><span>Role</span><strong>{{ p.role or 'Admin' }}</strong></div>
+        <div><span>Status</span>
+            {% set st = p.status or {} %}
+            {% if st.kind == 'ok' %}
+                <span class="cc-status-pill cc-status-pill--success" title="{{ st.detail or 'All platforms ready' }}"><span class="cc-dot"></span>active</span>
+            {% elif st.kind == 'action_needed' %}
+                <span class="cc-status-pill cc-status-pill--partial" title="{{ st.detail or 'One or more platforms need attention' }}"><span class="cc-dot"></span>action needed</span>
+            {% elif st.kind == 'error' %}
+                <span class="cc-status-pill cc-status-pill--error" title="{{ st.detail or 'Platform check failed' }}"><span class="cc-dot"></span>error</span>
+            {% else %}
+                <span class="cc-status-pill cc-status-pill--pending" title="Status not yet checked"><span class="cc-dot"></span>unchecked</span>
+            {% endif %}
+        </div>
+        <div><span>User ID</span><code>{{ p.user_id or '—' }}</code></div>
+        <div><span>Joined cockpit</span><strong>{{ p.member_since or '—' }}</strong></div>
+        <div><span>Last sign-in</span><strong>{{ p.last_seen or '—' }}</strong></div>
+        <div><span>Time zone</span><strong>{{ p.timezone or '—' }}</strong></div>
+        <div><span>2FA</span><strong>{{ p.mfa or 'Not configured' }}</strong></div>
+        <div><span>Events (all-time)</span><strong>{{ p.activity.events if p.activity and p.activity.events is defined else '—' }}</strong></div>
+        <div><span>Extractions (30d)</span><strong>{{ p.activity.extractions if p.activity and p.activity.extractions is defined else '—' }}</strong></div>
+        <div><span>Hubs admin</span><strong>{{ p.scope.hubs if p.scope and p.scope.hubs is defined else '—' }}</strong></div>
+    </div>
+</div>
+
+{# ============================================================
+   CARD 2 — Allocated projects (expandable rows)
+   Each row collapses to a one-line summary and expands on click
+   to show the full project record as JSON. Same pattern as the
+   pending submissions list in /manage.
+   ============================================================ #}
+<div class="cc-card cc-profile-section">
+    <h3>Allocated Projects{% if projects %} · {{ projects|length }}{% endif %}</h3>
+
+    {% if projects %}
+    <div id="projectsList">
+        {% for proj in projects %}
+        {% set _idx = loop.index0 %}
+        <div class="cc-proj-card" id="proj-card-{{ _idx }}"
+             onclick="toggleProjectPanel({{ _idx }})">
+            <div style="flex:1;min-width:0;">
+                <div class="cc-proj-name">{{ proj.name }}</div>
+                <div class="cc-proj-meta">
+                    {% if proj.id %}<span class="cc-mono-dim">ID: {{ proj.id }}</span>{% endif %}
+                    {% if proj.role %}<span class="cc-mono-dim">·</span><span class="cc-mono-dim">Your role: <strong style="color:var(--navy);font-weight:600;">{{ proj.role }}</strong></span>{% endif %}
+                </div>
+            </div>
+            <div class="cc-proj-platforms">
+                {% if proj.platforms %}
+                    {% for plat in proj.platforms %}
+                    <span class="cc-tag {{ plat }}">{{ plat|capitalize }}</span>
+                    {% endfor %}
+                {% endif %}
+            </div>
+            <svg class="cc-proj-chevron" id="proj-chev-{{ _idx }}" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <path d="M6 9l6 6 6-6"/>
+            </svg>
+        </div>
+        <div class="cc-proj-panel" id="proj-panel-{{ _idx }}">
+            <div class="cc-proj-panel-header">
+                <span class="cc-proj-panel-label">Project record · JSON</span>
+                <button class="cc-btn-icon" onclick="copyProjectJson({{ _idx }}, event)" title="Copy JSON">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                    </svg>
+                </button>
+            </div>
+            <pre class="cc-proj-json" id="proj-json-{{ _idx }}">{{ proj|tojson(indent=2) }}</pre>
+        </div>
+        {% endfor %}
+    </div>
+
+    {% else %}
+    <div class="empty-state">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/>
+        </svg>
+        <h3>No projects allocated yet</h3>
+        <p>Projects you're assigned to in the registry will appear here.</p>
+    </div>
+    {% endif %}
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Click a project row → expand its panel below; click again or click another → close.
+// Same one-at-a-time behaviour as the pending-submissions list in /manage.
+function toggleProjectPanel(idx) {
+    const card    = document.getElementById('proj-card-' + idx);
+    const panel   = document.getElementById('proj-panel-' + idx);
+    const chevron = document.getElementById('proj-chev-' + idx);
+    if (!card || !panel) return;
+
+    const isOpen = panel.classList.contains('open');
+
+    // Close all open panels first
+    document.querySelectorAll('.cc-proj-panel.open').forEach(p => p.classList.remove('open'));
+    document.querySelectorAll('.cc-proj-card.expanded').forEach(c => c.classList.remove('expanded'));
+    document.querySelectorAll('.cc-proj-chevron.rotated').forEach(c => c.classList.remove('rotated'));
+
+    if (isOpen) return;   // was open → leave closed
+
+    card.classList.add('expanded');
+    panel.classList.add('open');
+    if (chevron) chevron.classList.add('rotated');
+}
+
+function copyProjectJson(idx, ev) {
+    if (ev) ev.stopPropagation();   // don't toggle the row
+    const pre = document.getElementById('proj-json-' + idx);
+    if (!pre) return;
+    navigator.clipboard.writeText(pre.textContent).then(() => {
+        const btn = ev && ev.currentTarget;
+        if (!btn) return;
+        const orig = btn.innerHTML;
+        btn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>';
+        setTimeout(() => { btn.innerHTML = orig; }, 1200);
+    });
+}
+</script>
+{% endblock %}

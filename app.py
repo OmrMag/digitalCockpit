@@ -19,6 +19,11 @@ from fastapi.templating import Jinja2Templates
 from itsdangerous import URLSafeSerializer
 import subprocess, sys
 
+# Lightweight readiness probe for /profile (Morta API + Revizto access).
+# Lives in a separate module so it doesn't touch the import-time-cached
+# Morta_Config / Revizto_Config and can probe both Revizto regions cleanly.
+from Profile_Status_Check import check_admin_status
+
 app = FastAPI(title="Digital Construction Cockpit", version="0.2")
 
 BASE_DIR    = Path(__file__).parent
@@ -27,9 +32,9 @@ EXPORTS_DIR.mkdir(exist_ok=True)
 TEMP_DIR    = BASE_DIR / "temp"
 TEMP_DIR.mkdir(exist_ok=True)
 SCRIPT_DIRS = {
-    "revizto": BASE_DIR / "codeRevizto" / "vsCode",
-    "morta":   BASE_DIR / "codeMorta"   / "vsCode",
-    "forma":   BASE_DIR / "codeForma"   / "vsCode",
+    "revizto": BASE_DIR,
+    "morta":   BASE_DIR,
+    "forma":   BASE_DIR,
 }
 
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
@@ -1432,6 +1437,76 @@ async def home(request: Request, user: str = Depends(require_user)):
         "forma_account":  config["forma"]["account_id"][:12]  + "..." if config["forma"]["account_id"] else None,
         "recent_invites": recent_invites, "insights": [],
         "current_user": user,
+    })
+
+
+# ── Profile page — admin info + allocated projects ────────────────────────
+@app.get("/profile", response_class=HTMLResponse)
+async def profile(request: Request, user: str = Depends(require_user)):
+    config = load_config(user)
+
+    # Status: Morta API ready + at least one Revizto region ready.
+    # Returns {kind: 'ok'|'action_needed'|'error', detail, morta, revizto}.
+    # Probe takes 1–3s; never raises (errors wrap into kind='error').
+    # Pass `email` so it reads per-admin Revizto tokens, matching the
+    # naming scheme used by load_revizto_tokens()/save_revizto_tokens().
+    status = check_admin_status(config, email=user)
+
+    # Allocated projects: registry is keyed by project id, each entry has
+    # {name, platforms: {morta,revizto,forma}, admins: [emails]}.
+    # Owner sees all; admins see only registry entries where they're listed.
+    registry = load_registry()
+    if is_owner(user):
+        user_registry = registry
+    else:
+        user_registry = {k: v for k, v in registry.items() if user in v.get("admins", [])}
+
+    projects = []
+    for proj_id, proj in user_registry.items():
+        if not isinstance(proj, dict):
+            continue
+        # Inject the registry key as `id` so the template can show it.
+        projects.append({"id": proj_id, **proj})
+
+    # Activity counts — derived from invite_log scoped to this admin's
+    # registry projects. invite_log doesn't track "who sent the invite",
+    # so we can't count "invites I personally sent" — instead we count
+    # all invite events (admin-driven + portal-submitted) on projects
+    # this user admins. For the owner, that's all log entries.
+    log = load_invite_log() or []
+    if is_owner(user):
+        scoped_log = log
+    else:
+        scoped_log = [e for e in log if e.get("project_key") in user_registry]
+    invite_events_alltime = len(scoped_log)
+
+    # Hubs admin count = unique Morta hubs across the user's registry projects.
+    morta_hubs = {
+        p.get("platforms", {}).get("morta", {}).get("hub_id")
+        for p in user_registry.values()
+        if p.get("platforms", {}).get("morta", {}).get("hub_id")
+    }
+    hubs_admin = len(morta_hubs)
+
+    return templates.TemplateResponse(request=request, name="profile.html", context={
+        "active_page":  "profile",
+        "current_user": user,
+        "profile": {
+            "name":         user.split("@")[0].replace(".", " ").title(),
+            "role":         "Owner" if is_owner(user) else "Project Admin",
+            "user_id":      "—",
+            "member_since": "—",                                # wire when you have a user store
+            "last_seen":    datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "timezone":     "Asia/Dubai (UTC+4)",
+            "mfa":          "Not configured",
+            "scope":        {"hubs": hubs_admin},
+            "activity": {
+                "events":      invite_events_alltime,
+                "extractions": 0,
+            },
+            "status": status,
+        },
+        "projects": projects,
     })
 
 

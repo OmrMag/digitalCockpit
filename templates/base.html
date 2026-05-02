@@ -146,9 +146,16 @@
 
     <!-- Main Content -->
     <main class="main">
-        <div class="page-header">
-            <h1>{% block page_title %}Dashboard{% endblock %}</h1>
-            <p class="page-subtitle">{% block page_subtitle %}{% endblock %}</p>
+        {# Detect whether the child template provides header_actions content. #}
+        {% set _header_actions = self.header_actions()|trim %}
+        <div class="page-header{% if _header_actions %} has-actions{% endif %}">
+            <div class="page-header-text">
+                <h1>{% block page_title %}Dashboard{% endblock %}</h1>
+                <p class="page-subtitle">{% block page_subtitle %}{% endblock %}</p>
+            </div>
+            {% if _header_actions %}
+            <div class="page-header-actions">{% block header_actions %}{% endblock %}</div>
+            {% endif %}
         </div>
 
         <div class="page-content">
