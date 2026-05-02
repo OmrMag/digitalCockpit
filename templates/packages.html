@@ -289,11 +289,65 @@
         top: 0;
         z-index: 1;
         box-shadow: inset 0 -1px 0 var(--border-cream);
+        vertical-align: top;
+    }
+    /* Two-line header: column name on top, filter input below.
+       The wrapper keeps both pieces on the same baseline grid. */
+    .pkg-th-inner {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        min-width: 80px;
+    }
+    .pkg-th-name {
+        line-height: 1.2;
+    }
+    .pkg-th-filter {
+        appearance: none;
+        width: 100%;
+        padding: 2px 6px;
+        font: inherit;
+        font-size: 11px;
+        font-weight: 400;
+        background: white;
+        border: 1px solid var(--border-cream);
+        border-radius: 3px;
+        color: var(--text-dark);
+        outline: none;
+        box-sizing: border-box;
+    }
+    .pkg-th-filter::placeholder { color: rgba(11,37,69,0.30); font-style: italic; }
+    .pkg-th-filter:focus {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 2px rgba(74,158,255,0.18);
+    }
+    .pkg-th-filter.active {
+        background: #fff8e1;          /* subtle yellow when filter is active */
+        border-color: #f59e0b;
     }
     /* Hidden columns: th + td both collapse so the row stays tidy. */
     .pkg-preview-table th.hidden,
     .pkg-preview-table td.hidden {
         display: none;
+    }
+
+    /* "No matching rows" empty state inside the scroll body */
+    .pkg-preview-empty {
+        padding: 24px 12px;
+        text-align: center;
+        color: var(--text-dark-muted);
+        font-size: var(--fs-xs);
+    }
+    .pkg-preview-empty .em {
+        display: block;
+        font-weight: 600;
+        color: var(--navy);
+        margin-bottom: 4px;
+    }
+    .pkg-preview-empty a {
+        color: var(--accent);
+        cursor: pointer;
+        text-decoration: underline;
     }
 
     /* Loading-more indicator pinned at the bottom of the scroll area */
@@ -454,8 +508,8 @@ function renderCard(pkg) {
                         <span class="pkg-file-name">${esc(f.name)}</span>
                         <span class="pkg-file-size">${f.size_kb} kb</span>
                         <span class="pkg-file-actions">
-                            <button class="pkg-action" onclick="downloadFile(event, '${esc(pkg.id)}','${esc(f.name)}')">⤓ Download</button>
-                            <button class="pkg-action" onclick="previewFile(event, '${esc(pkg.id)}','${esc(f.name)}')">👁 Preview</button>
+                            <button class="pkg-action" onclick="downloadFile(event, '${esc(pkg.id)}','${esc(f.name)}')">Download</button>
+                            <button class="pkg-action" onclick="previewFile(event, '${esc(pkg.id)}','${esc(f.name)}')">Preview</button>
                         </span>
                     </div>
                 `).join('')}
@@ -563,7 +617,9 @@ async function renderCsvPreview(host, pkgId, filename, firstPageData) {
         hasMore:    true,
         isLoading:  false,
         hidden:     _loadHiddenCols(pkgId, filename),
+        filters:    {},        // { columnName: filterText }  — empty values are stripped
         cancelled:  false,
+        loadEpoch:  0,         // bumped on every reset; in-flight fetches with stale epoch are discarded
     };
     host.__previewState = state;
 
@@ -571,7 +627,7 @@ async function renderCsvPreview(host, pkgId, filename, firstPageData) {
     host.innerHTML = `
         <div class="pkg-preview">
             <div class="pkg-preview-bar">
-                <div class="pkg-preview-title">${esc(filename)} · ${state.total.toLocaleString()} row${state.total === 1 ? '' : 's'}</div>
+                <div class="pkg-preview-title" data-title>${esc(filename)} · ${state.total.toLocaleString()} row${state.total === 1 ? '' : 's'}</div>
                 <div class="pkg-preview-tools">
                     <button class="pkg-preview-tool-btn" data-cols-btn>Columns ▾</button>
                     <div class="pkg-cols-panel" data-cols-panel></div>
@@ -580,9 +636,16 @@ async function renderCsvPreview(host, pkgId, filename, firstPageData) {
             <div class="pkg-preview-body" data-scroll>
                 <table class="pkg-preview-table">
                     <thead>
-                        <tr>${state.columns.map((c, i) =>
-                            `<th data-col-idx="${i}" data-col-name="${esc(c)}">${esc(c)}</th>`
-                        ).join('')}</tr>
+                        <tr>${state.columns.map((c, i) => `
+                            <th data-col-idx="${i}" data-col-name="${esc(c)}">
+                                <div class="pkg-th-inner">
+                                    <span class="pkg-th-name">${esc(c)}</span>
+                                    <input type="text" class="pkg-th-filter"
+                                           data-col-filter="${esc(c)}"
+                                           placeholder="filter…">
+                                </div>
+                            </th>`).join('')}
+                        </tr>
                     </thead>
                     <tbody data-tbody></tbody>
                 </table>
@@ -594,6 +657,7 @@ async function renderCsvPreview(host, pkgId, filename, firstPageData) {
     const tbody     = host.querySelector('[data-tbody]');
     const scroller  = host.querySelector('[data-scroll]');
     const foot      = host.querySelector('[data-foot]');
+    const titleEl   = host.querySelector('[data-title]');
     const colsBtn   = host.querySelector('[data-cols-btn]');
     const colsPanel = host.querySelector('[data-cols-panel]');
 
@@ -609,8 +673,6 @@ async function renderCsvPreview(host, pkgId, filename, firstPageData) {
     }
 
     function applyHiddenColumns() {
-        // Iterate columns once; for each, toggle the .hidden class on its
-        // header cell and on every td in that column index.
         state.columns.forEach((name, i) => {
             const isHidden = state.hidden.has(name);
             const th = host.querySelector(`th[data-col-idx="${i}"]`);
@@ -625,7 +687,127 @@ async function renderCsvPreview(host, pkgId, filename, firstPageData) {
         foot.innerHTML = html;
     }
 
-    // Append first page rows
+    function _filterQuery() {
+        // Convert state.filters into URL query params: q[col]=value
+        // Empty values are skipped — state.filters never holds them anyway.
+        const params = new URLSearchParams();
+        for (const [col, val] of Object.entries(state.filters)) {
+            if (val) params.append(`q[${col}]`, val);
+        }
+        return params.toString();
+    }
+
+    function _renderEmptyState() {
+        // Show a "no matching rows" message inside the scroll body when
+        // filters are active and nothing matches.
+        tbody.innerHTML = '';
+        const hasActive = Object.keys(state.filters).length > 0;
+        if (hasActive) {
+            tbody.innerHTML = `
+                <tr><td colspan="${state.columns.length}">
+                    <div class="pkg-preview-empty">
+                        <span class="em">No matching rows</span>
+                        <span>No rows match the active column filter${Object.keys(state.filters).length === 1 ? '' : 's'}. <a data-clear-filters>Clear filters</a></span>
+                    </div>
+                </td></tr>`;
+            tbody.querySelector('[data-clear-filters]')?.addEventListener('click', (ev) => {
+                ev.stopPropagation();
+                clearAllFilters();
+            });
+        } else {
+            tbody.innerHTML = `
+                <tr><td colspan="${state.columns.length}">
+                    <div class="pkg-preview-empty"><span class="em">Empty file</span></div>
+                </td></tr>`;
+        }
+    }
+
+    function _updateTitle() {
+        const activeCount = Object.keys(state.filters).length;
+        const filteredNote = activeCount > 0
+            ? ` · <span style="color:#f59e0b;">filtered to ${state.total.toLocaleString()}</span>`
+            : '';
+        titleEl.innerHTML = `${esc(filename)} · ${state.total.toLocaleString()} row${state.total === 1 ? '' : 's'}${filteredNote}`;
+    }
+
+    function clearAllFilters() {
+        state.filters = {};
+        // Reset all filter inputs in the header
+        host.querySelectorAll('.pkg-th-filter').forEach(inp => {
+            inp.value = '';
+            inp.classList.remove('active');
+        });
+        resetAndReload();
+    }
+
+    // ── Reset + reload (called when a filter changes) ─────────────────
+    async function resetAndReload() {
+        state.loadEpoch += 1;
+        const myEpoch = state.loadEpoch;
+        state.cancelled = false;
+        state.isLoading = true;
+        state.hasMore   = true;
+        state.nextPage  = 1;
+        state.loadedRows = 0;
+        tbody.innerHTML = '';
+        setFootText(`<span class="dot"></span>Filtering…`);
+
+        const qs = _filterQuery();
+        const url = `/api/packages/${encodeURIComponent(state.pkgId)}/preview/${encodeURIComponent(state.filename)}?page=1${qs ? '&' + qs : ''}`;
+        try {
+            const res = await fetch(url);
+            // If a newer reset happened while we were waiting, drop this response
+            if (myEpoch !== state.loadEpoch) return;
+            if (!res.ok) {
+                setFootText(`<span style="color:var(--error);">Failed to filter (HTTP ${res.status})</span>`);
+                state.hasMore = false;
+                return;
+            }
+            const data = await res.json();
+            if (myEpoch !== state.loadEpoch) return;
+            state.total      = data.total || 0;
+            state.loadedRows = (data.rows || []).length;
+            state.nextPage   = 2;
+            state.hasMore    = state.loadedRows < state.total && (data.rows || []).length > 0;
+
+            if (state.loadedRows === 0) {
+                _renderEmptyState();
+                setFootText('');
+            } else {
+                appendRows(data.rows || []);
+                if (!state.hasMore) {
+                    setFootText(`<span style="opacity:0.6;">End of file · ${state.total.toLocaleString()} row${state.total === 1 ? '' : 's'}</span>`);
+                } else {
+                    setFootText(`<span style="opacity:0.5;">Scroll for more…</span>`);
+                }
+            }
+            _updateTitle();
+        } catch (err) {
+            if (myEpoch !== state.loadEpoch) return;
+            setFootText(`<span style="color:var(--error);">Failed: ${esc(err.message)}</span>`);
+            state.hasMore = false;
+        } finally {
+            if (myEpoch === state.loadEpoch) state.isLoading = false;
+        }
+    }
+
+    // Wire filter inputs — debounced 250ms so each keystroke doesn't fire
+    let _filterTimer = null;
+    host.querySelectorAll('.pkg-th-filter').forEach(inp => {
+        inp.addEventListener('click', (ev) => ev.stopPropagation());
+        inp.addEventListener('input', () => {
+            const col = inp.dataset.colFilter;
+            const val = inp.value.trim();
+            if (val) state.filters[col] = val;
+            else     delete state.filters[col];
+            inp.classList.toggle('active', !!val);
+
+            clearTimeout(_filterTimer);
+            _filterTimer = setTimeout(() => resetAndReload(), 250);
+        });
+    });
+
+    // Append first page rows (initial load — no filter active)
     appendRows(firstPageData.rows || []);
     state.loadedRows = (firstPageData.rows || []).length;
     state.nextPage   = 2;
@@ -640,37 +822,38 @@ async function renderCsvPreview(host, pkgId, filename, firstPageData) {
     // ── Infinite scroll ──────────────────────────────────────────────
     async function loadMore() {
         if (state.cancelled || state.isLoading || !state.hasMore) return;
+        const myEpoch = state.loadEpoch;
         state.isLoading = true;
         setFootText(`<span class="dot"></span>Loading more…`);
         try {
-            const url = `/api/packages/${encodeURIComponent(state.pkgId)}/preview/${encodeURIComponent(state.filename)}?page=${state.nextPage}`;
+            const qs = _filterQuery();
+            const url = `/api/packages/${encodeURIComponent(state.pkgId)}/preview/${encodeURIComponent(state.filename)}?page=${state.nextPage}${qs ? '&' + qs : ''}`;
             const res = await fetch(url);
-            if (state.cancelled) return;
+            // If a reset happened mid-fetch, discard this batch entirely
+            if (myEpoch !== state.loadEpoch || state.cancelled) return;
             if (!res.ok) {
                 setFootText(`<span style="color:var(--error);">Failed to load more (HTTP ${res.status})</span>`);
                 state.hasMore = false;
                 return;
             }
             const data = await res.json();
-            if (state.cancelled) return;
+            if (myEpoch !== state.loadEpoch || state.cancelled) return;
             const newRows = data.rows || [];
             appendRows(newRows);
             state.loadedRows += newRows.length;
             state.nextPage   += 1;
-            // Source of truth for hasMore: server's reported total, since a
-            // short final page means we're done even if newRows.length > 0.
-            state.hasMore = state.loadedRows < state.total && newRows.length > 0;
+            state.hasMore = state.loadedRows < (data.total || state.total) && newRows.length > 0;
             if (!state.hasMore) {
-                setFootText(`<span style="opacity:0.6;">End of file · ${state.total.toLocaleString()} row${state.total === 1 ? '' : 's'}</span>`);
+                setFootText(`<span style="opacity:0.6;">End of file · ${(data.total || state.total).toLocaleString()} row${(data.total || state.total) === 1 ? '' : 's'}</span>`);
             } else {
                 setFootText(`<span style="opacity:0.5;">Scroll for more…</span>`);
             }
         } catch (err) {
-            if (state.cancelled) return;
+            if (myEpoch !== state.loadEpoch || state.cancelled) return;
             setFootText(`<span style="color:var(--error);">Failed: ${esc(err.message)}</span>`);
             state.hasMore = false;
         } finally {
-            state.isLoading = false;
+            if (myEpoch === state.loadEpoch) state.isLoading = false;
         }
     }
 
@@ -719,7 +902,6 @@ async function renderCsvPreview(host, pkgId, filename, firstPageData) {
         if (isOpen) renderColsPanel();
     });
 
-    // Close the dropdown on outside click
     function outsideClick(ev) {
         if (!colsPanel.contains(ev.target) && ev.target !== colsBtn) {
             colsPanel.classList.remove('open');
@@ -729,9 +911,6 @@ async function renderCsvPreview(host, pkgId, filename, firstPageData) {
 
     // Restore any previously-hidden columns
     applyHiddenColumns();
-
-    // If the first page was already enough to show everything, no scroll
-    // listener will ever fire — but also no infinite scroll is needed.
 }
 
 async function deletePackage(e, pkgId) {

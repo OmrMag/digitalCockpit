@@ -3322,11 +3322,17 @@ async def api_package_download(pkg_id: str, filename: str, user: str = Depends(r
 
 @app.get("/api/packages/{pkg_id}/preview/{filename}")
 async def api_package_preview(pkg_id: str, filename: str,
+                              request: Request,
                               page: int = 1, page_size: int = 25,
                               user: str = Depends(require_user)):
     """Inline preview for a baked package file.
 
-    For .csv: returns paginated rows + column list.
+    For .csv: returns paginated rows + column list. Supports per-column
+              filtering via query params of the form `q[<column>]=<value>`.
+              Multiple filters AND together (case-insensitive substring
+              match). Filtered rows are counted into `total` so the
+              frontend's infinite-scroll knows when to stop.
+
     For .json: returns the parsed JSON (no pagination — clients render trees).
     """
     index = load_packages_index()
@@ -3353,15 +3359,51 @@ async def api_package_preview(pkg_id: str, filename: str,
 
     if fpath.suffix == ".csv":
         import csv as _csv
+
+        # ── Parse per-column filters from query string ────────────────────
+        # Accepts both q[colname]=value and q.colname=value. Empty values
+        # are dropped (treated as "no filter for that column"). Values are
+        # lowercased once for case-insensitive substring matching.
+        column_filters: dict[str, str] = {}
+        for key, value in request.query_params.multi_items():
+            if not value:
+                continue
+            col_name = None
+            if key.startswith("q[") and key.endswith("]"):
+                col_name = key[2:-1]
+            elif key.startswith("q."):
+                col_name = key[2:]
+            if col_name:
+                column_filters[col_name] = value.lower()
+
         try:
             with open(fpath, newline="", encoding="utf-8") as f:
                 reader = _csv.reader(f)
                 rows = list(reader)
             if not rows:
                 return JSONResponse({"kind": "csv", "columns": [], "rows": [],
-                                     "total": 0, "page": 1, "page_size": page_size})
+                                     "total": 0, "page": 1, "page_size": page_size,
+                                     "filtered": bool(column_filters)})
             columns = rows[0]
             data_rows = rows[1:]
+
+            # Apply filters (if any) before paginating. We map column names
+            # to their indices once, then per-row check each (idx, needle)
+            # pair. A filter on a column not in the file is silently
+            # ignored — better UX than 400'ing the request.
+            if column_filters:
+                col_index = {name: i for i, name in enumerate(columns)}
+                checks = [(col_index[c], n) for c, n in column_filters.items() if c in col_index]
+                if checks:
+                    def _matches(row):
+                        for idx, needle in checks:
+                            if idx >= len(row):
+                                return False
+                            if needle not in (row[idx] or "").lower():
+                                return False
+                        return True
+                    data_rows = [r for r in data_rows if _matches(r)]
+
             total = len(data_rows)
             page = max(1, page)
             start = (page - 1) * page_size
@@ -3373,6 +3415,7 @@ async def api_package_preview(pkg_id: str, filename: str,
                 "total":     total,
                 "page":      page,
                 "page_size": page_size,
+                "filtered":  bool(column_filters),
             })
         except (OSError, UnicodeDecodeError) as e:
             raise HTTPException(status_code=500, detail=f"Failed to read CSV: {e}")
