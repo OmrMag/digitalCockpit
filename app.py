@@ -28,32 +28,60 @@ from Profile_Status_Check import check_admin_status
 app = FastAPI(title="Digital Construction Cockpit", version="0.2")
 
 
-# ── Request timing middleware ────────────────────────────────────────
+# ── Request timing middleware (pure ASGI implementation) ───────────────
 # Every response gets a `Server-Timing` header that browsers parse and
 # display in DevTools → Network tab → Timing column. Values are in
 # milliseconds. The header looks like:
 #
 #     Server-Timing: total;dur=42.7
 #
-# Browser DevTools also surfaces these in the waterfall view, so you
-# can see at a glance which endpoints are slow without opening each
-# response. Also logs slow requests (>500ms) to stderr so they show up
-# in Azure log stream — useful for spotting regressions without active
-# monitoring.
+# IMPORTANT: this is implemented as a pure ASGI middleware rather than
+# FastAPI's @app.middleware("http") decorator. The decorator uses
+# BaseHTTPMiddleware which is widely reported (Starlette docs, FastAPI
+# discussions, multiple benchmark articles) to add ~1+ second of
+# overhead per request on single-worker setups under concurrent load.
+# It wraps the request body in an in-memory channel, creates a task
+# group, and runs the handler in a separate coroutine — all of which
+# is overhead the request pays even when the middleware does nothing.
 #
-# Adds <1ms of overhead per request (one perf_counter call before,
-# one after, one header set).
-@app.middleware("http")
-async def server_timing_middleware(request: Request, call_next):
-    import time as _time
-    start = _time.perf_counter()
-    response = await call_next(request)
-    elapsed_ms = (_time.perf_counter() - start) * 1000
-    response.headers["Server-Timing"] = f"total;dur={elapsed_ms:.1f}"
-    # Surface slow paths in the log stream — easy to grep for in Azure
-    if elapsed_ms > 500:
-        print(f"[slow] {request.method} {request.url.path} → {elapsed_ms:.0f}ms")
-    return response
+# Pure ASGI middleware is a class with __call__ that wraps `send`. It
+# adds essentially zero overhead because there's no extra coroutine
+# layer or request cloning.
+class ServerTimingMiddleware:
+    """Adds a Server-Timing response header with the wall-clock time
+    spent in the application from start of request to first response
+    chunk. Slow requests (>500ms) are also logged to stderr."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        import time as _time
+        start = _time.perf_counter()
+
+        async def send_with_timing(message):
+            # Inject the Server-Timing header into the response start
+            if message["type"] == "http.response.start":
+                elapsed_ms = (_time.perf_counter() - start) * 1000
+                headers = list(message.get("headers", []))
+                headers.append(
+                    (b"server-timing", f"total;dur={elapsed_ms:.1f}".encode())
+                )
+                message["headers"] = headers
+                # Log slow paths so they surface in Azure log stream
+                if elapsed_ms > 500:
+                    method = scope.get("method", "?")
+                    path   = scope.get("path", "?")
+                    print(f"[slow] {method} {path} → {elapsed_ms:.0f}ms")
+            await send(message)
+
+        await self.app(scope, receive, send_with_timing)
+
+app.add_middleware(ServerTimingMiddleware)
 
 BASE_DIR    = Path(__file__).parent
 EXPORTS_DIR = BASE_DIR / "exports"
