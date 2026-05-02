@@ -9,6 +9,8 @@
     <link rel="prefetch" href="/">
     <link rel="prefetch" href="/manage">
     <link rel="prefetch" href="/scheduler">
+    <link rel="prefetch" href="/extractions">
+    <link rel="prefetch" href="/packages">
     <link rel="prefetch" href="/settings">
     {% block head %}{% endblock %}
 </head>
@@ -49,6 +51,13 @@
                     <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
                 </svg>
                 Extractions
+            </a>
+
+            <a href="/packages" class="{% if active_page == 'packages' %}active{% endif %}" title="Packages">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/>
+                </svg>
+                Packages
             </a>
 
             <a href="/settings" class="{% if active_page == 'settings' %}active{% endif %}" title="Settings">

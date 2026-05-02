@@ -531,6 +531,41 @@ table .status-dot.skipped { background: var(--text-muted); }
 }
 
 /* ==========================================================================
+   Bake button — appears next to Run on extraction cards.
+   Three visual states:
+     1. .faded   — disabled, slightly darker than card background. The
+                   default state before the user runs the extraction
+                   successfully. Communicates "available but not ready."
+     2. (active) — full color, looks like a secondary action button.
+                   Reached after a successful run on the same card.
+     3. .baked   — confirmation state shown for ~3s after a successful
+                   bake. Returns to active afterward.
+   ========================================================================== */
+.btn-bake {
+    background: white;
+    color: var(--navy);
+    border: 1px solid var(--border-cream);
+    transition: background 0.15s, color 0.15s, border-color 0.15s, opacity 0.15s;
+}
+.btn-bake:hover:not(.faded):not(:disabled) {
+    background: var(--navy);
+    color: white;
+    border-color: var(--navy);
+}
+.btn-bake.faded {
+    background: rgba(11, 37, 69, 0.04);
+    color: rgba(11, 37, 69, 0.35);
+    border-color: rgba(11, 37, 69, 0.08);
+    cursor: not-allowed;
+}
+.btn-bake.baked {
+    background: var(--success, #34d399);
+    color: white;
+    border-color: var(--success, #34d399);
+    cursor: default;
+}
+
+/* ==========================================================================
    Toggle
    ========================================================================== */
 

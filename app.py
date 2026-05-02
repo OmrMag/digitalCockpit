@@ -97,6 +97,21 @@ SCRIPT_DIRS = {
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
 
+
+# ── Favicon route alias ────────────────────────────────────────────────
+# Browsers automatically fetch /favicon.ico from the domain root for
+# every page on the site. Without this route, those requests 404.
+# Templates that include <link rel="icon" href="/static/favicon.ico">
+# will still work fine — this is a safety net so pages without the
+# explicit link (or older/cached pages) still get the icon.
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    from fastapi.responses import FileResponse
+    fav = BASE_DIR / "static" / "favicon.ico"
+    if fav.exists():
+        return FileResponse(fav, media_type="image/x-icon")
+    raise HTTPException(status_code=404)
+
 CONFIG_FILE       = BASE_DIR / "config.json"
 LOG_FILE          = BASE_DIR / "invite_log.json"
 AUTH_FILE         = BASE_DIR / "admins.json"      # renamed from users.json — see migrate_users_to_admins()
@@ -2619,6 +2634,13 @@ async def extractions_page(request: Request, user: str = Depends(require_user)):
         "active_page": "extractions", "current_user": user,
     })
 
+@app.get("/packages", response_class=HTMLResponse)
+async def packages_page(request: Request, user: str = Depends(require_user)):
+    """Packages page — shows baked extractions visible to this admin."""
+    return templates.TemplateResponse(request=request, name="packages.html", context={
+        "active_page": "packages", "current_user": user,
+    })
+
 # ---------------------------------------------------------------------------
 # Script config builder — merges admin credentials + registry project context
 # ---------------------------------------------------------------------------
@@ -2631,8 +2653,6 @@ def build_script_config(user: str) -> dict:
       2. Admin's own blob config (personal api_key, access_code, active_context)
       3. Forma shared credentials from owner config (if admin has none)
       4. Project-level IDs injected from registry for the active project key
-
-    This is what gets written to the temp COCKPIT_CONFIG file before each subprocess.
     """
     config = load_config(user)
 
@@ -2729,6 +2749,16 @@ async def api_extract(request: Request, user: str = Depends(require_user)):
     script_env["COCKPIT_EXPORTS_DIR"] = str(user_temp)
     script_env["COCKPIT_CONFIG"]      = str(config_path)
 
+    # Snapshot existing files' mtimes BEFORE the run so we can identify
+    # files that were actually created/modified by THIS extraction.
+    # Otherwise the response would include every file from every previous
+    # run that's still in the temp dir, leading to incorrect Bake input.
+    pre_run_mtimes = {}
+    for ext in [".csv", ".json"]:
+        for f in user_temp.glob(f"*{ext}"):
+            if not f.name.startswith("_"):
+                pre_run_mtimes[f.name] = f.stat().st_mtime
+
     try:
         loop = asyncio.get_event_loop()
         def run_script():
@@ -2743,19 +2773,23 @@ async def api_extract(request: Request, user: str = Depends(require_user)):
         saved  = any("saved" in l.lower() or "export" in l.lower() for l in lines)
         ok     = result.returncode == 0 or saved
 
-        # Collect any new files in the user's temp dir and build download links
-        # Exclude internal files (starting with _) like _cockpit_config.json
+        # Collect files that are new OR were modified during this run.
+        # Exclude internal files (starting with _) like _cockpit_config.json.
         files = []
         for ext in [".csv", ".json"]:
             for f in sorted(user_temp.glob(f"*{ext}")):
                 if f.name.startswith("_"):
                     continue
-                files.append({
-                    "filename": f.name,
-                    "ext":      ext.lstrip("."),
-                    "url":      f"/api/extractions/download/{f.name}",
-                    "size_kb":  round(f.stat().st_size / 1024, 1),
-                })
+                cur_mtime = f.stat().st_mtime
+                prev = pre_run_mtimes.get(f.name)
+                # New file (no prev) OR modified after this run started
+                if prev is None or cur_mtime > prev + 0.001:
+                    files.append({
+                        "filename": f.name,
+                        "ext":      ext.lstrip("."),
+                        "url":      f"/api/extractions/download/{f.name}",
+                        "size_kb":  round(f.stat().st_size / 1024, 1),
+                    })
 
         return JSONResponse({
             "status":  "success" if ok else "error",
@@ -2806,6 +2840,361 @@ async def api_extractions_files(user: str = Depends(require_user)):
                 "modified": datetime.fromtimestamp(f.stat().st_mtime).strftime("%Y-%m-%d %H:%M"),
             })
     return JSONResponse({"files": files})
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Packages — "baked" extractions, persistent across the 24h temp cleanup.
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# Flow:
+#   1. Admin runs an extraction (existing /api/extract). Files land in
+#      user's temp dir, where they expire after 24 hours.
+#   2. If the run succeeds, the frontend enables the "Bake" button.
+#   3. Admin clicks Bake → POST /api/extractions/bake. This:
+#       - Generates a pkg_id
+#       - Copies temp files into PACKAGES_DIR/{pkg_id}/
+#       - Writes an entry to packages_index.json (blob-backed)
+#   4. Packages are auto-deleted 30 days after baking.
+#
+# Storage:
+#   PACKAGES_DIR = BASE_DIR / "packages" / "{pkg_id}/"
+#       contains the actual files
+#   packages_index.json (blob)
+#       master index, one entry per pkg_id
+#
+# Visibility:
+#   - Owner sees all packages
+#   - Other admins see packages where:
+#       a) they baked it themselves, OR
+#       b) the package's project_key is in their registry-admin list
+#   - Account-wide packages with no project_key (Forma L1) are excluded
+#     from baking entirely (bake endpoint rejects them).
+
+PACKAGES_DIR = BASE_DIR / "packages"
+PACKAGES_DIR.mkdir(exist_ok=True)
+PACKAGES_RETENTION_DAYS = 30
+
+# Forma L1 scripts cannot be baked (per ALEC's call: account-wide data
+# isn't useful as a per-admin shareable package).
+FORMA_L1_SCRIPTS = {
+    "Forma_GET_Account_Projects",
+    "Forma_GET_Hub_Users",
+    "Forma_GET_2L_Status",
+    "Forma_GET_3L_Status",
+}
+
+def load_packages_index() -> dict:
+    """Load the package index (blob or local). Cached like other loaders."""
+    cached = _cache_get("packages_index.json")
+    if cached is not None:
+        return cached
+
+    if USE_BLOB:
+        data = blob_read("packages_index.json")
+        if data is not None:
+            result = data if isinstance(data, dict) else {}
+            _cache_set("packages_index.json", result)
+            return result
+    p = BASE_DIR / "packages_index.json"
+    if p.exists():
+        with open(p) as f:
+            loaded = json.load(f)
+        result = loaded if isinstance(loaded, dict) else {}
+        _cache_set("packages_index.json", result)
+        return result
+    _cache_set("packages_index.json", {})
+    return {}
+
+def save_packages_index(data: dict):
+    if USE_BLOB:
+        blob_write("packages_index.json", data)
+    else:
+        with open(BASE_DIR / "packages_index.json", "w") as f:
+            json.dump(data, f, indent=2)
+    _cache_invalidate("packages_index.json")
+
+def cleanup_expired_packages():
+    """Delete packages older than PACKAGES_RETENTION_DAYS. Runs at startup."""
+    import shutil
+    from datetime import datetime as _dt, timedelta as _td
+
+    index = load_packages_index()
+    cutoff = _dt.now() - _td(days=PACKAGES_RETENTION_DAYS)
+    removed = []
+    for pkg_id, meta in list(index.items()):
+        try:
+            baked_at = _dt.strptime(meta.get("baked_at", ""), "%Y-%m-%d %H:%M:%S")
+            if baked_at < cutoff:
+                # Delete the files dir
+                pkg_dir = PACKAGES_DIR / pkg_id
+                if pkg_dir.exists():
+                    shutil.rmtree(pkg_dir, ignore_errors=True)
+                index.pop(pkg_id, None)
+                removed.append(pkg_id)
+        except (ValueError, KeyError):
+            continue
+    if removed:
+        save_packages_index(index)
+        print(f"[packages] Cleaned up {len(removed)} expired package(s)")
+
+def _user_can_see_package(user: str, pkg: dict, registry: dict) -> bool:
+    """Visibility rule for a single package."""
+    if is_owner(user):
+        return True
+    if pkg.get("baked_by") == user:
+        return True
+    pkey = pkg.get("project_key")
+    if pkey and user in (registry.get(pkey, {}).get("admins") or []):
+        return True
+    return False
+
+
+@app.post("/api/extractions/bake")
+async def api_bake(request: Request, user: str = Depends(require_user)):
+    """Bake a successful extraction run into a permanent package.
+
+    Body: {
+        platform:     "morta" | "revizto" | "forma",
+        level:        1 | 2 | 3,
+        script:       "Morta_GET_members" (e.g.),
+        label:        "Hub Members" (display name)
+        project_key:  "rak-central" or "" if account-wide
+        project_name: "RAK Central" or "" if account-wide
+        files:        ["morta_members.csv", "morta_members.json"]
+    }
+
+    Files must currently exist in the user's temp directory. They're
+    copied — not moved — so the run output stays inspectable until
+    24-hour cleanup.
+    """
+    import shutil
+    import secrets
+    from datetime import datetime as _dt, timedelta as _td
+
+    body = await request.json()
+    platform     = body.get("platform", "")
+    level        = body.get("level", 0)
+    script       = body.get("script", "")
+    label        = body.get("label", script)
+    project_key  = body.get("project_key", "") or ""
+    project_name = body.get("project_name", "") or ""
+    files        = body.get("files") or []
+
+    # Validate platform/script
+    if platform not in ("morta", "revizto", "forma"):
+        raise HTTPException(status_code=400, detail="Invalid platform.")
+    if not script:
+        raise HTTPException(status_code=400, detail="No script specified.")
+    if not files:
+        raise HTTPException(status_code=400, detail="No files to bake.")
+
+    # Forma L1 cannot be baked
+    if script in FORMA_L1_SCRIPTS:
+        raise HTTPException(status_code=400, detail="Account-wide Forma extractions cannot be baked.")
+
+    # Validate access — non-owners must be admin of the project_key (if set)
+    if project_key and not is_owner(user):
+        registry = load_registry()
+        if user not in (registry.get(project_key, {}).get("admins") or []):
+            raise HTTPException(status_code=403, detail="Not an admin of this project.")
+
+    # Validate files exist in user's temp dir
+    user_temp = get_user_temp_dir(user)
+    src_paths = []
+    for fname in files:
+        # Defensive: only accept simple file names, no path traversal
+        safe_name = Path(fname).name
+        src = user_temp / safe_name
+        if not src.exists() or not src.is_file():
+            raise HTTPException(status_code=400, detail=f"File not in temp: {safe_name}")
+        src_paths.append(src)
+
+    # Generate pkg_id and copy files
+    now = _dt.now()
+    pkg_id = f"pkg_{now.strftime('%Y-%m-%d_%H-%M-%S')}_{secrets.token_hex(3)}"
+    pkg_dir = PACKAGES_DIR / pkg_id
+    pkg_dir.mkdir(parents=True, exist_ok=True)
+
+    file_meta = []
+    for src in src_paths:
+        dst = pkg_dir / src.name
+        shutil.copy2(src, dst)
+        file_meta.append({
+            "name":    src.name,
+            "size_kb": round(dst.stat().st_size / 1024, 1),
+        })
+
+    expires_at = (now + _td(days=PACKAGES_RETENTION_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+    pkg_entry = {
+        "id":           pkg_id,
+        "baked_by":     user,
+        "baked_at":     now.strftime("%Y-%m-%d %H:%M:%S"),
+        "expires_at":   expires_at,
+        "platform":     platform,
+        "level":        int(level) if level else 0,
+        "script":       script,
+        "label":        label,
+        "project_key":  project_key,
+        "project_name": project_name,
+        "files":        file_meta,
+    }
+
+    index = load_packages_index()
+    index[pkg_id] = pkg_entry
+    save_packages_index(index)
+
+    return JSONResponse({"status": "ok", "pkg_id": pkg_id, "expires_at": expires_at})
+
+
+@app.get("/api/packages")
+async def api_packages_list(user: str = Depends(require_user)):
+    """List packages this admin is allowed to see.
+
+    Resolves the baker's first_name for display and computes days_remaining
+    from baked_at + 30 days. Sorted newest-first.
+    """
+    from datetime import datetime as _dt, timedelta as _td
+
+    index = load_packages_index()
+    registry = load_registry()
+    admins = load_users()  # admin records — used to resolve first_name
+
+    visible = []
+    now = _dt.now()
+    for pkg in index.values():
+        if not _user_can_see_package(user, pkg, registry):
+            continue
+
+        # Compute days remaining
+        try:
+            baked_dt = _dt.strptime(pkg.get("baked_at", ""), "%Y-%m-%d %H:%M:%S")
+            expires_dt = baked_dt + _td(days=PACKAGES_RETENTION_DAYS)
+            days_remaining = max(0, (expires_dt - now).days)
+        except ValueError:
+            days_remaining = 0
+
+        # Resolve baker first name
+        baker_email = pkg.get("baked_by", "")
+        baker_rec   = admins.get(baker_email) or {}
+        baker_name  = get_user_first_name(baker_email, rec=baker_rec)
+
+        visible.append({**pkg,
+                        "baker_first_name": baker_name,
+                        "days_remaining":   days_remaining})
+
+    # Newest first
+    visible.sort(key=lambda p: p.get("baked_at", ""), reverse=True)
+    return JSONResponse({"packages": visible})
+
+
+@app.get("/api/packages/{pkg_id}/files/{filename}")
+async def api_package_download(pkg_id: str, filename: str, user: str = Depends(require_user)):
+    """Download a single file from a baked package."""
+    from fastapi.responses import FileResponse
+
+    index = load_packages_index()
+    pkg = index.get(pkg_id)
+    if not pkg:
+        raise HTTPException(status_code=404, detail="Package not found.")
+
+    registry = load_registry()
+    if not _user_can_see_package(user, pkg, registry):
+        raise HTTPException(status_code=403, detail="Not authorized to access this package.")
+
+    safe_name = Path(filename).name
+    fpath = PACKAGES_DIR / pkg_id / safe_name
+    if not fpath.exists():
+        raise HTTPException(status_code=404, detail="File not in package.")
+
+    media_type = "application/json" if fpath.suffix == ".json" else "text/csv"
+    return FileResponse(fpath, media_type=media_type, filename=safe_name)
+
+
+@app.get("/api/packages/{pkg_id}/preview/{filename}")
+async def api_package_preview(pkg_id: str, filename: str,
+                              page: int = 1, page_size: int = 25,
+                              user: str = Depends(require_user)):
+    """Inline preview for a baked package file.
+
+    For .csv: returns paginated rows + column list.
+    For .json: returns the parsed JSON (no pagination — clients render trees).
+    """
+    index = load_packages_index()
+    pkg = index.get(pkg_id)
+    if not pkg:
+        raise HTTPException(status_code=404, detail="Package not found.")
+
+    registry = load_registry()
+    if not _user_can_see_package(user, pkg, registry):
+        raise HTTPException(status_code=403, detail="Not authorized to access this package.")
+
+    safe_name = Path(filename).name
+    fpath = PACKAGES_DIR / pkg_id / safe_name
+    if not fpath.exists():
+        raise HTTPException(status_code=404, detail="File not in package.")
+
+    if fpath.suffix == ".json":
+        try:
+            with open(fpath) as f:
+                data = json.load(f)
+            return JSONResponse({"kind": "json", "data": data})
+        except (OSError, ValueError) as e:
+            raise HTTPException(status_code=500, detail=f"Failed to parse JSON: {e}")
+
+    if fpath.suffix == ".csv":
+        import csv as _csv
+        try:
+            with open(fpath, newline="", encoding="utf-8") as f:
+                reader = _csv.reader(f)
+                rows = list(reader)
+            if not rows:
+                return JSONResponse({"kind": "csv", "columns": [], "rows": [],
+                                     "total": 0, "page": 1, "page_size": page_size})
+            columns = rows[0]
+            data_rows = rows[1:]
+            total = len(data_rows)
+            page = max(1, page)
+            start = (page - 1) * page_size
+            end   = start + page_size
+            return JSONResponse({
+                "kind":      "csv",
+                "columns":   columns,
+                "rows":      data_rows[start:end],
+                "total":     total,
+                "page":      page,
+                "page_size": page_size,
+            })
+        except (OSError, UnicodeDecodeError) as e:
+            raise HTTPException(status_code=500, detail=f"Failed to read CSV: {e}")
+
+    raise HTTPException(status_code=400, detail=f"Unsupported file type: {fpath.suffix}")
+
+
+@app.delete("/api/packages/{pkg_id}")
+async def api_package_delete(pkg_id: str, user: str = Depends(require_user)):
+    """Delete a baked package. Allowed for owner OR any admin on the package's project."""
+    import shutil
+
+    index = load_packages_index()
+    pkg = index.get(pkg_id)
+    if not pkg:
+        raise HTTPException(status_code=404, detail="Package not found.")
+
+    registry = load_registry()
+    if not _user_can_see_package(user, pkg, registry):
+        raise HTTPException(status_code=403, detail="Not authorized to delete this package.")
+
+    pkg_dir = PACKAGES_DIR / pkg_id
+    if pkg_dir.exists():
+        shutil.rmtree(pkg_dir, ignore_errors=True)
+    index.pop(pkg_id, None)
+    save_packages_index(index)
+    return JSONResponse({"status": "ok", "deleted": pkg_id})
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# End Packages
+# ═══════════════════════════════════════════════════════════════════════════
 
 
 #TEMP DEBUG ROUTE TO CHECK PATHS IN DEPLOYMENT ENVIRONMENT    
@@ -3908,6 +4297,13 @@ try:
     _prewarm_cache()
 except Exception as _prewarm_err:
     print(f"[prewarm] Outer error (non-fatal): {type(_prewarm_err).__name__}: {_prewarm_err}")
+
+# Clean up expired packages (>30 days old) once at startup. Cheap operation;
+# index is small. Failures are non-fatal — just log and continue serving.
+try:
+    cleanup_expired_packages()
+except Exception as _pkg_err:
+    print(f"[packages] Cleanup error (non-fatal): {type(_pkg_err).__name__}: {_pkg_err}")
 
 if __name__ == "__main__":
     import uvicorn

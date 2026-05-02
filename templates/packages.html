@@ -1,0 +1,487 @@
+{% extends "base.html" %}
+{% block title %}Packages — Digital Construction Cockpit{% endblock %}
+{% block page_title %}Packages{% endblock %}
+{% block page_subtitle %}Baked extractions — click a card to expand, preview, or download{% endblock %}
+
+{% block head %}
+<style>
+    /* ── Filter bar ─────────────────────────────────────────────────────── */
+    .pkg-filters {
+        display: flex;
+        gap: 10px;
+        margin-bottom: 18px;
+        flex-wrap: wrap;
+        align-items: center;
+    }
+    .pkg-filters select,
+    .pkg-filters input[type="text"] {
+        padding: 7px 10px;
+        border: 1px solid var(--border-cream);
+        border-radius: var(--radius);
+        font: inherit;
+        font-size: var(--fs-sm);
+        background: #fff;
+        color: var(--navy);
+    }
+    .pkg-filters input[type="text"] { flex: 1; min-width: 180px; }
+    .pkg-filters input[type="text"]:focus,
+    .pkg-filters select:focus {
+        outline: none;
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px rgba(74,158,255,.10);
+    }
+    .pkg-filters .pkg-count {
+        font-size: var(--fs-xs);
+        color: var(--text-dark-muted);
+        margin-left: auto;
+    }
+
+    /* ── Package card ───────────────────────────────────────────────────── */
+    .pkg-card {
+        background: white;
+        border-radius: var(--radius-lg);
+        border: 1px solid var(--border-cream);
+        margin-bottom: 10px;
+        overflow: hidden;
+        box-shadow: var(--shadow);
+        transition: box-shadow var(--transition), border-color var(--transition);
+    }
+    .pkg-card:hover { box-shadow: var(--shadow-lg); }
+    .pkg-card.expanded { border-color: var(--accent); }
+
+    .pkg-head {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 14px 16px;
+        cursor: pointer;
+        user-select: none;
+    }
+    .pkg-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        flex-shrink: 0;
+    }
+    .pkg-dot.morta   { background: #4a9eff; }
+    .pkg-dot.revizto { background: #ef4444; }
+    .pkg-dot.forma   { background: #0b2545; }
+
+    .pkg-label {
+        font-size: var(--fs-sm);
+        font-weight: 600;
+        color: var(--navy);
+        flex-shrink: 0;
+    }
+    .pkg-baker {
+        font-size: var(--fs-xs);
+        color: var(--text-dark-muted);
+        flex-shrink: 0;
+    }
+    .pkg-baker::before { content: "·"; margin: 0 6px; opacity: 0.5; }
+    .pkg-project {
+        font-size: var(--fs-xs);
+        color: var(--text-dark-muted);
+    }
+    .pkg-project::before { content: "·"; margin: 0 6px; opacity: 0.5; }
+    .pkg-time {
+        font-size: var(--fs-xs);
+        color: var(--text-dark-muted);
+    }
+    .pkg-time::before { content: "·"; margin: 0 6px; opacity: 0.5; }
+
+    .pkg-spacer { flex: 1; min-width: 6px; }
+
+    .pkg-expiry {
+        font-size: var(--fs-xs);
+        font-weight: 500;
+        padding: 2px 8px;
+        border-radius: 4px;
+        background: rgba(11, 37, 69, 0.06);
+        color: var(--text-dark-muted);
+        white-space: nowrap;
+    }
+    .pkg-expiry.warn { background: rgba(251, 191, 36, 0.15); color: var(--warning); }
+    .pkg-expiry.urgent { background: rgba(248, 113, 113, 0.15); color: var(--error); }
+
+    .pkg-caret {
+        font-size: 11px;
+        color: var(--text-dark-muted);
+        transition: transform 0.15s;
+    }
+    .pkg-card.expanded .pkg-caret { transform: rotate(180deg); }
+
+    /* ── Package body (expanded) ────────────────────────────────────────── */
+    .pkg-body {
+        display: none;
+        padding: 6px 16px 16px;
+        border-top: 1px solid var(--border-cream);
+    }
+    .pkg-card.expanded .pkg-body { display: block; }
+
+    .pkg-files {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        margin-bottom: 8px;
+    }
+    .pkg-file {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 8px 10px;
+        background: rgba(11, 37, 69, 0.03);
+        border-radius: var(--radius);
+        font-size: var(--fs-sm);
+    }
+    .pkg-file-name { flex: 1; color: var(--navy); font-family: 'JetBrains Mono', monospace; font-size: var(--fs-xs); }
+    .pkg-file-size { color: var(--text-dark-muted); font-size: var(--fs-xs); }
+    .pkg-file-actions { display: flex; gap: 6px; }
+    .pkg-action {
+        appearance: none;
+        background: white;
+        border: 1px solid var(--border-cream);
+        border-radius: var(--radius);
+        padding: 4px 9px;
+        font: inherit;
+        font-size: var(--fs-xs);
+        cursor: pointer;
+        color: var(--navy);
+        transition: background 0.12s, border-color 0.12s;
+    }
+    .pkg-action:hover { background: var(--bg-cream); border-color: var(--accent); }
+    .pkg-action.delete { color: var(--error); }
+    .pkg-action.delete:hover { background: rgba(248, 113, 113, 0.08); border-color: var(--error); }
+
+    .pkg-footer {
+        display: flex;
+        justify-content: flex-end;
+        margin-top: 6px;
+    }
+
+    /* ── Inline preview ─────────────────────────────────────────────────── */
+    .pkg-preview {
+        margin-top: 10px;
+        padding: 10px;
+        background: #f8f9fb;
+        border-radius: var(--radius);
+        border: 1px solid var(--border-cream);
+        max-height: 480px;
+        overflow: auto;
+    }
+    .pkg-preview-title {
+        font-size: var(--fs-xs);
+        font-weight: 600;
+        color: var(--text-dark-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.6px;
+        margin-bottom: 8px;
+    }
+    .pkg-preview-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+        font-family: 'JetBrains Mono', monospace;
+    }
+    .pkg-preview-table th,
+    .pkg-preview-table td {
+        padding: 5px 8px;
+        border-bottom: 1px solid var(--border-cream);
+        text-align: left;
+        white-space: nowrap;
+    }
+    .pkg-preview-table th {
+        background: rgba(11, 37, 69, 0.04);
+        font-weight: 600;
+        color: var(--navy);
+        position: sticky;
+        top: 0;
+    }
+    .pkg-preview-table td { color: var(--text-dark); }
+
+    .pkg-preview-pager {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-top: 8px;
+        font-size: var(--fs-xs);
+        color: var(--text-dark-muted);
+    }
+    .pkg-preview-pager button {
+        appearance: none;
+        background: white;
+        border: 1px solid var(--border-cream);
+        border-radius: var(--radius);
+        padding: 3px 8px;
+        font: inherit;
+        font-size: var(--fs-xs);
+        cursor: pointer;
+        color: var(--navy);
+    }
+    .pkg-preview-pager button:disabled { opacity: 0.3; cursor: not-allowed; }
+
+    .pkg-preview-json {
+        white-space: pre-wrap;
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 11.5px;
+        line-height: 1.55;
+        color: var(--navy);
+        margin: 0;
+    }
+
+    /* ── Empty state ────────────────────────────────────────────────────── */
+    .pkg-empty {
+        text-align: center;
+        padding: 60px 20px;
+        color: var(--text-dark-muted);
+        font-size: var(--fs-sm);
+    }
+    .pkg-empty-title { font-weight: 600; margin-bottom: 6px; color: var(--navy); }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<div class="pkg-filters">
+    <select id="filterPlatform">
+        <option value="">All platforms</option>
+        <option value="morta">Morta</option>
+        <option value="revizto">Revizto</option>
+        <option value="forma">Forma</option>
+    </select>
+    <select id="filterProject">
+        <option value="">All projects</option>
+    </select>
+    <input type="text" id="filterSearch" placeholder="Search by script or label...">
+    <span class="pkg-count" id="pkgCount">— packages</span>
+</div>
+
+<div id="pkgList"></div>
+<div id="pkgEmpty" class="pkg-empty" style="display:none;">
+    <div class="pkg-empty-title">No packages yet</div>
+    <div>Run an extraction and click <strong>Bake</strong> to keep its output here for 30 days.</div>
+</div>
+
+<script>
+let _allPackages = [];
+
+async function loadPackages() {
+    try {
+        // Reuse base.html's registry for the project filter dropdown
+        await (window.cockpit?.ready || Promise.resolve());
+        const registry = window.cockpit?.registry || {};
+        // Populate project filter
+        const projSelect = document.getElementById('filterProject');
+        Object.entries(registry).forEach(([key, proj]) => {
+            const opt = document.createElement('option');
+            opt.value = key;
+            opt.textContent = proj.name;
+            projSelect.appendChild(opt);
+        });
+
+        const res = await fetch('/api/packages');
+        if (!res.ok) throw new Error('Failed to load packages');
+        const data = await res.json();
+        _allPackages = data.packages || [];
+        renderPackages();
+    } catch (e) {
+        console.error('Failed to load packages', e);
+        document.getElementById('pkgList').innerHTML = '<div class="pkg-empty">Failed to load packages.</div>';
+    }
+}
+
+function renderPackages() {
+    const platform = document.getElementById('filterPlatform').value;
+    const project  = document.getElementById('filterProject').value;
+    const search   = document.getElementById('filterSearch').value.trim().toLowerCase();
+
+    const filtered = _allPackages.filter(p => {
+        if (platform && p.platform !== platform) return false;
+        if (project && p.project_key !== project) return false;
+        if (search) {
+            const hay = `${p.label} ${p.script} ${p.project_name} ${p.baker_first_name}`.toLowerCase();
+            if (!hay.includes(search)) return false;
+        }
+        return true;
+    });
+
+    document.getElementById('pkgCount').textContent = filtered.length + (filtered.length === 1 ? ' package' : ' packages');
+
+    const list = document.getElementById('pkgList');
+    const empty = document.getElementById('pkgEmpty');
+    list.innerHTML = '';
+    if (!filtered.length) {
+        empty.style.display = 'block';
+        return;
+    }
+    empty.style.display = 'none';
+
+    filtered.forEach(pkg => {
+        const card = renderCard(pkg);
+        list.appendChild(card);
+    });
+}
+
+function renderCard(pkg) {
+    const card = document.createElement('div');
+    card.className = 'pkg-card';
+    card.dataset.pkgId = pkg.id;
+
+    // Expiry pill — color shifts as expiry approaches
+    const days = pkg.days_remaining ?? 0;
+    let expClass = '';
+    if (days <= 3)       expClass = 'urgent';
+    else if (days <= 7)  expClass = 'warn';
+
+    // Format baked_at — show date+time, drop seconds
+    const bakedAt = (pkg.baked_at || '').slice(0, 16);
+
+    const projectLabel = pkg.project_name || (pkg.project_key ? pkg.project_key : '—');
+
+    card.innerHTML = `
+        <div class="pkg-head">
+            <span class="pkg-dot ${esc(pkg.platform)}"></span>
+            <span class="pkg-label">${esc(pkg.label || pkg.script)}</span>
+            <span class="pkg-baker">${esc(pkg.baker_first_name || pkg.baked_by || '—')}</span>
+            <span class="pkg-project">${esc(projectLabel)}</span>
+            <span class="pkg-time">${esc(bakedAt)}</span>
+            <span class="pkg-spacer"></span>
+            <span class="pkg-expiry ${expClass}">Expires in ${days} day${days === 1 ? '' : 's'}</span>
+            <span class="pkg-caret">▾</span>
+        </div>
+        <div class="pkg-body">
+            <div class="pkg-files">
+                ${(pkg.files || []).map(f => `
+                    <div class="pkg-file">
+                        <span class="pkg-file-name">${esc(f.name)}</span>
+                        <span class="pkg-file-size">${f.size_kb} kb</span>
+                        <span class="pkg-file-actions">
+                            <button class="pkg-action" onclick="downloadFile(event, '${esc(pkg.id)}','${esc(f.name)}')">⤓ Download</button>
+                            <button class="pkg-action" onclick="previewFile(event, '${esc(pkg.id)}','${esc(f.name)}')">👁 Preview</button>
+                        </span>
+                    </div>
+                `).join('')}
+            </div>
+            <div class="pkg-preview-host"></div>
+            <div class="pkg-footer">
+                <button class="pkg-action delete" onclick="deletePackage(event, '${esc(pkg.id)}')">Delete</button>
+            </div>
+        </div>
+    `;
+
+    // Toggle expand on header click
+    card.querySelector('.pkg-head').addEventListener('click', () => {
+        card.classList.toggle('expanded');
+    });
+
+    return card;
+}
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
+function esc(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[c]));
+}
+
+function downloadFile(e, pkgId, filename) {
+    e.stopPropagation();
+    window.location.href = `/api/packages/${encodeURIComponent(pkgId)}/files/${encodeURIComponent(filename)}`;
+}
+
+async function previewFile(e, pkgId, filename) {
+    e.stopPropagation();
+    const card = document.querySelector(`.pkg-card[data-pkg-id="${pkgId}"]`);
+    if (!card) return;
+    const host = card.querySelector('.pkg-preview-host');
+    host.innerHTML = '<div class="pkg-preview"><div class="pkg-preview-title">Loading preview...</div></div>';
+    try {
+        const res = await fetch(`/api/packages/${encodeURIComponent(pkgId)}/preview/${encodeURIComponent(filename)}`);
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            host.innerHTML = `<div class="pkg-preview"><div class="pkg-preview-title">${esc(err.detail || 'Preview failed')}</div></div>`;
+            return;
+        }
+        const data = await res.json();
+        if (data.kind === 'csv') {
+            renderCsvPreview(host, pkgId, filename, data, 1);
+        } else if (data.kind === 'json') {
+            const pretty = JSON.stringify(data.data, null, 2);
+            host.innerHTML = `
+                <div class="pkg-preview">
+                    <div class="pkg-preview-title">${esc(filename)}</div>
+                    <pre class="pkg-preview-json">${esc(pretty)}</pre>
+                </div>`;
+        } else {
+            host.innerHTML = `<div class="pkg-preview"><div class="pkg-preview-title">Unsupported preview type.</div></div>`;
+        }
+    } catch (err) {
+        host.innerHTML = `<div class="pkg-preview"><div class="pkg-preview-title">Preview failed: ${esc(err.message)}</div></div>`;
+    }
+}
+
+async function renderCsvPreview(host, pkgId, filename, data, page) {
+    const totalPages = Math.max(1, Math.ceil((data.total || 0) / (data.page_size || 25)));
+    host.innerHTML = `
+        <div class="pkg-preview">
+            <div class="pkg-preview-title">${esc(filename)} — ${data.total} row${data.total === 1 ? '' : 's'}</div>
+            <table class="pkg-preview-table">
+                <thead>
+                    <tr>${data.columns.map(c => `<th>${esc(c)}</th>`).join('')}</tr>
+                </thead>
+                <tbody>
+                    ${data.rows.map(row => `<tr>${row.map(c => `<td>${esc(c)}</td>`).join('')}</tr>`).join('')}
+                </tbody>
+            </table>
+            <div class="pkg-preview-pager">
+                <span>Page ${data.page} of ${totalPages}</span>
+                <span>
+                    <button id="prevBtn-${pkgId}-${filename}" ${data.page <= 1 ? 'disabled' : ''}>← Prev</button>
+                    <button id="nextBtn-${pkgId}-${filename}" ${data.page >= totalPages ? 'disabled' : ''}>Next →</button>
+                </span>
+            </div>
+        </div>
+    `;
+
+    // Wire up paging
+    const prev = host.querySelector(`#prevBtn-${CSS.escape(pkgId)}-${CSS.escape(filename)}`);
+    const next = host.querySelector(`#nextBtn-${CSS.escape(pkgId)}-${CSS.escape(filename)}`);
+    if (prev) prev.onclick = async (e) => { e.stopPropagation(); await loadCsvPage(host, pkgId, filename, data.page - 1); };
+    if (next) next.onclick = async (e) => { e.stopPropagation(); await loadCsvPage(host, pkgId, filename, data.page + 1); };
+}
+
+async function loadCsvPage(host, pkgId, filename, page) {
+    try {
+        const res = await fetch(`/api/packages/${encodeURIComponent(pkgId)}/preview/${encodeURIComponent(filename)}?page=${page}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        renderCsvPreview(host, pkgId, filename, data, page);
+    } catch (e) { console.error('paging failed', e); }
+}
+
+async function deletePackage(e, pkgId) {
+    e.stopPropagation();
+    if (!confirm('Delete this package? This cannot be undone.')) return;
+    try {
+        const res = await fetch(`/api/packages/${encodeURIComponent(pkgId)}`, { method: 'DELETE' });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            alert(err.detail || 'Delete failed.');
+            return;
+        }
+        // Remove from list and re-render
+        _allPackages = _allPackages.filter(p => p.id !== pkgId);
+        renderPackages();
+    } catch (err) {
+        alert('Delete failed: ' + err.message);
+    }
+}
+
+// Wire up filters
+document.getElementById('filterPlatform').addEventListener('change', renderPackages);
+document.getElementById('filterProject').addEventListener('change', renderPackages);
+document.getElementById('filterSearch').addEventListener('input', renderPackages);
+
+loadPackages();
+</script>
+{% endblock %}

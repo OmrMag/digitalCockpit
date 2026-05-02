@@ -7,34 +7,6 @@
 
 {% block content %}
 
-{# ============================================================
-   PERSISTENT TERMINAL — output from every "Run" appends here.
-   Survives page reloads via localStorage (key: cc-ext-terminal).
-   No modal popup; output streams here directly.
-   ============================================================ #}
-<div class="cc-card cc-card--terminal cc-ext-terminal-card" style="margin-bottom: 20px;">
-    <div class="cc-card-header">
-        <span class="cc-card-title">// Terminal · in-house extraction shell</span>
-        <div class="cc-header-actions">
-            <span class="cc-mono-dim" id="cc-ext-runcount">0 runs</span>
-            <button class="cc-btn cc-btn--ghost" id="cc-ext-scroll-toggle" title="Toggle auto-scroll" type="button">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M19 12l-7 7-7-7"/></svg>
-                Auto-scroll: <span id="cc-ext-scroll-state">on</span>
-            </button>
-            <button class="cc-btn cc-btn--ghost" id="cc-ext-clear" title="Clear scrollback" type="button">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>
-                Clear
-            </button>
-        </div>
-    </div>
-    <div class="cc-ext-terminal" id="cc-ext-terminal">
-        <div class="cc-log-empty" id="cc-ext-empty">
-            <div class="cc-log-empty-glyph">$ tail -f extractions.log</div>
-            <div class="cc-log-empty-msg">Click any "Run" button below to stream output here.</div>
-        </div>
-    </div>
-</div>
-
 <!-- Platform Tabs -->
 <div class="ext-tabs">
     <button class="ext-tab active" onclick="switchTab('revizto', this)">
@@ -237,11 +209,36 @@
     </div>
 </div>
 
-<!-- Run Output Modal removed — output now streams to the persistent
-     terminal at the top of the page. Function shims below preserve the
-     existing API (openRunModal / closeRunModal / setProgress / showOutput /
-     showResult) so any other call sites still work. -->
-
+<!-- ── Run Output Modal ───────────────────────────────────────── -->
+<div id="runModalOverlay" style="display:none; position:fixed; inset:0; background:rgba(15,27,45,0.55); z-index:200; align-items:center; justify-content:center;">
+    <div style="background:white; border-radius:var(--radius-lg); border:1px solid var(--border-cream); width:560px; max-width:95vw; box-shadow:var(--shadow-lg);">
+        <div style="display:flex; align-items:center; justify-content:space-between; padding:16px 20px; border-bottom:1px solid var(--border-cream);">
+            <span style="font-size:var(--fs-xs); font-weight:600; text-transform:uppercase; letter-spacing:1px; color:var(--navy);" id="runModalTitle">Running</span>
+            <div style="display:flex; align-items:center; gap:10px;">
+                <span id="runModalStatus" class="card-badge" style="display:none;"></span>
+                <button onclick="closeRunModal()" style="background:none; border:none; cursor:pointer; color:var(--text-dark-muted); font-size:18px; line-height:1; padding:0 4px;">&times;</button>
+            </div>
+        </div>
+        <div style="padding:20px;">
+            <div style="margin-bottom:16px;">
+                <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">
+                    <div id="runSpinner" style="width:14px; height:14px; border:2px solid var(--border-cream); border-top-color:var(--accent); border-radius:50%; animation:spin 0.7s linear infinite;"></div>
+                    <span id="runStatusText" style="font-size:var(--fs-sm); color:var(--text-dark-muted);">Starting...</span>
+                </div>
+                <div style="height:3px; background:var(--cream-dark); border-radius:2px; overflow:hidden;">
+                    <div id="runProgressBar" style="height:100%; width:0%; background:var(--accent); border-radius:2px; transition:width 0.4s ease;"></div>
+                </div>
+            </div>
+            <div style="background:var(--navy); border-radius:var(--radius); padding:12px 14px; font-family:var(--font); font-size:var(--fs-xs); color:#8899aa; min-height:120px; max-height:200px; overflow-y:auto;" id="runOutput">
+                <span style="opacity:0.4;">Waiting for output...</span>
+            </div>
+            <div id="runResult" style="display:none; margin-top:14px; padding:10px 14px; border-radius:var(--radius); font-size:var(--fs-sm);"></div>
+        </div>
+        <div style="padding:12px 20px; border-top:1px solid var(--border-cream); display:flex; justify-content:flex-end;">
+            <button onclick="closeRunModal()" class="btn btn-secondary btn-sm">Close</button>
+        </div>
+    </div>
+</div>
 
 <style>
 :root {
@@ -421,6 +418,19 @@ async function runExtractor(btn) {
         if (script === 'Revizto_GET_Scenes_and_Models_with_Properties' && data.status === 'success') {
             loadReviztoModelsFromExport();
         }
+        // ── Bake-state tracking ─────────────────────────────────────────────
+        // On success, stash the file list on the card so the Bake button
+        // can post it later. Activate the button visually.
+        if (data.status === 'success' && Array.isArray(data.files) && data.files.length) {
+            const filenames = data.files.map(f => f.filename).filter(Boolean);
+            card.dataset.lastRunFiles = JSON.stringify(filenames);
+            const bakeBtn = card.querySelector('.btn-bake');
+            if (bakeBtn) {
+                bakeBtn.classList.remove('faded');
+                bakeBtn.disabled = false;
+                bakeBtn.textContent = 'Bake';
+            }
+        }
     } catch(e) {
         setProgress(100, 'Request failed.');
         showOutput([`Error: ${e.message}`], false);
@@ -440,146 +450,155 @@ async function loadReviztoModelsFromExport() {
     } catch(e) { console.warn('Could not load Revizto models from export', e); }
 }
 
-// ── Persistent terminal — output destination for every "Run" ──
-// All extraction output streams here. localStorage key: cc-ext-terminal.
-// Lines: array of {ts, kind, text} where kind ∈ 'meta'|'out'|'ok'|'err'|'warn'.
-
-const TERMINAL_KEY = 'cc-ext-terminal';
-const TERMINAL_MAX_LINES = 500;          // ring buffer cap so localStorage doesn't bloat
-let _autoScroll = true;
-let _currentRunTitle = '';
-
-function termLoad() {
-    try {
-        const raw = localStorage.getItem(TERMINAL_KEY);
-        return raw ? JSON.parse(raw) : [];
-    } catch { return []; }
-}
-
-function termSave(lines) {
-    try { localStorage.setItem(TERMINAL_KEY, JSON.stringify(lines.slice(-TERMINAL_MAX_LINES))); }
-    catch (e) { console.warn('terminal: localStorage full', e); }
-}
-
-function termWrite(kind, text) {
-    const lines = termLoad();
-    const ts = new Date().toTimeString().slice(0, 8);     // "HH:MM:SS"
-    lines.push({ ts, kind, text: String(text) });
-    termSave(lines);
-    termRender();
-}
-
-function termClear() {
-    termSave([]);
-    termRender();
-}
-
-function termRender() {
-    const el = document.getElementById('cc-ext-terminal');
-    const empty = document.getElementById('cc-ext-empty');
-    const counter = document.getElementById('cc-ext-runcount');
-    if (!el) return;
-    const lines = termLoad();
-    const runCount = lines.filter(l => l.kind === 'meta' && l.text.startsWith('▸')).length;
-    if (counter) counter.textContent = `${runCount} run${runCount === 1 ? '' : 's'}`;
-
-    if (lines.length === 0) {
-        if (empty) empty.style.display = 'block';
-        // wipe everything except the empty state
-        Array.from(el.children).forEach(c => { if (c.id !== 'cc-ext-empty') c.remove(); });
-        return;
-    }
-    if (empty) empty.style.display = 'none';
-
-    // Re-render the whole buffer (cheap up to 500 lines)
-    el.innerHTML = lines.map(l => {
-        const safeText = l.text
-            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-        return `<div class="cc-term-line cc-term-line--${l.kind}">` +
-            `<span class="cc-term-ts">${l.ts}</span>` +
-            `<span class="cc-term-text">${safeText}</span>` +
-            `</div>`;
-    }).join('');
-
-    if (_autoScroll) el.scrollTop = el.scrollHeight;
-}
-
-// ── Shims that preserve the previous modal API ──
-// The original code called openRunModal()/setProgress()/showOutput()/showResult().
-// Now those methods just append to the terminal instead.
-
 function openRunModal(title) {
-    _currentRunTitle = title;
-    termWrite('meta', `▸ ${title}`);
-    termWrite('meta', `  $ python3 ${getCurrentScript() || 'unknown'}.py`);
+    document.getElementById('runModalTitle').textContent = title;
+    document.getElementById('runModalStatus').style.display = 'none';
+    document.getElementById('runOutput').innerHTML = '<span style="opacity:0.4;">Waiting for output...</span>';
+    document.getElementById('runResult').style.display = 'none';
+    document.getElementById('runProgressBar').style.width = '0%';
+    document.getElementById('runStatusText').textContent = 'Starting...';
+    document.getElementById('runSpinner').style.display = 'inline-block';
+    document.getElementById('runModalOverlay').style.display = 'flex';
 }
 
 function closeRunModal() {
-    /* no-op — terminal is always visible */
+    if (isRunning) return;
+    document.getElementById('runModalOverlay').style.display = 'none';
 }
 
 function setProgress(pct, text) {
-    if (text && text !== 'Starting...' && text !== 'Done.') {
-        termWrite('out', `  ${text}`);
-    }
+    document.getElementById('runProgressBar').style.width = pct + '%';
+    document.getElementById('runStatusText').textContent = text;
 }
 
 function showOutput(lines, success) {
-    if (!lines || !lines.length) {
-        termWrite('warn', '  (no output returned)');
-        return;
-    }
-    lines.forEach(l => {
-        const lower = l.toLowerCase();
-        const kind = lower.includes('error') ? 'err'
-                   : lower.includes('saved') ? 'ok'
-                   : 'out';
-        termWrite(kind, '  ' + l);
-    });
+    const out = document.getElementById('runOutput');
+    if (!lines.length) { out.innerHTML = '<span style="opacity:0.4;">No output returned.</span>'; return; }
+    out.innerHTML = lines.map(l => {
+        const color = l.toLowerCase().includes('error') ? '#f87171'
+                    : l.toLowerCase().includes('saved') ? '#34d399' : '#c8d8e8';
+        return `<div style="color:${color}; margin-bottom:3px;">${l.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>`;
+    }).join('');
+    if (lines.length === 10) out.innerHTML += `<div style="opacity:0.4; margin-top:6px;">… full output saved to exports/</div>`;
 }
 
 function showResult(data) {
-    const ok = data.status === 'success';
-    if (ok) {
-        termWrite('ok', `  ✓ ${data.message || 'Extraction complete.'}`);
-        if (data.files && data.files.length) {
-            data.files.forEach(f => {
-                termWrite('ok', `    → ${f.filename} (${f.size_kb}kb)  ${f.url}`);
-            });
-        }
-    } else {
-        termWrite('err', `  ✗ ${data.message || 'Extraction failed.'}`);
-    }
-    termWrite('meta', '');     // blank separator line between runs
+    const el    = document.getElementById('runResult');
+    const badge = document.getElementById('runModalStatus');
+    const ok    = data.status === 'success';
+    el.style.display    = 'block';
+    el.style.background = ok ? 'rgba(52,211,153,0.08)' : 'rgba(248,113,113,0.08)';
+    el.style.border     = ok ? '1px solid rgba(52,211,153,0.2)' : '1px solid rgba(248,113,113,0.2)';
+    el.style.color      = ok ? '#065f46' : '#991b1b';
+    el.textContent      = data.message || (ok ? 'Extraction complete.' : 'Extraction failed.');
+    badge.style.display = 'inline-block';
+    badge.className     = `card-badge ${ok ? 'success' : 'error'}`;
+    badge.textContent   = ok ? 'Success' : 'Failed';
 }
 
-function getCurrentScript() {
-    // Used by openRunModal so the terminal echoes the script name.
-    // Returns the most-recently-clicked card's data-script attr.
-    return _currentRunTitle ? _currentRunTitle.toLowerCase().replace(/ /g, '_') : '';
-}
-
-document.addEventListener('DOMContentLoaded', () => {
-    // Bind toolbar buttons
-    const clearBtn = document.getElementById('cc-ext-clear');
-    if (clearBtn) clearBtn.addEventListener('click', termClear);
-
-    const scrollToggle = document.getElementById('cc-ext-scroll-toggle');
-    const scrollState = document.getElementById('cc-ext-scroll-state');
-    if (scrollToggle && scrollState) {
-        scrollToggle.addEventListener('click', () => {
-            _autoScroll = !_autoScroll;
-            scrollState.textContent = _autoScroll ? 'on' : 'off';
-            if (_autoScroll) {
-                const el = document.getElementById('cc-ext-terminal');
-                if (el) el.scrollTop = el.scrollHeight;
-            }
-        });
-    }
-
-    // Initial render so persisted output shows immediately
-    termRender();
+document.getElementById('runModalOverlay').addEventListener('click', function(e) {
+    if (e.target === this && !isRunning) closeRunModal();
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BAKE — stash a successful extraction into the persistent Packages page
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// At page load, we walk every .extractor-card and prepend a "Bake" button
+// to its footer — except Forma L1 cards, which can't be baked (per ALEC's
+// spec: account-wide Forma data isn't useful as a per-admin shareable
+// package).
+//
+// The button starts in a faded state. After a successful Run on that
+// card, runExtractor() flips its state to active and stashes the
+// run's file list on `card.dataset.lastRunFiles`. Clicking Bake POSTs
+// that file list (plus context) to /api/extractions/bake.
+
+const FORMA_L1_SCRIPTS = new Set([
+    'Forma_GET_Account_Projects',
+    'Forma_GET_Hub_Users',
+    'Forma_GET_2L_Status',
+    'Forma_GET_3L_Status',
+]);
+
+function injectBakeButtons() {
+    document.querySelectorAll('.extractor-card').forEach(card => {
+        const script = card.dataset.script;
+        if (!script || FORMA_L1_SCRIPTS.has(script)) return;
+        const footer = card.querySelector('.ext-footer');
+        if (!footer || footer.querySelector('.btn-bake')) return;
+        const runBtn = footer.querySelector('button.btn-primary');
+        if (!runBtn) return;
+
+        const bakeBtn = document.createElement('button');
+        bakeBtn.className     = 'btn btn-sm btn-bake faded';
+        bakeBtn.textContent   = 'Bake';
+        bakeBtn.disabled      = true;
+        bakeBtn.style.marginRight = '6px';
+        bakeBtn.onclick       = () => bakeExtractor(bakeBtn);
+        footer.insertBefore(bakeBtn, runBtn);
+    });
+}
+
+async function bakeExtractor(btn) {
+    const card = btn.closest('.extractor-card');
+    if (!card) return;
+    if (btn.disabled || btn.classList.contains('faded')) return;
+
+    let files = [];
+    try {
+        files = JSON.parse(card.dataset.lastRunFiles || '[]');
+    } catch { files = []; }
+    if (!files.length) {
+        alert('No files to bake — run the extraction first.');
+        return;
+    }
+
+    const platform = card.dataset.platform || '';
+    const level    = parseInt(card.dataset.level || '0', 10);
+    const script   = card.dataset.script || '';
+    const label    = (card.querySelector('.ext-title')?.textContent || script).trim();
+
+    const project_key  = activeCtx.active_project_key  || '';
+    const project_name = activeCtx.active_project_name || '';
+
+    const original = btn.textContent;
+    btn.textContent = 'Baking...';
+    btn.disabled = true;
+
+    try {
+        const res = await fetch('/api/extractions/bake', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                platform, level, script, label,
+                project_key, project_name, files,
+            }),
+        });
+        const data = await res.json();
+        if (res.ok && data.status === 'ok') {
+            btn.textContent = '✓ Baked';
+            btn.classList.add('baked');
+            // After 3s, restore the active state so the admin can bake again
+            setTimeout(() => {
+                btn.textContent = 'Bake';
+                btn.disabled    = false;
+                btn.classList.remove('baked');
+            }, 3000);
+        } else {
+            const msg = data.detail || 'Bake failed.';
+            btn.textContent = original;
+            btn.disabled    = false;
+            alert(msg);
+        }
+    } catch (e) {
+        btn.textContent = original;
+        btn.disabled    = false;
+        alert('Bake failed: ' + e.message);
+    }
+}
+
+injectBakeButtons();
 
 loadActiveContext();
 </script>
