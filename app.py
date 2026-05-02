@@ -2873,6 +2873,111 @@ async def api_diag(user: str = Depends(require_user)):
     return JSONResponse(timings)
 
 
+@app.get("/api/_diag/revizto/{project_key}")
+async def api_diag_revizto(project_key: str, user: str = Depends(require_user)):
+    """Step-by-step diagnostic for the Revizto members fetch.
+
+    Reports each phase of what happens when we try to count Revizto
+    members for a given project_key. Helps isolate whether the bug is
+    in token storage, token refresh, the API call, or response parsing.
+
+    Hit: /api/_diag/revizto/rak-central
+    """
+    import time as _time
+
+    out = {"project_key": project_key, "user": user}
+
+    # Phase 1: registry lookup
+    t0 = _time.perf_counter()
+    registry = load_registry()
+    proj = registry.get(project_key)
+    out["registry_lookup_ms"] = round((_time.perf_counter() - t0) * 1000, 1)
+    if not proj:
+        out["error"] = "Project not in registry"
+        return JSONResponse(out)
+    out["project_name"] = proj.get("name", "")
+
+    rev_cfg = proj.get("platforms", {}).get("revizto", {})
+    rev_uuid = rev_cfg.get("project_uuid", "")
+    rev_region = rev_cfg.get("region", "dubai")
+    out["revizto_uuid"] = rev_uuid
+    out["revizto_region"] = rev_region
+    if not rev_uuid:
+        out["error"] = "No Revizto project_uuid in registry"
+        return JSONResponse(out)
+
+    # Phase 2: token blob existence
+    t0 = _time.perf_counter()
+    blob_key = _revizto_token_blob_key(rev_region, user)
+    out["token_blob_key"] = blob_key
+    raw_tokens = blob_read(blob_key) if USE_BLOB else None
+    out["token_blob_read_ms"] = round((_time.perf_counter() - t0) * 1000, 1)
+    out["token_blob_found"]   = raw_tokens is not None
+    if raw_tokens:
+        out["token_has_access_token"]  = bool(raw_tokens.get("access_token"))
+        out["token_has_refresh_token"] = bool(raw_tokens.get("refresh_token"))
+    else:
+        # Check for legacy shared file
+        legacy_blob = f"revizto_tokens_{rev_region}.json"
+        legacy = blob_read(legacy_blob) if USE_BLOB else None
+        out["legacy_blob_key"]   = legacy_blob
+        out["legacy_blob_found"] = legacy is not None
+
+    # Phase 3: token resolution (this calls the API to refresh if needed)
+    config = load_config(user)
+    out["has_revizto_dubai_config"] = bool(config.get("revizto_dubai"))
+    out["has_access_code"] = bool(config.get(f"revizto_{rev_region}", {}).get("access_code"))
+
+    t0 = _time.perf_counter()
+    try:
+        token = revizto_get_token_for_region(config, rev_region, email=user)
+        out["token_resolution_ms"] = round((_time.perf_counter() - t0) * 1000, 1)
+        out["token_obtained"] = bool(token)
+        out["token_preview"] = (token[:20] + "...") if token else "(empty)"
+    except Exception as e:
+        out["token_resolution_ms"] = round((_time.perf_counter() - t0) * 1000, 1)
+        out["token_error"] = f"{type(e).__name__}: {e}"
+        return JSONResponse(out)
+
+    if not token:
+        out["error"] = "Could not obtain Revizto token (refresh failed and no access_code or access_code failed)"
+        return JSONResponse(out)
+
+    # Phase 4: actual members API call
+    base_url = f"https://api.{rev_region}.revizto.com/v5"
+    url = f"{base_url}/project/{rev_uuid}/role/member/list"
+    out["api_url"] = url
+
+    t0 = _time.perf_counter()
+    try:
+        r = http_requests.get(
+            url,
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+            timeout=10,
+        )
+        out["api_call_ms"] = round((_time.perf_counter() - t0) * 1000, 1)
+        out["api_status"]  = r.status_code
+        if r.status_code == 200:
+            body = r.json()
+            data = body.get("data", {})
+            out["response_data_type"] = type(data).__name__
+            out["response_data_size"] = len(data) if hasattr(data, "__len__") else 0
+            if isinstance(data, dict):
+                out["member_count"] = len(data)
+                # Sample first member to confirm shape
+                if data:
+                    first_key = next(iter(data))
+                    first_val = data[first_key]
+                    out["first_member_keys"] = list(first_val.keys())[:8] if isinstance(first_val, dict) else "not a dict"
+        else:
+            out["api_error_body"] = r.text[:500]
+    except Exception as e:
+        out["api_call_ms"] = round((_time.perf_counter() - t0) * 1000, 1)
+        out["api_error"]   = f"{type(e).__name__}: {e}"
+
+    return JSONResponse(out)
+
+
 # ── Per-project member counts (live API + 5-min cache) ─────────────────
 # Used by /home's "Members on active project" tile to show live counts
 # when the user picks a project from the sidebar. Cache is in-memory so
