@@ -12,7 +12,7 @@
      every run across the session. Replaces the per-run modal popup.
      Auto-scroll keeps the latest output pinned to the bottom; toggle
      to off to inspect history without the view jumping. -->
-<div class="ext-terminal" id="extTerminal">
+<div class="ext-terminal" id="extTerminal" data-user="{{ current_user }}">
     <div class="ext-term-head">
         <span class="ext-term-title">// TERMINAL · IN-HOUSE EXTRACTION SHELL</span>
         <div class="ext-term-controls">
@@ -21,9 +21,7 @@
             <button class="ext-term-btn" onclick="clearTerminal()">🗑 CLEAR</button>
         </div>
     </div>
-    <div class="ext-term-body" id="termBody">
-        <span class="ext-term-empty">Run an extraction to see output here.</span>
-    </div>
+    <div class="ext-term-body" id="termBody"></div>
 </div>
 
 <!-- Platform Tabs -->
@@ -250,8 +248,8 @@
 .ext-header { display:flex; align-items:flex-start; justify-content:space-between; gap:8px; }
 .ext-title { font-size:var(--fs-sm); font-weight:600; color:var(--navy); }
 .ext-desc { font-size:var(--fs-xs); color:var(--text-dark-muted); line-height:1.5; flex:1; }
-.ext-footer { display:flex; align-items:center; justify-content:space-between; margin-top:4px; }
-.ext-output { font-size:var(--fs-xs); color:var(--text-dark-muted); font-style:italic; }
+.ext-footer { display:flex; align-items:center; justify-content:flex-end; gap:6px; margin-top:4px; }
+.ext-output { display: none; }
 .ext-badge { font-size:var(--fs-xs); padding:2px 7px; border-radius:3px; font-weight:600; flex-shrink:0; }
 .ext-badge.revizto { background:rgba(224,90,90,0.1); color:var(--revizto); }
 .ext-badge.morta    { background:rgba(74,158,255,0.1); color:var(--accent); }
@@ -309,8 +307,8 @@
     max-height: 360px;
     overflow-y: auto;
     font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 12px;
-    line-height: 1.65;
+    font-size: 10.5px;
+    line-height: 1.55;
     color: #cbd5e1;
     white-space: pre;
 }
@@ -318,15 +316,14 @@
 .ext-term-body::-webkit-scrollbar-track     { background: transparent; }
 .ext-term-body::-webkit-scrollbar-thumb     { background: rgba(255,255,255,0.10); border-radius: 4px; }
 .ext-term-body::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.18); }
-.ext-term-empty { color: rgba(255,255,255,0.35); font-style: italic; }
 
 /* Each line: timestamp prefix + content. Color classes drive the
    semantic color of the content half. Display:grid keeps timestamps
    vertically aligned even when the content wraps long URLs. */
 .tline {
     display: grid;
-    grid-template-columns: 60px 1fr;
-    gap: 12px;
+    grid-template-columns: 56px 1fr;
+    gap: 10px;
     align-items: baseline;
 }
 .tline .ts    { color: rgba(255,255,255,0.30); white-space: nowrap; }
@@ -342,7 +339,40 @@
     grid-column: 1 / -1;
     height: 1px;
     background: rgba(255,255,255,0.06);
-    margin: 8px 0;
+    margin: 6px 0;
+}
+
+/* Boot banner — fake-realistic header on first load, like a real shell.
+   No timestamp column; full-width. Slightly muted so it's clearly
+   informational and distinct from script output. */
+.tline.banner {
+    grid-template-columns: 1fr;
+    color: rgba(255,255,255,0.55);
+}
+.tline.banner.dim {
+    color: rgba(255,255,255,0.32);
+}
+.tline.prompt {
+    grid-template-columns: 1fr;
+    color: #cbd5e1;
+}
+.tline.prompt .user   { color: #34d399; }
+.tline.prompt .at     { color: rgba(255,255,255,0.45); }
+.tline.prompt .host   { color: #7dd3fc; }
+.tline.prompt .path   { color: rgba(255,255,255,0.65); }
+.tline.prompt .dollar { color: rgba(255,255,255,0.55); margin-right: 6px; }
+
+/* Reuse the same blink behavior used elsewhere in the app for "admin_". */
+.term-caret {
+    display: inline-block;
+    color: #34d399;
+    font-weight: 700;
+    margin-left: 2px;
+    animation: cc-cursor-blink 1s steps(2) infinite;
+}
+@keyframes cc-cursor-blink {
+    0%, 50%   { opacity: 1; }
+    50.1%, 100% { opacity: 0; }
 }
 </style>
 
@@ -478,6 +508,12 @@ async function runExtractor(btn) {
     btn.textContent = 'Running…';
     btn.disabled = true;
 
+    // Remove the trailing blinking-cursor prompt (if present) so run
+    // output appears in its place. We re-add the prompt after the run.
+    const _termBody = document.getElementById('termBody');
+    const _existingPrompt = _termBody?.querySelector('.tline.prompt');
+    if (_existingPrompt) _existingPrompt.remove();
+
     // Visual separator between runs in the terminal
     if (totalRuns > 0) termAddDivider();
 
@@ -498,26 +534,32 @@ async function runExtractor(btn) {
         const data = await res.json();
 
         // Echo each line of the script's stdout/stderr with auto-color
-        // detection: lines containing 'error'/'fail' get red, lines that
-        // start with check marks or 'saved' get green, everything else is
-        // neutral light.
-        (data.output || []).forEach(line => {
+        // detection. We filter out a few patterns that aren't useful to
+        // the user:
+        //  • "Saved <N> ... to /tmp/<...>" — leaks the server's temp
+        //    directory path; the file is already presented through the
+        //    Bake/download flow
+        //  • lines that are JUST a server temp path with no other content
+        const TEMP_PATH_RE = /\/tmp\/[A-Za-z0-9_]+\/temp\//;
+        (data.output || []).forEach(rawLine => {
+            const line = rawLine;
             const lower = line.toLowerCase();
+            // Suppress path-leaking "Saved ... to /tmp/..." lines
+            if (lower.startsWith('saved ') && TEMP_PATH_RE.test(line)) return;
+            // Suppress any other line that surfaces a server temp path
+            if (TEMP_PATH_RE.test(line)) return;
+
             const startsCheck = line.trimStart().startsWith('✓') || line.trimStart().startsWith('✔');
             let cls = 'out';
             if (lower.includes('error') || lower.includes('failed') || lower.includes('traceback')) cls = 'err';
-            else if (startsCheck || lower.includes('saved') || lower.includes('extraction complete')) cls = 'ok';
+            else if (startsCheck || lower.includes('extraction complete')) cls = 'ok';
             termAdd(cls, line);
         });
 
-        // Final status + file list
-        if (data.status === 'success') {
-            if (Array.isArray(data.files) && data.files.length) {
-                data.files.forEach(f => {
-                    termAdd('file', `  → ${f.filename} (${f.size_kb}kb)  ${f.url}`);
-                });
-            }
-        } else {
+        // Final status. We deliberately do NOT print the synthetic
+        // "→ filename (size) /api/extractions/download/..." rows — the
+        // user can see file output via the Bake button + Packages page.
+        if (data.status !== 'success') {
             termAdd('err', `✗ ${data.message || 'Extraction failed.'}`);
         }
         // Trailing blank line for visual breathing room
@@ -550,7 +592,31 @@ async function runExtractor(btn) {
         btn.disabled = false;
         totalRuns++;
         document.getElementById('termRuns').textContent = totalRuns;
+
+        // Re-add the prompt-with-blinking-cursor line at the bottom so
+        // the terminal always feels "alive and waiting" between runs.
+        _addPromptLine();
     }
+}
+
+function _addPromptLine() {
+    const body = document.getElementById('termBody');
+    const term = document.getElementById('extTerminal');
+    if (!body) return;
+    const userEmail = (term?.dataset?.user || 'admin').toLowerCase();
+    const userLocal = userEmail.includes('@') ? userEmail.split('@')[0] : userEmail;
+    const prompt = document.createElement('div');
+    prompt.className = 'tline prompt';
+    prompt.innerHTML =
+        `<span class="msg">` +
+            `<span class="user">${_termEscape(userLocal)}</span>` +
+            `<span class="at">@</span>` +
+            `<span class="host">cockpit</span>` +
+            `<span class="path">:~$</span> ` +
+            `<span class="term-caret">_</span>` +
+        `</span>`;
+    body.appendChild(prompt);
+    if (autoScroll) body.scrollTop = body.scrollHeight;
 }
 
 async function loadReviztoModelsFromExport() {
@@ -586,10 +652,6 @@ function _termEscape(s) {
 function termAdd(kind, msg) {
     const body = document.getElementById('termBody');
     if (!body) return;
-    // Clear empty-state placeholder on first write
-    const empty = body.querySelector('.ext-term-empty');
-    if (empty) body.innerHTML = '';
-
     const div = document.createElement('div');
     div.className = `tline ${kind}`;
     div.innerHTML = `<span class="ts">${_termTimestamp()}</span><span class="msg">${_termEscape(msg)}</span>`;
@@ -600,20 +662,45 @@ function termAdd(kind, msg) {
 function termAddDivider() {
     const body = document.getElementById('termBody');
     if (!body) return;
-    const empty = body.querySelector('.ext-term-empty');
-    if (empty) return;
     const div = document.createElement('div');
     div.className = 'tline divider';
     body.appendChild(div);
     if (autoScroll) body.scrollTop = body.scrollHeight;
 }
 
+// Render the boot banner — a domain-realistic header that mimics how
+// a real shell looks on first open. Includes a green blinking cursor
+// (uses the same animation as the "Hello, admin_" cursor on Home).
+function printBootBanner() {
+    const body = document.getElementById('termBody');
+    if (!body) return;
+    const year = new Date().getFullYear();
+
+    const lines = [
+        { cls: 'banner',     html: 'Digital Construction Cockpit [Version 0.2.0]' },
+        { cls: 'banner dim', html: `(c) ${year} ALEC Holdings. Internal use only.` },
+        { cls: 'banner',     html: '' },
+        { cls: 'banner dim', html: 'Active extractions: Revizto · Morta · Forma / ACC' },
+        { cls: 'banner dim', html: 'Click Run on any card below to begin.' },
+        { cls: 'banner',     html: '' },
+    ];
+    lines.forEach(l => {
+        const div = document.createElement('div');
+        div.className = `tline ${l.cls}`;
+        div.innerHTML = `<span class="msg">${l.html || '&nbsp;'}</span>`;
+        body.appendChild(div);
+    });
+
+    _addPromptLine();
+}
+
 function clearTerminal() {
     const body = document.getElementById('termBody');
     if (!body) return;
-    body.innerHTML = '<span class="ext-term-empty">Run an extraction to see output here.</span>';
+    body.innerHTML = '';
     totalRuns = 0;
     document.getElementById('termRuns').textContent = '0';
+    printBootBanner();
 }
 
 function toggleAutoScroll() {
@@ -626,14 +713,11 @@ function toggleAutoScroll() {
     }
 }
 
-// If the user manually scrolls up, turn auto-scroll off so we don't fight
-// them. They can toggle back on with the button.
-document.getElementById('termBody').addEventListener('wheel', function(e) {
-    if (e.deltaY < 0 && autoScroll) {
-        autoScroll = false;
-        document.getElementById('termAutoScrollBtn').textContent = '↓ AUTO-SCROLL: OFF';
-    }
-}, { passive: true });
+// Auto-scroll stays ON by default. The user can toggle it off via the
+// AUTO-SCROLL button in the terminal header if they want to inspect
+// history without the view jumping. We deliberately do NOT auto-disable
+// on manual scroll-up — that surprised users and felt like the toggle
+// stopped working.
 
 // ═══════════════════════════════════════════════════════════════════════════
 // BAKE — stash a successful extraction into the persistent Packages page
@@ -710,11 +794,16 @@ async function bakeExtractor(btn) {
             btn.textContent = '✓ Baked';
             btn.classList.add('baked');
             termAdd('ok', `Baked: ${label} → /packages`);
+            // Also clear the run's stashed file list so it can't be baked
+            // again from the same run — only a new successful Run will
+            // re-arm the button.
+            try { delete card.dataset.lastRunFiles; } catch {}
             setTimeout(() => {
                 btn.textContent = 'Bake';
-                btn.disabled    = false;
                 btn.classList.remove('baked');
-            }, 3000);
+                btn.classList.add('faded');
+                btn.disabled    = true;
+            }, 1500);
         } else {
             const msg = data.detail || 'Bake failed.';
             btn.textContent = original;
@@ -729,6 +818,7 @@ async function bakeExtractor(btn) {
 }
 
 injectBakeButtons();
+printBootBanner();
 
 loadActiveContext();
 </script>
