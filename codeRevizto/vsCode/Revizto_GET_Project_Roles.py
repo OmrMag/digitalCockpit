@@ -14,7 +14,20 @@ def get_license_uuid() -> str:
 
 
 def get_project_roles(license_uuid: str = None) -> list[dict]:
-    """Get all project roles in the license."""
+    """Get all project roles defined on the license.
+
+    Endpoint per Revizto v5 API docs: GET /v5/license/{licenseUuid}/role/list
+    Response: {result: 0, data: {<role_uuid>: {id, uuid, name, system,
+                                                statistics: {projects, members}}}}
+
+    The `system` field distinguishes role types:
+        0 = Regular project role
+        1 = Owner (a system role)
+        2 = License administrator (a system role)
+
+    `statistics` contains per-role usage counts (number of projects
+    where the role is assigned, and total members across those projects).
+    """
     if not license_uuid:
         license_uuid = get_license_uuid()
     if not license_uuid:
@@ -29,11 +42,23 @@ def get_project_roles(license_uuid: str = None) -> list[dict]:
         print(f"[Revizto] Error fetching roles: {response.status_code}")
         return []
     try:
-        return [
-            {"id": r["id"], "uuid": r["uuid"], "name": r["name"]}
-            for r in response.json()["data"].values()
-        ]
-    except (KeyError, TypeError) as e:
+        body = response.json()
+        if body.get("result") != 0:
+            print(f"[Revizto] API result code: {body.get('result')} - {body.get('message', '')}")
+            return []
+        roles = []
+        for r in (body.get("data") or {}).values():
+            stats = r.get("statistics") or {}
+            roles.append({
+                "id":              r.get("id"),
+                "uuid":            r.get("uuid"),
+                "name":            r.get("name", ""),
+                "system":          r.get("system", 0),
+                "projects_using":  stats.get("projects", 0),
+                "members_using":   stats.get("members", 0),
+            })
+        return roles
+    except (KeyError, TypeError, ValueError) as e:
         print(f"[Revizto] Unexpected response structure: {e}")
         return []
 
@@ -51,7 +76,12 @@ def save_csv(roles: list[dict], filename: str = "revizto_project_roles.csv"):
         return
     path = os.path.join(EXPORTS_DIR, filename)
     with open(path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=["id", "uuid", "name"])
+        writer = csv.DictWriter(
+            f,
+            fieldnames=["id", "uuid", "name", "system",
+                        "projects_using", "members_using"],
+            extrasaction="ignore",
+        )
         writer.writeheader()
         writer.writerows(roles)
     print(f"Saved {len(roles)} roles to {path}")

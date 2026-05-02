@@ -2964,7 +2964,6 @@ async def api_diag_revizto(project_key: str, user: str = Depends(require_user)):
             out["response_data_size"] = len(data) if hasattr(data, "__len__") else 0
             if isinstance(data, dict):
                 out["member_count"] = len(data)
-                # Sample first member to confirm shape
                 if data:
                     first_key = next(iter(data))
                     first_val = data[first_key]
@@ -2974,6 +2973,38 @@ async def api_diag_revizto(project_key: str, user: str = Depends(require_user)):
     except Exception as e:
         out["api_call_ms"] = round((_time.perf_counter() - t0) * 1000, 1)
         out["api_error"]   = f"{type(e).__name__}: {e}"
+
+    # Phase 5 (only if Phase 4 returned 404): try alternate URL patterns.
+    # Revizto API has shifted endpoints over time and the dubai vs ireland
+    # regions sometimes diverge. We probe a handful of plausible paths
+    # and report the first one that returns 200.
+    if out.get("api_status") == 404:
+        candidates = [
+            f"{base_url}/project/{rev_uuid}/members",
+            f"{base_url}/project/{rev_uuid}/member/list",
+            f"{base_url}/project/{rev_uuid}/team",
+            f"{base_url}/project/{rev_uuid}/user/list",
+            f"{base_url}/project/uuid/{rev_uuid}/member/list",
+            f"{base_url}/project/uuid/{rev_uuid}/role/member/list",
+            f"{base_url}/projects/{rev_uuid}/members",
+        ]
+        probes = []
+        for u in candidates:
+            try:
+                pr = http_requests.get(
+                    u,
+                    headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+                    timeout=5,
+                )
+                probes.append({"url": u, "status": pr.status_code, "body_preview": pr.text[:200] if pr.status_code != 200 else "(200 OK)"})
+                if pr.status_code == 200:
+                    # Found one that works — note the response shape
+                    body = pr.json()
+                    probes[-1]["data_preview"] = str(body)[:300]
+                    break
+            except Exception as e:
+                probes.append({"url": u, "error": str(e)[:120]})
+        out["url_probes"] = probes
 
     return JSONResponse(out)
 
@@ -2986,19 +3017,40 @@ _members_cache: dict = {}      # key: project_key -> (timestamp, counts dict)
 _MEMBERS_TTL_SEC = 300         # 5 minutes
 _members_refreshing: set = set()   # project_keys currently being refreshed in background
 
+# Per-project Revizto roles, derived from /team responses by collecting
+# distinct accessRole entries. Populated as a side-effect of the members
+# background refresh — getting roles from /team is free since we're
+# already calling that endpoint.
+_revizto_roles_cache: dict = {}   # key: project_key -> (timestamp, [role dicts])
 
-async def _refresh_members_background(project_key: str, user: str):
+
+async def _refresh_members_background(project_key: str, user: str, force: bool = False):
     """Background task: do the live API fetches and update the cache.
 
     Runs Morta/Revizto/Forma in parallel via asyncio.gather. Each platform
     call uses a thread executor since the underlying http_requests/blob
     libraries are sync. Marks the project_key as 'refreshing' so we don't
     fire duplicate background fetches for the same project.
+
+    `force=True` bypasses the cache-fresh check and always re-fetches.
+    Default behaviour (force=False) is to skip if the members cache for
+    this project is still fresh — saves API quota when sync-roles is
+    called immediately after the user has been browsing.
     """
     import time as _time
     import asyncio as _asyncio
     if project_key in _members_refreshing:
         return
+
+    # Skip if cache is fresh and caller didn't force
+    if not force:
+        cached = _members_cache.get(project_key)
+        if cached and (_time.time() - cached[0]) < _MEMBERS_TTL_SEC:
+            # Cache fresh → only refresh if roles cache is missing too
+            # (members cache might exist from before we added roles tracking)
+            if project_key in _revizto_roles_cache:
+                return
+
     _members_refreshing.add(project_key)
     try:
         registry = load_registry()
@@ -3040,14 +3092,44 @@ async def _refresh_members_background(project_key: str, user: str):
                 if not token:
                     return None
                 base_url = f"https://api.{rev_region}.revizto.com/v5"
+                # Per Revizto v5 API docs: /v5/project/{projectUuid}/team
+                # Response: {result: 0, data: {count: N, entities: [...]}}
+                # Each entity has accessRole {id, uuid, name, system}.
+                # We extract two things from this single call:
+                #   1. The total member count (data.count)
+                #   2. The distinct set of accessRoles actually in use on this
+                #      project — written to _revizto_roles_cache as a side effect.
                 r = http_requests.get(
-                    f"{base_url}/project/{rev_uuid}/role/member/list",
+                    f"{base_url}/project/{rev_uuid}/team",
                     headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
                     timeout=10,
                 )
                 if r.status_code == 200:
-                    members_data = r.json().get("data", {})
-                    return len(members_data) if isinstance(members_data, dict) else 0
+                    body = r.json()
+                    if body.get("result") == 0:
+                        data = body.get("data") or {}
+                        entities = data.get("entities") or []
+
+                        # Extract distinct roles (deduped by uuid)
+                        roles_by_uuid = {}
+                        for ent in entities:
+                            role = ent.get("accessRole") or {}
+                            ruuid = role.get("uuid")
+                            if ruuid and ruuid not in roles_by_uuid:
+                                roles_by_uuid[ruuid] = {
+                                    "id":     role.get("id"),
+                                    "uuid":   ruuid,
+                                    "name":   role.get("name", ""),
+                                    "system": role.get("system", 0),
+                                }
+                        roles_list = list(roles_by_uuid.values())
+                        roles_list.sort(key=lambda r: (r.get("system", 0), r.get("name", "")))
+                        _revizto_roles_cache[project_key] = (_time.time(), roles_list)
+
+                        count = data.get("count")
+                        if isinstance(count, int):
+                            return count
+                        return len(entities)
             except Exception as e:
                 print(f"[members/{project_key}] Revizto error: {e}")
             return None
@@ -3135,6 +3217,128 @@ async def api_project_members(project_key: str, user: str = Depends(require_user
         **counts,
         "fresh": fresh,
         "refreshing": project_key in _members_refreshing,
+    })
+
+
+@app.get("/api/project/{project_key}/revizto-roles")
+async def api_project_revizto_roles(project_key: str, user: str = Depends(require_user)):
+    """Return distinct Revizto roles in use on this project.
+
+    Roles are populated as a side-effect of /api/project/{key}/members
+    (since both come from the same /team API call). If the cache is
+    cold for this project, we kick off a refresh and return whatever
+    we have — same pattern as members.
+
+    Response:
+        {
+          "roles": [{"id": ..., "uuid": ..., "name": ..., "system": ...}, ...],
+          "fresh": bool,
+          "refreshing": bool
+        }
+    """
+    import time as _time
+    import asyncio as _asyncio
+
+    registry = load_registry()
+    proj = registry.get(project_key)
+    if not proj:
+        raise HTTPException(status_code=404, detail="Project not found in registry.")
+    if not is_owner(user) and user not in proj.get("admins", []):
+        raise HTTPException(status_code=403, detail="Not an admin of this project.")
+
+    cached = _revizto_roles_cache.get(project_key)
+    now = _time.time()
+    fresh = bool(cached and (now - cached[0]) < _MEMBERS_TTL_SEC)
+    roles = cached[1] if cached else []
+
+    if not fresh:
+        _asyncio.create_task(_refresh_members_background(project_key, user))
+
+    return JSONResponse({
+        "roles": roles,
+        "fresh": fresh,
+        "refreshing": project_key in _members_refreshing,
+    })
+
+
+@app.post("/api/registry/sync-revizto-roles")
+async def api_sync_revizto_roles(user: str = Depends(require_owner)):
+    """Sync Revizto roles for every project in the registry.
+
+    For each project with a Revizto UUID configured:
+      1. Trigger the members-refresh (which also populates the
+         _revizto_roles_cache as a side-effect).
+      2. Wait for all to complete in parallel.
+      3. Build a per-project roles dict.
+      4. Write to revizto_project_roles.json (replacing the existing
+         license-level flat list with a project-keyed map).
+      5. Embed a lightweight roles reference (uuid + name only) into
+         each project's registry entry under platforms.revizto.roles.
+
+    This is a write operation, so it's owner-only. Run it after adding
+    or modifying registry projects, or whenever you want to refresh.
+    """
+    import asyncio as _asyncio
+    import time as _time
+
+    registry = load_registry()
+
+    # Targets: projects with a Revizto UUID
+    targets = [
+        (key, proj) for key, proj in registry.items()
+        if proj.get("platforms", {}).get("revizto", {}).get("project_uuid")
+    ]
+
+    if not targets:
+        return JSONResponse({
+            "status": "ok",
+            "message": "No registry projects have a Revizto UUID configured.",
+            "projects_synced": 0,
+        })
+
+    # Run all refreshes in parallel
+    tasks = [_refresh_members_background(key, user) for key, _ in targets]
+    await _asyncio.gather(*tasks, return_exceptions=True)
+
+    # Collect results — keyed by project_key
+    per_project_roles = {}
+    embedded_count = 0
+    for key, proj in targets:
+        cached = _revizto_roles_cache.get(key)
+        roles = cached[1] if cached else []
+        per_project_roles[key] = {
+            "project_name": proj.get("name", key),
+            "fetched_at":   _time.strftime("%Y-%m-%d %H:%M:%S"),
+            "roles":        roles,
+        }
+
+        # Embed a lightweight reference into the registry entry so
+        # downstream consumers (UI, scripts) can read roles without
+        # touching the file.
+        if roles:
+            registry[key]["platforms"]["revizto"]["roles"] = [
+                {"uuid": r["uuid"], "name": r["name"]} for r in roles
+            ]
+            embedded_count += 1
+
+    # Persist:
+    #   1. revizto_project_roles_by_project.json — new per-project keyed dict
+    #      (the original revizto_project_roles.json stays as the license-level
+    #      flat list produced by the Revizto_GET_Project_Roles.py extraction).
+    #   2. The registry — each project's platforms.revizto gets a `roles` field
+    #      with a lightweight {uuid, name} list for quick UI lookups.
+    if USE_BLOB:
+        blob_write("revizto_project_roles_by_project.json", per_project_roles)
+    else:
+        with open(BASE_DIR / "revizto_project_roles_by_project.json", "w") as f:
+            json.dump(per_project_roles, f, indent=2)
+    save_registry(registry)
+
+    return JSONResponse({
+        "status": "ok",
+        "projects_synced":     len(targets),
+        "projects_with_roles": embedded_count,
+        "details":             {k: len(v["roles"]) for k, v in per_project_roles.items()},
     })
 
 

@@ -7,32 +7,56 @@ from Revizto_MasterScript import get_headers
 
 
 def get_project_members(project_uuid: str) -> list[dict]:
-    """Get all members in a project."""
+    """Get all members in a project.
+
+    Endpoint per Revizto v5 API docs: GET /v5/project/{projectUuid}/team
+    Response shape:
+        {
+          "result": 0,
+          "data": {
+            "count": <int>,
+            "entities": [<member objects>]
+          },
+          "message": "Success."
+        }
+
+    Each entity has top-level: email, fullname, status, suspendReason,
+    activated, frozen, role, language, id, uuid, firstname, lastname,
+    company, department, location, lastActive, accessRole {id, uuid,
+    name, system}, member { id, role, uuid, user { ... } }, etc.
+    """
     response = requests.get(
-        f"{BASE_URL}/project/{project_uuid}/role/member/list",
+        f"{BASE_URL}/project/{project_uuid}/team",
         headers=get_headers(),
         timeout=15,
     )
-    print(f"[Revizto] Project members status={response.status_code}")
+    print(f"[Revizto] Project team status={response.status_code}")
     if response.status_code != 200:
         print(f"[Revizto] Error: {response.text[:300]}")
         return []
-    data = response.json().get("data", {})
-    if not isinstance(data, dict):
+
+    body = response.json()
+    if body.get("result") != 0:
+        print(f"[Revizto] API result code: {body.get('result')} - {body.get('message', '')}")
         return []
 
+    entities = (body.get("data") or {}).get("entities") or []
     members = []
-    for member_id, member in data.items():
-        user = member.get("user", {})
+    for ent in entities:
+        # Top-level entity fields are the most reliable; fall back to
+        # nested user object for fields not present at the top level.
+        user_obj = (ent.get("member") or {}).get("user") or {}
+        access_role = ent.get("accessRole") or {}
         members.append({
-            "uuid":         user.get("uuid", ""),
-            "name":         user.get("fullname", ""),
-            "email":        user.get("email", ""),
-            "project_role": member.get("roleName", ""),
-            "role_uuid":    member.get("roleUuid", ""),
-            "status":       "active" if member.get("activated") else "pending",
-            "company":      member.get("company", ""),
-            "department":   member.get("department", ""),
+            "uuid":         ent.get("uuid") or user_obj.get("uuid", ""),
+            "name":         ent.get("fullname") or
+                            f"{ent.get('firstname','')} {ent.get('lastname','')}".strip(),
+            "email":        ent.get("email") or user_obj.get("email", ""),
+            "project_role": access_role.get("name", ""),
+            "role_uuid":    access_role.get("uuid", ""),
+            "status":       "active" if ent.get("activated") else "pending",
+            "company":      ent.get("company", ""),
+            "department":   ent.get("department", ""),
             "project_uuid": project_uuid,
         })
     return members
