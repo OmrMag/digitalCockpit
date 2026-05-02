@@ -249,7 +249,14 @@ def is_owner(user: str) -> bool:
 import time as _time_for_cache
 
 _blob_cache: dict = {}                    # key -> (expires_at, data)
-_BLOB_CACHE_TTL_SEC = 5
+# TTL was 5 seconds initially; bumped to 5 minutes after profiling showed
+# the cache was being thrown away long before any user request arrived.
+# All save_* functions invalidate their key explicitly via _cache_invalidate,
+# so writes are still immediately visible on the next read. The TTL only
+# bounds how long stale data can hang around if the file is modified
+# OUT-OF-BAND (e.g. you edit admins.json directly in Azure portal). With a
+# 5-minute window, edits become visible within 5 minutes max.
+_BLOB_CACHE_TTL_SEC = 300
 
 def _cache_get(key: str):
     """Return cached value or None if missing/expired."""
