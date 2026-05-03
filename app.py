@@ -5390,35 +5390,200 @@ async def api_invite_single(request: Request, user: str = Depends(require_user))
 
 @app.post("/api/invite/preview")
 async def api_invite_preview(file: UploadFile = File(...), user: str = Depends(require_user)):
+    """Parse uploaded CSV / XLSX into a list of user dicts.
+
+    Column expectations match the Single-tab fields, so a Bulk import is
+    just N parallel Singles. All fields except Email are optional; missing
+    fields fall back to platform defaults.
+
+    Recognized columns (case-insensitive, exact name except where noted):
+
+      Email                            (REQUIRED)
+      First Name
+      Last Name                        (also accepts double-space "Last  Name")
+      Company
+      Department
+
+      Morta Access                     YES / NO   (default NO)
+      Morta Tag                        Permission tag NAME from registry
+                                       (resolved to tag_reference_id)
+
+      Revizto Access                   YES / NO   (default NO)
+      Revizto License Role             Role NAME (Collaborator / Content Creator / Guest)
+                                       (default: project's default_license_role)
+      Revizto Project Role             Role NAME (resolved against registry)
+      Revizto To License               YES / NO   (default YES)
+      Revizto To Project               YES / NO   (default YES)
+
+      ACC Access                       YES / NO   (default NO)
+      Forma Company                    Company NAME (resolved to id from registry)
+      Forma Role                       Role NAME (resolved to id from registry)
+      Forma Docs                       YES / NO   (default YES if Forma=YES)
+      Forma Design Coordination        YES / NO   (default NO)
+      Forma Model Coordination         YES / NO   (default NO)
+    """
     import pandas as pd
+
     contents = await file.read()
     if file.filename.endswith(".csv"):
         df = pd.read_csv(io.BytesIO(contents))
     else:
         df = pd.read_excel(io.BytesIO(contents), header=1)
     df.columns = df.columns.str.strip()
+
+    # Resolve registry-backed lookups for the ACTIVE project so name -> id
+    # mapping happens server-side. Same source the Single tab uses.
+    config    = load_config(user)
+    ctx       = config.get("active_context", {})
+    project_key = ctx.get("active_project_key", "")
+    registry  = load_registry()
+    plat      = (registry.get(project_key, {}) or {}).get("platforms", {}) or {}
+
+    morta_tags_by_name        = {(t.get("name") or "").strip().lower(): t.get("tag_reference_id", "")
+                                  for t in (plat.get("morta", {}) or {}).get("tags", []) or []}
+    revizto_lic_roles_by_name = {(r.get("name") or "").strip().lower(): r.get("id")
+                                  for r in (plat.get("revizto", {}) or {}).get("license_roles", []) or []}
+    revizto_proj_roles_by_name= {(r.get("name") or "").strip().lower(): r.get("id")
+                                  for r in (plat.get("revizto", {}) or {}).get("roles", []) or []}
+    forma_cos_by_name         = {(c.get("name") or "").strip().lower(): c.get("id", "")
+                                  for c in (plat.get("forma", {}) or {}).get("companies", []) or []}
+    forma_roles_by_name       = {(r.get("name") or "").strip().lower(): r.get("id", "")
+                                  for r in (plat.get("forma", {}) or {}).get("roles", []) or []}
+
+    default_lic_role = int(config.get(f"revizto_{ctx.get('revizto_region','dubai')}", {}).get("default_license_role", 2))
+
+    def cell(row, *names) -> str:
+        """Read first matching column. Tolerates dropped/renamed columns."""
+        for n in names:
+            v = row.get(n)
+            if v is not None and not (isinstance(v, float) and pd.isna(v)):
+                s = str(v).strip()
+                if s and s.lower() != "nan":
+                    return s
+        return ""
+
+    def yesno(row, *names, default: bool = False) -> bool:
+        v = cell(row, *names).upper()
+        if v in ("YES", "Y", "TRUE", "1"):    return True
+        if v in ("NO",  "N", "FALSE", "0"):   return False
+        return default
+
     users = []
-    for _, row in df.iterrows():
-        email = str(row.get("Email", "")).strip()
-        if not email or email == "nan": continue
-        fn = str(row.get("First Name", "")).strip()
-        ln = str(row.get("Last  Name", row.get("Last Name", ""))).strip()
-        co = str(row.get("Company", "")).strip()
-        dp = str(row.get("Department", "")).strip()
+    warnings = []
+    for idx, row in df.iterrows():
+        email = cell(row, "Email")
+        if not email:
+            continue
+
+        morta_on   = yesno(row, "Morta Access")
+        revizto_on = yesno(row, "Revizto Access")
+        forma_on   = yesno(row, "ACC Access", "Forma Access")
+
+        # Morta tag — resolve name -> id via registry
+        morta_tag_id = ""
+        morta_tag_name = cell(row, "Morta Tag", "Permission Tag")
+        if morta_tag_name:
+            tid = morta_tags_by_name.get(morta_tag_name.lower(), "")
+            if tid:
+                morta_tag_id = tid
+            else:
+                warnings.append(f"Row {idx+2}: Morta tag '{morta_tag_name}' not found in registry")
+
+        # Revizto license role — name OR numeric id; fall back to default
+        rev_lic_role = default_lic_role
+        rev_lic_name = cell(row, "Revizto License Role", "License Role")
+        if rev_lic_name:
+            if rev_lic_name.isdigit():
+                rev_lic_role = int(rev_lic_name)
+            else:
+                rid = revizto_lic_roles_by_name.get(rev_lic_name.lower())
+                if rid is not None:
+                    rev_lic_role = int(rid)
+                else:
+                    warnings.append(f"Row {idx+2}: Revizto license role '{rev_lic_name}' not found")
+
+        # Revizto project role — name -> id; null if not specified
+        rev_proj_role = None
+        rev_proj_name = cell(row, "Revizto Project Role", "Project Role")
+        if rev_proj_name:
+            pid = revizto_proj_roles_by_name.get(rev_proj_name.lower())
+            if pid is not None:
+                rev_proj_role = pid
+            else:
+                warnings.append(f"Row {idx+2}: Revizto project role '{rev_proj_name}' not found")
+
+        # Forma company — name -> id
+        forma_co_id = ""
+        forma_co_name = cell(row, "Forma Company", "ACC Company")
+        if forma_co_name:
+            cid = forma_cos_by_name.get(forma_co_name.lower(), "")
+            if cid:
+                forma_co_id = cid
+            else:
+                warnings.append(f"Row {idx+2}: Forma company '{forma_co_name}' not found in registry")
+
+        # Forma role — name -> id (single role; cockpit treats as a list)
+        forma_role_ids = []
+        forma_role_name = cell(row, "Forma Role", "ACC Role")
+        if forma_role_name:
+            rid = forma_roles_by_name.get(forma_role_name.lower(), "")
+            if rid:
+                forma_role_ids = [rid]
+            else:
+                warnings.append(f"Row {idx+2}: Forma role '{forma_role_name}' not found in registry")
+
+        # Forma products — at least Docs by default if Forma is on
+        products = []
+        if yesno(row, "Forma Docs",                 default=forma_on): products.append({"key": "docs",                 "access": "member"})
+        if yesno(row, "Forma Design Coordination",  default=False):    products.append({"key": "designCollaboration",   "access": "member"})
+        if yesno(row, "Forma Model Coordination",   default=False):    products.append({"key": "modelCoordination",     "access": "member"})
+
         users.append({
             "email":      email,
-            "first_name": "" if fn == "nan" else fn,
-            "last_name":  "" if ln == "nan" else ln,
-            "company":    "" if co == "nan" else co,
-            "department": "" if dp == "nan" else dp,
-            "morta":    str(row.get("Morta Access",   "")).strip().upper() == "YES",
-            "revizto":  str(row.get("Revizto Access", "")).strip().upper() == "YES",
-            "forma":    str(row.get("ACC Access",     "")).strip().upper() == "YES",
+            "first_name": cell(row, "First Name"),
+            "last_name":  cell(row, "Last  Name", "Last Name"),
+            "company":    cell(row, "Company"),
+            "department": cell(row, "Department"),
+            "morta":      morta_on,
+            "revizto":    revizto_on,
+            "forma":      forma_on,
+            "morta_tag_id":            morta_tag_id,
+            "revizto_license_role_id": rev_lic_role,
+            "revizto_project_role_id": rev_proj_role,
+            "revizto_invite_license":  yesno(row, "Revizto To License",  default=True),
+            "revizto_invite_project":  yesno(row, "Revizto To Project",  default=True),
+            "forma_company_id":        forma_co_id,
+            "forma_role_ids":          forma_role_ids,
+            "forma_products":          products if products else [{"key": "docs", "access": "member"}],
         })
-    return JSONResponse({"status": "success", "users": users, "total": len(users)})
+
+    return JSONResponse({
+        "status":   "success",
+        "users":    users,
+        "total":    len(users),
+        "warnings": warnings,
+    })
 
 @app.post("/api/invite/bulk")
 async def api_invite_bulk(request: Request, user: str = Depends(require_user)):
+    """Bulk invite — runs the same per-user logic as /api/invite/single,
+    once per row. Each user dict in the payload accepts the same fields
+    Single does, so the only difference between Single and Bulk is iteration.
+
+    Per-user fields (all optional except email):
+      first_name, last_name, company, department
+      morta            (bool)
+      morta_tag_id
+      revizto          (bool)
+      revizto_license_role_id  (int)
+      revizto_project_role_id  (int|null)
+      revizto_invite_license   (bool, default True)
+      revizto_invite_project   (bool, default True)
+      forma            (bool)
+      forma_company_id
+      forma_role_ids   (list[str])
+      forma_products   (list[{key, access}])
+    """
     data   = await request.json()
     config = load_config(user)
     users  = data.get("users", [])
@@ -5431,31 +5596,93 @@ async def api_invite_bulk(request: Request, user: str = Depends(require_user)):
     forma_project_name   = ctx.get("forma_project_name", "")   or data.get("forma_project_name", "")
     project_key          = ctx.get("active_project_key", "")
 
+    # Pull platform IDs from registry for the active project (single source of truth)
+    registry  = load_registry()
+    reg_proj  = registry.get(project_key, {})
+    platforms = reg_proj.get("platforms", {})
+    morta_hub_id = platforms.get("morta", {}).get("hub_id", "") or ctx.get("morta_hub_id", "")
+
+    default_lic_role = int(config.get(f"revizto_{ctx.get('revizto_region','dubai')}", {}).get("default_license_role", 2))
+
     results = []
     for u in users:
+        email      = (u.get("email") or "").strip()
+        first_name = u.get("first_name", "")
+        last_name  = u.get("last_name", "")
+        company    = u.get("company", "")
+        department = u.get("department", "")
+
         result = {
-            "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "mode": "bulk", "email": u["email"],
-            "first_name": u.get("first_name", ""), "last_name": u.get("last_name", ""),
-            "company": u.get("company", ""), "department": u.get("department", ""),
-            "morta_status": "skipped", "revizto_status": "skipped", "forma_status": "skipped",
-            "revizto_project": revizto_project_name, "forma_project": forma_project_name,
+            "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "mode": "bulk",
+            "email": email,
+            "first_name": first_name,
+            "last_name": last_name,
+            "company": company,
+            "department": department,
+            "morta_status": "skipped",
+            "revizto_status": "skipped",
+            "forma_status": "skipped",
+            "revizto_project": revizto_project_name,
+            "forma_project": forma_project_name,
             "project_key": project_key,
         }
+
+        # ── Morta ──
         if u.get("morta"):
-            r = morta_invite(u["email"], config)
+            r = morta_invite(email, config, hub_id=morta_hub_id,
+                             tag_reference_id=u.get("morta_tag_id", ""))
             result["morta_status"] = r["status"]
+            if r["status"] != "success":
+                result["morta_detail"] = r.get("detail", "")
+
+        # ── Revizto ──
         if u.get("revizto"):
-            r = revizto_invite(u["email"], u.get("first_name", ""), u.get("last_name", ""),
-                              u.get("company", ""), u.get("department", ""), config,
-                              project_uuid=revizto_project_uuid, admin_email=user)
+            lic_role  = int(u.get("revizto_license_role_id") or default_lic_role)
+            proj_role = u.get("revizto_project_role_id") or None
+            to_lic    = bool(u.get("revizto_invite_license", True))
+            to_proj   = bool(u.get("revizto_invite_project", True))
+            r = revizto_invite(
+                email, first_name, last_name, company, department, config,
+                project_uuid=revizto_project_uuid,
+                license_role_id=lic_role,
+                project_role_id=proj_role,
+                invite_to_license=to_lic,
+                invite_to_project=to_proj,
+                admin_email=user,
+            )
             result["revizto_status"] = r["status"]
+            if r["status"] != "success":
+                result["revizto_detail"] = r.get("detail", "")
+
+        # ── Forma ──
         if u.get("forma"):
-            r = forma_invite(u["email"], config, project_id=forma_project_id)
+            forma_products = u.get("forma_products") or [{"key": "docs", "access": "member"}]
+            r = forma_invite(
+                email, config,
+                project_id=forma_project_id,
+                company_id=u.get("forma_company_id", "") or None,
+                role_ids=u.get("forma_role_ids", []) or None,
+                products=forma_products,
+            )
             result["forma_status"] = r["status"]
+            if r["status"] != "success":
+                result["forma_detail"] = r.get("detail", "")
+
         results.append(result)
-    if results: append_invite_log(results)
-    success = sum(1 for r in results if not any(r[k].startswith("error") for k in ["morta_status", "revizto_status", "forma_status"] if r[k] != "skipped"))
-    return JSONResponse({"status": "success", "total": len(results), "success": success, "errors": len(results) - success})
+
+    if results:
+        append_invite_log(results)
+
+    success = sum(1 for r in results if not any(
+        r[k].startswith("error") for k in ["morta_status", "revizto_status", "forma_status"] if r[k] != "skipped"
+    ))
+    return JSONResponse({
+        "status":  "success",
+        "total":   len(results),
+        "success": success,
+        "errors":  len(results) - success,
+    })
 
 # ---------------------------------------------------------------------------
 # API — User Search
