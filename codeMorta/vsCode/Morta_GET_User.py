@@ -63,4 +63,4 @@ if __name__ == "__main__":
     print(f"Role:  {user.get('project_role')}")
     print(f"Tags:  {user.get('tags')}")
     print(f"ID:    {user.get('public_id')}")
-    print(f"\n[Morta] Saved user record
+    print(f"\n[Morta] Saved user record to {USER_JSON}")
