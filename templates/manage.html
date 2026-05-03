@@ -91,144 +91,85 @@
     .target-info .target-row{display:flex;align-items:center;gap:8px;margin:4px 0}
     .target-info .target-label{font-weight:600;width:60px;text-transform:uppercase;letter-spacing:.3px;color:var(--text-dark-muted)}
     .target-info .target-value{color:var(--navy);font-weight:500}
-    /* ── Step 2 Review table — wide multi-section schema ───────────────────
-       Mimics the packages.html inline preview pattern: bounded box, sticky
-       header, internal horizontal+vertical scroll. The table can be wider
-       than its container; scroll horizontally to see Forma columns when
-       the modal is narrow.
-
-       Two-row sticky header (top:0 and top:Npx) so platform-section labels
-       stay above column names while scrolling. Plus sticky-left columns
-       (checkbox + Email) so admin always sees who they're inviting even
-       after scrolling 20+ columns to the right. */
-    .preview-table {
-        margin: 12px 0;
-        max-height: 440px;
-        max-width: 100%;
-        overflow: auto;
-        border: 1px solid var(--border-cream);
-        border-radius: var(--radius);
-        background: white;
+    /* ── Invite Users table — minimal style matching the Invite Log
+       The wide multi-section sticky design didn't fit on the page. We
+       use plain rows wrapped in `.table-wrapper` (which has overflow-x)
+       so any extra width scrolls inside the card rather than pushing
+       the page wider. Form controls inside cells are compact but
+       legible. No section colors, no sticky panes. */
+    #previewTable, #reviewTable {
+        margin: 8px 0 0;
+        overflow-x: auto;
     }
-    .preview-table table {
-        border-collapse: separate;   /* needed for sticky cells to layer cleanly */
-        border-spacing: 0;
-        font-size: 11.5px;
-        font-family: var(--font);
-    }
-    .preview-table th,
-    .preview-table td {
-        padding: 5px 9px;
-        text-align: left;
-        white-space: nowrap;
-        vertical-align: top;
-        border-bottom: 1px solid var(--border-cream);
-        background: white; /* opaque, prevents bleed-through under sticky */
-    }
-    /* Top header row — section labels (Morta / Revizto / Forma).
-       z-index: 4 so it sits above column-name row AND sticky-left cells. */
-    .preview-table thead tr.row-section th {
-        position: sticky;
-        top: 0;
-        z-index: 4;
-        background: var(--cream);
-        font-weight: 600;
+    #previewTable table, #reviewTable table {
+        width: 100%;
+        border-collapse: collapse;
         font-size: var(--fs-xs);
-        color: var(--navy);
-        text-align: center;
-        text-transform: uppercase;
-        letter-spacing: 0.6px;
-        border-bottom: 1px solid var(--border-cream);
     }
-    /* Bottom header row — actual column names. Stick directly under the
-       section row. The 27px is the section row's measured height — if you
-       change padding/font on .row-section, retune this. */
-    .preview-table thead tr.row-cols th {
-        position: sticky;
-        top: 27px;
-        z-index: 3;
-        background: #eef1f5;
-        font-weight: 600;
-        color: var(--navy);
-        font-size: 11px;
+    #previewTable th, #reviewTable th {
+        font-size: 10px;
         text-transform: uppercase;
         letter-spacing: 0.4px;
-        box-shadow: inset 0 -1px 0 var(--border-cream);
+        color: var(--text-dark-muted);
+        padding: 6px 8px;
+        text-align: left;
+        border-bottom: 2px solid var(--border-cream);
+        font-weight: 600;
+        white-space: nowrap;
     }
-    /* Section colors — faded in body, slightly stronger in header.
-       Body cells inherit from these classes for visual grouping. */
-    .preview-table .sec-morta-head    { background: rgba( 74,158,255,0.28); }
-    .preview-table .sec-revizto-head  { background: rgba(220, 80, 80,0.28); }
-    .preview-table .sec-forma-head    { background: rgba(245,158, 11,0.28); }
-    .preview-table .sec-morta         { background: rgba( 74,158,255,0.06); }
-    .preview-table .sec-revizto       { background: rgba(220, 80, 80,0.05); }
-    .preview-table .sec-forma         { background: rgba(245,158, 11,0.06); }
-    /* Section dividers — vertical separators between platform groups */
-    .preview-table .sec-divider-l { border-left: 2px solid var(--border-cream); }
-    /* Sticky left columns — checkbox + Email + Name. Offsets reflect
-       the actual measured widths of the columns to the left.
-       After dropping top-level Company/Department, only 3 columns are
-       sticky: ☑(32) + Email(200) + Name(130). */
-    .preview-table .stick-l1 { position: sticky; left: 0;        z-index: 2; }
-    .preview-table .stick-l2 { position: sticky; left: 32px;     z-index: 2; min-width: 200px; }
-    .preview-table .stick-l3 { position: sticky; left: 232px;    z-index: 2; min-width: 130px; box-shadow: 1px 0 0 var(--border-cream); }
-    .preview-table thead .stick-l1,
-    .preview-table thead .stick-l2,
-    .preview-table thead .stick-l3 { z-index: 5; }
-    .preview-table tbody .stick-l1,
-    .preview-table tbody .stick-l2,
-    .preview-table tbody .stick-l3 { background: white; }
-    .preview-table tbody tr:hover td { background: #fafbfc; }
-    .preview-table tbody tr:hover .sec-morta   { background: rgba( 74,158,255,0.10); }
-    .preview-table tbody tr:hover .sec-revizto { background: rgba(220, 80, 80,0.09); }
-    .preview-table tbody tr:hover .sec-forma   { background: rgba(245,158, 11,0.10); }
-    /* Compact yes/no flag look — used for Invite to Lic/Project, Forma modules */
-    .preview-table .flag-on  { color: var(--success); font-weight: 600; }
-    .preview-table .flag-off { color: var(--text-dark-muted); text-decoration: line-through; }
-    .preview-table .muted    { color: var(--text-dark-muted); font-style: italic; }
-
-    /* ── In-cell form controls (Compose stage)
-       The Compose-stage table is editable: cells contain text inputs,
-       <select>s, and checkboxes. They need to be visually compact, fit
-       within the cell padding, and have clear focus states. */
-    .preview-table .cell-input {
+    #previewTable td, #reviewTable td {
+        padding: 5px 8px;
+        font-size: var(--fs-xs);
+        border-bottom: 1px solid var(--border-cream);
+        color: var(--text-dark);
+        white-space: nowrap;
+        vertical-align: middle;
+    }
+    #previewTable tr:hover td { background: #fafbfc; }
+    /* Empty-state row */
+    #previewTable .empty-row td {
+        text-align: center;
+        color: var(--text-dark-muted);
+        padding: 20px;
+        font-style: italic;
+    }
+    /* Compact in-cell controls. Borderless until hover/focus so the
+       row reads as a row, not a forest of input boxes. */
+    .cell-input {
         width: 100%;
-        min-width: 90px;
-        max-width: 180px;
-        padding: 2px 5px;
-        border: 1px solid transparent;   /* invisible until focus/hover */
+        min-width: 70px;
+        padding: 3px 5px;
+        border: 1px solid transparent;
         border-radius: 3px;
         background: transparent;
         font: inherit;
-        font-size: 11.5px;
+        font-size: var(--fs-xs);
         color: var(--text-dark);
     }
-    .preview-table .cell-input:hover  { border-color: var(--border-cream); background: white; }
-    .preview-table .cell-input:focus  { outline: none; border-color: var(--accent); background: white; box-shadow: 0 0 0 2px rgba(74,158,255,.15); }
-    /* <select> needs slightly different padding to look right cross-browser */
+    .cell-input:hover { border-color: var(--border-cream); background: white; }
+    .cell-input:focus { outline: none; border-color: var(--accent); background: white; box-shadow: 0 0 0 2px rgba(74,158,255,.15); }
     select.cell-input { padding: 2px 4px; cursor: pointer; }
-    /* Checkbox cell — center it, slightly larger for tap area */
-    .preview-table .cell-check {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-    }
-    .preview-table .cell-check input[type="checkbox"] {
-        width: 14px;
-        height: 14px;
+    .cell-check { text-align: center; }
+    .cell-check input[type="checkbox"] {
+        width: 13px; height: 13px;
         accent-color: var(--navy);
         cursor: pointer;
         margin: 0;
+        vertical-align: middle;
     }
-    /* When platform's "On" checkbox is unchecked, fade that platform's
-       cells in this row to signal they're inert. JS toggles .platform-off
-       on the <tr> for each platform that's off. */
-    tr.morta-off   .sec-morta   .cell-input,
-    tr.morta-off   .sec-morta   .cell-check input,
-    tr.revizto-off .sec-revizto .cell-input,
-    tr.revizto-off .sec-revizto .cell-check input,
-    tr.forma-off   .sec-forma   .cell-input,
-    tr.forma-off   .sec-forma   .cell-check input { opacity: .35; pointer-events: none; }
+    /* When a row's platform is OFF, fade that platform's cells. The JS
+       toggles .morta-off / .revizto-off / .forma-off on the <tr>. */
+    tr.morta-off   td.col-morta   .cell-input,
+    tr.morta-off   td.col-morta   .cell-check input,
+    tr.revizto-off td.col-revizto .cell-input,
+    tr.revizto-off td.col-revizto .cell-check input,
+    tr.forma-off   td.col-forma   .cell-input,
+    tr.forma-off   td.col-forma   .cell-check input { opacity: .35; pointer-events: none; }
+
+    /* Faded helper text shown in readonly review */
+    .muted    { color: var(--text-dark-muted); font-style: italic; }
+    .flag-on  { color: var(--success); font-weight: 600; }
+    .flag-off { color: var(--text-dark-muted); text-decoration: line-through; }
 </style>
 {% endblock %}
 
@@ -240,13 +181,6 @@
         <input type="text" id="searchEmail" placeholder="Search by email address..." onkeydown="if(event.key==='Enter')searchUser()">
     </div>
     <button class="btn btn-primary" id="btnSearch" onclick="searchUser()">Search</button>
-    <button class="btn btn-secondary" id="btnRefreshMeta" onclick="refreshPlatformMetadata()" title="Re-sync Morta tags, Revizto roles, Forma companies + roles for all your projects">
-        <svg id="refreshMetaIcon" xmlns="http://www.w3.org/2000/svg" width="11" height="11" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" style="vertical-align:-1px;margin-right:4px;">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
-        </svg>
-        <span id="refreshMetaLabel">Refresh metadata</span>
-    </button>
-    <button class="btn btn-accent" id="btnToggleInvite" onclick="toggleInviteCard()">+ Invite</button>
 </div>
 
 <div id="userDetail" class="user-detail">
@@ -261,6 +195,90 @@
         <div class="platform-section" id="mortaSection"><div class="platform-section-header"><span class="platform-tag morta">Morta</span><span class="section-title" id="mortaTitle"></span></div><div id="mortaContent"></div></div>
         <div class="platform-section" id="reviztoSection"><div class="platform-section-header"><span class="platform-tag revizto">Revizto</span><span class="section-title" id="reviztoTitle"></span></div><div id="reviztoContent"></div></div>
         <div class="platform-section" id="formaSection"><div class="platform-section-header"><span class="platform-tag forma">Forma / ACC</span><span class="section-title" id="formaTitle"></span></div><div id="formaContent"></div></div>
+    </div>
+</div>
+
+<!-- ── Invite Users ──────────────────────────────────────────────────
+     Same shape as Pending Submissions: header with title and action
+     buttons on the right. Body is collapsed by default; clicking
+     "+ Invite" expands it down (within the card's bounds, no overflow).
+     The table inside scrolls horizontally if it doesn't fit, exactly
+     like the Invite Log table. -->
+<div class="card" style="margin-bottom:16px;">
+    <div class="card-header">
+        <span class="card-title">Invite Users</span>
+        <div style="display:flex;align-items:center;gap:8px;margin-left:auto;">
+            <button id="btnRefreshMeta" class="btn btn-secondary" style="padding:4px 10px;font-size:var(--fs-xs);" onclick="refreshPlatformMetadata()" title="Re-sync Morta tags, Revizto roles, Forma companies + roles for all your projects">
+                <svg id="refreshMetaIcon" xmlns="http://www.w3.org/2000/svg" width="11" height="11" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" style="vertical-align:-1px;margin-right:3px;">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                </svg>
+                <span id="refreshMetaLabel">Refresh metadata</span>
+            </button>
+            <button id="btnToggleInvite" class="btn btn-accent" style="padding:4px 10px;font-size:var(--fs-xs);" onclick="toggleInviteCard()">+ Invite</button>
+        </div>
+    </div>
+
+    <!-- Body — collapsed (display:none) until + Invite is clicked.
+         When expanded, contains stage panels: Compose / Review / Results. -->
+    <div id="inviteCardBody" style="display:none;padding:0 16px 16px;">
+
+        <!-- Stage A: Compose -->
+        <div id="inviteCompose">
+            <div class="mode-toggle" style="margin:8px 0 12px;">
+                <button id="btnBulk"   class="active" onclick="setInviteMode('bulk')">Bulk Upload</button>
+                <button id="btnSingle"               onclick="setInviteMode('single')">Single User</button>
+            </div>
+
+            <!-- Bulk-only upload zone -->
+            <div id="bulkUploadZone" style="margin-bottom:12px;">
+                <div class="upload-zone-lg" onclick="document.getElementById('fileInput').click()">
+                    <div style="font-size:28px;line-height:1;color:var(--text-dark-muted);">+</div>
+                    <div style="margin-top:6px;font-size:var(--fs-sm);color:var(--text-dark-muted);">Click to upload .xlsx or .csv file</div>
+                    <div id="fileName" style="margin-top:4px;font-size:var(--fs-xs);color:var(--navy);"></div>
+                </div>
+                <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" style="display:none" onchange="handleFile(this)">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-top:8px;">
+                    <p style="font-size:var(--fs-xs);color:var(--text-dark-muted);margin:0;flex:1;">
+                        Required: <strong>Email</strong>. Optional columns: First Name, Last Name, Morta Access, Morta Tag, Revizto Access, Revizto License Role, Revizto Project Role, Revizto To License, Revizto To Project, Revizto Company, Revizto Department, Revizto Location, ACC Access, Forma Company, Forma Role, Forma Docs, Forma Design Coordination, Forma Model Coordination.
+                    </p>
+                    <button type="button" class="btn btn-secondary" style="font-size:var(--fs-xs);white-space:nowrap;flex-shrink:0;padding:3px 8px;" onclick="downloadBulkTemplate()">
+                        ↓ Template CSV
+                    </button>
+                </div>
+            </div>
+
+            <!-- Editable table — uses .table-wrapper for bounded horizontal
+                 scroll, same as Invite Log. previewTable's contents are
+                 swapped in by renderCompose(). -->
+            <div id="previewTable"></div>
+
+            <!-- Action footer -->
+            <div style="display:flex;justify-content:space-between;align-items:center;padding-top:10px;margin-top:10px;border-top:1px solid var(--border-cream);">
+                <div id="footerLeft" style="font-size:var(--fs-xs);color:var(--text-dark-muted);"></div>
+                <div style="display:flex;gap:6px;">
+                    <button class="btn btn-secondary" style="padding:4px 10px;font-size:var(--fs-xs);" onclick="closeInviteCard()">Cancel</button>
+                    <button class="btn btn-primary" id="btnReview" style="padding:4px 12px;font-size:var(--fs-xs);" onclick="goToReview()">Review</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Stage B: Review (read-only) -->
+        <div id="inviteReview" style="display:none;">
+            <div class="target-info" id="targetInfo" style="background:var(--cream);padding:10px 12px;border-radius:var(--radius);margin:8px 0 12px;font-size:var(--fs-xs);"></div>
+            <div id="reviewTable"></div>
+            <div style="display:flex;justify-content:space-between;align-items:center;padding-top:10px;margin-top:10px;border-top:1px solid var(--border-cream);">
+                <div id="reviewFooterLeft" style="font-size:var(--fs-xs);color:var(--text-dark-muted);"></div>
+                <div style="display:flex;gap:6px;">
+                    <button class="btn btn-secondary" style="padding:4px 10px;font-size:var(--fs-xs);" onclick="backFromReview()">Back to Edit</button>
+                    <button class="btn btn-primary" id="btnSend" style="padding:4px 12px;font-size:var(--fs-xs);" onclick="sendInvites()">Confirm &amp; Send</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Stage C: Results -->
+        <div id="inviteResults" style="display:none;padding:10px 0;">
+            <div id="resultsContent"></div>
+        </div>
     </div>
 </div>
 
@@ -301,84 +319,6 @@
 </div>
 
 
-<!-- ── Inline Invite Card ────────────────────────────────────────────
-     Replaces the popup modal. Same flow (Compose → Review → Results)
-     but renders inline as a card on the Manage page. The wide multi-
-     section table is the primary editing surface — admin fills in or
-     uploads users, edits per-row in dropdowns / text inputs / checkboxes,
-     then clicks Review to lock the data and Confirm & Send to ship it.
-     Closed by default; toggleInviteCard() opens/closes. -->
-<div id="inviteCard" class="card" style="display:none;margin-bottom:20px;padding:0;">
-    <div style="padding:14px 18px;border-bottom:1px solid var(--border-cream);display:flex;align-items:center;justify-content:space-between;">
-        <div>
-            <div style="font-weight:600;color:var(--navy);font-size:var(--fs-md);">Invite Users</div>
-            <div id="inviteCardSubtitle" style="font-size:var(--fs-xs);color:var(--text-dark-muted);margin-top:2px;">Active project: <strong style="color:var(--navy);">{{ active_context.active_project_name if active_context else '—' }}</strong></div>
-        </div>
-        <button class="modal-close" onclick="closeInviteCard()" title="Close" style="background:none;border:none;cursor:pointer;color:var(--text-dark-muted);font-size:22px;font-family:var(--font);line-height:1;">&times;</button>
-    </div>
-
-    <!-- ── Stage A: Compose ───────────────────────────────────────────
-         Mode toggle (Bulk / Single) + (Bulk only) upload zone +
-         editable wide table + footer with Review button. -->
-    <div id="inviteCompose" style="padding:18px;">
-        <div class="mode-toggle" style="margin-bottom:14px;">
-            <button id="btnBulk"   class="active" onclick="setInviteMode('bulk')">Bulk Upload</button>
-            <button id="btnSingle"               onclick="setInviteMode('single')">Single User</button>
-        </div>
-
-        <!-- Bulk-only: large dashed upload zone + Template button -->
-        <div id="bulkUploadZone" style="margin-bottom:14px;">
-            <div class="upload-zone-lg" onclick="document.getElementById('fileInput').click()">
-                <div style="font-size:32px;line-height:1;color:var(--text-dark-muted);">+</div>
-                <div style="margin-top:8px;font-size:var(--fs-sm);color:var(--text-dark-muted);">Click to upload .xlsx or .csv file</div>
-                <div id="fileName" style="margin-top:6px;font-size:var(--fs-xs);color:var(--navy);"></div>
-            </div>
-            <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" style="display:none" onchange="handleFile(this)">
-            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-top:8px;">
-                <p style="font-size:var(--fs-xs);color:var(--text-dark-muted);margin:0;flex:1;">
-                    Required: <strong>Email</strong>. Optional: First Name, Last Name, Morta Access (YES/NO), Morta Tag, Revizto Access, Revizto License Role, Revizto Project Role, Revizto To License, Revizto To Project, Revizto Company, Revizto Department, Revizto Location, ACC Access, Forma Company, Forma Role, Forma Docs, Forma Design Coordination, Forma Model Coordination.
-                </p>
-                <button type="button" class="btn btn-secondary" style="font-size:var(--fs-xs);white-space:nowrap;flex-shrink:0;" onclick="downloadBulkTemplate()">
-                    ↓ Template CSV
-                </button>
-            </div>
-        </div>
-
-        <!-- The editable wide table — populated from previewUsers[].
-             Cells are dropdowns / text inputs / checkboxes per Q3b. -->
-        <div class="preview-table" id="previewTable"></div>
-
-        <!-- Footer: counter on the left, action buttons on the right -->
-        <div style="display:flex;justify-content:space-between;align-items:center;padding-top:14px;margin-top:14px;border-top:1px solid var(--border-cream);">
-            <div id="footerLeft" style="font-size:var(--fs-xs);color:var(--text-dark-muted);"></div>
-            <div style="display:flex;gap:8px;">
-                <button class="btn btn-secondary" onclick="closeInviteCard()">Cancel</button>
-                <button class="btn btn-primary" id="btnReview" onclick="goToReview()">Review</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- ── Stage B: Review (read-only) ────────────────────────────────
-         Shown after admin clicks Review. Same wide table but every
-         cell renders the value as static text. Footer changes to
-         Back + Confirm & Send. -->
-    <div id="inviteReview" style="display:none;padding:18px;">
-        <div class="target-info" id="targetInfo" style="background:var(--cream);padding:12px 14px;border-radius:var(--radius);margin-bottom:14px;"></div>
-        <div class="preview-table" id="reviewTable"></div>
-        <div style="display:flex;justify-content:space-between;align-items:center;padding-top:14px;margin-top:14px;border-top:1px solid var(--border-cream);">
-            <div id="reviewFooterLeft" style="font-size:var(--fs-xs);color:var(--text-dark-muted);"></div>
-            <div style="display:flex;gap:8px;">
-                <button class="btn btn-secondary" onclick="backFromReview()">Back to Edit</button>
-                <button class="btn btn-primary" id="btnSend" onclick="sendInvites()">Confirm &amp; Send</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- ── Stage C: Results ────────────────────────────────────────── -->
-    <div id="inviteResults" style="display:none;padding:18px;">
-        <div id="resultsContent"></div>
-    </div>
-</div>
 {% endblock %}
 
 {% block scripts %}
@@ -788,9 +728,6 @@ window.addEventListener('cockpit:projectChanged', (e) => {
     if (inviteStage !== 'closed') closeInviteCard();
     renderPendingList();  // re-filter pending to new active project
     loadInviteLog(e.detail.key || null);
-    // Update the card subtitle if the card is later opened
-    const sub = document.getElementById('inviteCardSubtitle');
-    if (sub) sub.innerHTML = `Active project: <strong style="color:var(--navy);">${e.detail.name || '—'}</strong>`;
 });
 
 // ── Open / close / mode ────────────────────────────────────────────
@@ -800,7 +737,8 @@ function toggleInviteCard() {
 }
 function openInviteCard() {
     inviteStage = 'compose';
-    document.getElementById('inviteCard').style.display = 'block';
+    document.getElementById('inviteCardBody').style.display = 'block';
+    document.getElementById('btnToggleInvite').textContent  = '× Close';
     setInviteMode(inviteMode);  // applies current mode
     // Default Compose with a single empty row in Single mode, empty in
     // Bulk (rows arrive on upload). Reset on every open.
@@ -811,12 +749,11 @@ function openInviteCard() {
     }
     showStage('compose');
     renderCompose();
-    // Scroll the card into view so admin sees the editing surface
-    document.getElementById('inviteCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 function closeInviteCard() {
     inviteStage = 'closed';
-    document.getElementById('inviteCard').style.display = 'none';
+    document.getElementById('inviteCardBody').style.display = 'none';
+    document.getElementById('btnToggleInvite').textContent  = '+ Invite';
     previewUsers = [];
     // Reset file input so re-opening doesn't pre-populate with stale upload
     const fi = document.getElementById('fileInput');
@@ -958,10 +895,13 @@ function downloadBulkTemplate() {
     URL.revokeObjectURL(url);
 }
 
-// ── Render: Compose stage (editable wide table) ────────────────────
-// This is the primary editing surface. Each row's cells are wired to
-// previewUsers[i] via two-way binding — admin edits a cell, the array
-// updates, Review reads from the array.
+// ── Render: Compose stage (editable table) ────────────────────────
+// Same wide list of columns as before but rendered as a plain table
+// like the Invite Log: no section colors, no sticky panes. The
+// table is wrapped in #previewTable which has overflow-x:auto, so
+// any extra width scrolls inside the card rather than pushing the
+// page wider. Each cell is wired to previewUsers[i] via two-way
+// binding — admin edits, the array stays in sync.
 function renderCompose() {
     const ak   = activeCtx?.active_project_key || '';
     const reg  = (_subRegistry || {})[ak] || {};
@@ -977,63 +917,43 @@ function renderCompose() {
     const esc = s => String(s == null ? '' : s)
         .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+    const sel = (val, current) => String(val) === String(current) ? ' selected' : '';
 
-    // Build <option> lists once — same for every row
-    const optsTag       = '<option value="">— None —</option>' + tags.map(t => `<option value="${esc(t.tag_reference_id)}">${esc(t.name)}</option>`).join('');
-    const optsLicRole   =                                       revLicRoles.map(r => `<option value="${r.id}">${esc(r.name)}</option>`).join('');
-    const optsProjRole  = '<option value="">— None —</option>' + revProjRoles.map(r => `<option value="${r.id}">${esc(r.name)}</option>`).join('');
-    const optsFoCo      = '<option value="">— None —</option>' + formaCos.map(c => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('');
-    const optsFoRole    = '<option value="">— None —</option>' + formaRoles.map(r => `<option value="${esc(r.id)}">${esc(r.name)}</option>`).join('');
-
-    // Header (same as before but no top-level Company/Department).
-    // Total cols: 3 identity (☑ + Email + Name) + 2 morta + 8 revizto + 6 forma = 19
     let html = `<table>
-      <thead>
-        <tr class="row-section">
-          <th colspan="3" style="background:var(--cream);"></th>
-          <th colspan="2" class="sec-morta-head sec-divider-l">MORTA</th>
-          <th colspan="8" class="sec-revizto-head sec-divider-l">REVIZTO</th>
-          <th colspan="6" class="sec-forma-head sec-divider-l">FORMA</th>
-        </tr>
-        <tr class="row-cols">
-          <th class="stick-l1" style="width:32px;"></th>
-          <th class="stick-l2">Email</th>
-          <th class="stick-l3">Name</th>
-
-          <th class="sec-morta sec-divider-l">On</th>
-          <th class="sec-morta">Tag</th>
-
-          <th class="sec-revizto sec-divider-l">On</th>
-          <th class="sec-revizto">Company</th>
-          <th class="sec-revizto">Department</th>
-          <th class="sec-revizto">Location</th>
-          <th class="sec-revizto">License Role</th>
-          <th class="sec-revizto">Project Role</th>
-          <th class="sec-revizto" title="Invite to license">L</th>
-          <th class="sec-revizto" title="Invite to project">P</th>
-
-          <th class="sec-forma sec-divider-l">On</th>
-          <th class="sec-forma">Company</th>
-          <th class="sec-forma">Role</th>
-          <th class="sec-forma">Docs</th>
-          <th class="sec-forma">Design</th>
-          <th class="sec-forma">Model</th>
-        </tr>
-      </thead>
+      <thead><tr>
+        <th style="width:24px;"></th>
+        <th>Email</th>
+        <th>Name</th>
+        <th>Morta</th>
+        <th>Tag</th>
+        <th>Revizto</th>
+        <th>Rev Co</th>
+        <th>Rev Dept</th>
+        <th>Location</th>
+        <th>License Role</th>
+        <th>Project Role</th>
+        <th title="Invite to license">L</th>
+        <th title="Invite to project">P</th>
+        <th>Forma</th>
+        <th>Forma Co</th>
+        <th>Forma Role</th>
+        <th>Docs</th>
+        <th>Design</th>
+        <th>Model</th>
+      </tr></thead>
       <tbody>`;
 
     if (previewUsers.length === 0) {
-        html += `<tr><td colspan="19" style="text-align:center;color:var(--text-dark-muted);padding:24px;">
-            ${inviteMode === 'bulk' ? 'Upload a CSV/XLSX file to populate the table.' : 'Click "Single User" to add a row, or paste a list above.'}
-        </td></tr>`;
+        html += `<tr class="empty-row"><td colspan="19">${
+            inviteMode === 'bulk'
+                ? 'Upload a CSV/XLSX file to populate the table.'
+                : 'Switch to Single User to add a row.'
+        }</td></tr>`;
     } else {
         previewUsers.forEach((u, i) => {
             const fullName = ((u.first_name || '') + ' ' + (u.last_name || '')).trim();
             const products = u.forma_products || [];
             const has = key => products.some(p => p.key === key);
-            // Selected option helpers
-            const sel = (val, current) => String(val) === String(current) ? ' selected' : '';
-
             const trClasses = [
                 u.morta   ? '' : 'morta-off',
                 u.revizto ? '' : 'revizto-off',
@@ -1041,64 +961,64 @@ function renderCompose() {
             ].filter(Boolean).join(' ');
 
             html += `<tr class="${trClasses}" data-idx="${i}">
-              <td class="stick-l1 cell-check">
-                <input type="checkbox" data-bind="_skip" ${u._skip ? '' : 'checked'}>
+              <td class="cell-check">
+                <input type="checkbox" data-bind="_skip" ${u._skip ? '' : 'checked'} title="Include in send">
               </td>
-              <td class="stick-l2">
-                <input type="email" class="cell-input" data-bind="email" value="${esc(u.email)}" placeholder="user@company.com">
+              <td>
+                <input type="email" class="cell-input" data-bind="email" value="${esc(u.email)}" placeholder="user@company.com" style="min-width:160px;">
               </td>
-              <td class="stick-l3">
-                <input type="text" class="cell-input" data-bind="full_name" value="${esc(fullName)}" placeholder="First Last" style="min-width:110px;">
+              <td>
+                <input type="text" class="cell-input" data-bind="full_name" value="${esc(fullName)}" placeholder="First Last" style="min-width:120px;">
               </td>
 
-              <td class="sec-morta sec-divider-l cell-check">
+              <td class="col-morta cell-check">
                 <input type="checkbox" data-bind="morta" ${u.morta ? 'checked' : ''}>
               </td>
-              <td class="sec-morta">
-                <select class="cell-input" data-bind="morta_tag_id">${optsTag.replace(`value="${esc(u.morta_tag_id)}"`, `value="${esc(u.morta_tag_id)}" selected`)}</select>
+              <td class="col-morta">
+                <select class="cell-input" data-bind="morta_tag_id" style="min-width:140px;"><option value="">— None —</option>${tags.map(t => `<option value="${esc(t.tag_reference_id)}"${sel(t.tag_reference_id, u.morta_tag_id)}>${esc(t.name)}</option>`).join('')}</select>
               </td>
 
-              <td class="sec-revizto sec-divider-l cell-check">
+              <td class="col-revizto cell-check">
                 <input type="checkbox" data-bind="revizto" ${u.revizto ? 'checked' : ''}>
               </td>
-              <td class="sec-revizto">
+              <td class="col-revizto">
                 <input type="text" class="cell-input" data-bind="revizto_company" value="${esc(u.revizto_company)}">
               </td>
-              <td class="sec-revizto">
+              <td class="col-revizto">
                 <input type="text" class="cell-input" data-bind="revizto_department" value="${esc(u.revizto_department)}">
               </td>
-              <td class="sec-revizto">
+              <td class="col-revizto">
                 <input type="text" class="cell-input" data-bind="revizto_location" value="${esc(u.revizto_location)}">
               </td>
-              <td class="sec-revizto">
-                <select class="cell-input" data-bind="revizto_license_role_id">${revLicRoles.map(r => `<option value="${r.id}"${sel(r.id, u.revizto_license_role_id)}>${esc(r.name)}</option>`).join('')}</select>
+              <td class="col-revizto">
+                <select class="cell-input" data-bind="revizto_license_role_id" style="min-width:120px;">${revLicRoles.map(r => `<option value="${r.id}"${sel(r.id, u.revizto_license_role_id)}>${esc(r.name)}</option>`).join('')}</select>
               </td>
-              <td class="sec-revizto">
-                <select class="cell-input" data-bind="revizto_project_role_id"><option value="">— None —</option>${revProjRoles.map(r => `<option value="${r.id}"${sel(r.id, u.revizto_project_role_id)}>${esc(r.name)}</option>`).join('')}</select>
+              <td class="col-revizto">
+                <select class="cell-input" data-bind="revizto_project_role_id" style="min-width:120px;"><option value="">— None —</option>${revProjRoles.map(r => `<option value="${r.id}"${sel(r.id, u.revizto_project_role_id)}>${esc(r.name)}</option>`).join('')}</select>
               </td>
-              <td class="sec-revizto cell-check">
+              <td class="col-revizto cell-check">
                 <input type="checkbox" data-bind="revizto_invite_license" ${u.revizto_invite_license !== false ? 'checked' : ''}>
               </td>
-              <td class="sec-revizto cell-check">
+              <td class="col-revizto cell-check">
                 <input type="checkbox" data-bind="revizto_invite_project" ${u.revizto_invite_project === true ? 'checked' : ''}>
               </td>
 
-              <td class="sec-forma sec-divider-l cell-check">
+              <td class="col-forma cell-check">
                 <input type="checkbox" data-bind="forma" ${u.forma ? 'checked' : ''}>
               </td>
-              <td class="sec-forma">
-                <select class="cell-input" data-bind="forma_company_id"><option value="">— None —</option>${formaCos.map(c => `<option value="${esc(c.id)}"${sel(c.id, u.forma_company_id)}>${esc(c.name)}</option>`).join('')}</select>
+              <td class="col-forma">
+                <select class="cell-input" data-bind="forma_company_id" style="min-width:120px;"><option value="">— None —</option>${formaCos.map(c => `<option value="${esc(c.id)}"${sel(c.id, u.forma_company_id)}>${esc(c.name)}</option>`).join('')}</select>
               </td>
-              <td class="sec-forma">
-                <select class="cell-input" data-bind="forma_role_id"><option value="">— None —</option>${formaRoles.map(r => `<option value="${esc(r.id)}"${sel(r.id, (u.forma_role_ids || [])[0])}>${esc(r.name)}</option>`).join('')}</select>
+              <td class="col-forma">
+                <select class="cell-input" data-bind="forma_role_id" style="min-width:120px;"><option value="">— None —</option>${formaRoles.map(r => `<option value="${esc(r.id)}"${sel(r.id, (u.forma_role_ids || [])[0])}>${esc(r.name)}</option>`).join('')}</select>
               </td>
-              <td class="sec-forma cell-check">
+              <td class="col-forma cell-check">
                 <input type="checkbox" data-bind="forma_docs"   ${has('docs') ? 'checked' : ''}>
               </td>
-              <td class="sec-forma cell-check">
+              <td class="col-forma cell-check">
                 <input type="checkbox" data-bind="forma_design" ${has('designCollaboration') ? 'checked' : ''}>
               </td>
-              <td class="sec-forma cell-check">
+              <td class="col-forma cell-check">
                 <input type="checkbox" data-bind="forma_model"  ${has('modelCoordination') ? 'checked' : ''}>
               </td>
             </tr>`;
@@ -1216,7 +1136,7 @@ function goToReview() {
     const active = previewUsers.filter(u => !u._skip).length;
     document.getElementById('reviewFooterLeft').textContent = `${active} user(s) ready to send`;
     showStage('review');
-    document.getElementById('inviteCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    document.getElementById('inviteCardBody').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 function backFromReview() {
@@ -1248,35 +1168,26 @@ function renderReadonlyTable() {
     };
 
     let html = `<table>
-      <thead>
-        <tr class="row-section">
-          <th colspan="3" style="background:var(--cream);"></th>
-          <th colspan="2" class="sec-morta-head sec-divider-l">MORTA</th>
-          <th colspan="8" class="sec-revizto-head sec-divider-l">REVIZTO</th>
-          <th colspan="6" class="sec-forma-head sec-divider-l">FORMA</th>
-        </tr>
-        <tr class="row-cols">
-          <th class="stick-l1" style="width:32px;"></th>
-          <th class="stick-l2">Email</th>
-          <th class="stick-l3">Name</th>
-          <th class="sec-morta sec-divider-l">On</th>
-          <th class="sec-morta">Tag</th>
-          <th class="sec-revizto sec-divider-l">On</th>
-          <th class="sec-revizto">Company</th>
-          <th class="sec-revizto">Department</th>
-          <th class="sec-revizto">Location</th>
-          <th class="sec-revizto">License Role</th>
-          <th class="sec-revizto">Project Role</th>
-          <th class="sec-revizto">L</th>
-          <th class="sec-revizto">P</th>
-          <th class="sec-forma sec-divider-l">On</th>
-          <th class="sec-forma">Company</th>
-          <th class="sec-forma">Role</th>
-          <th class="sec-forma">Docs</th>
-          <th class="sec-forma">Design</th>
-          <th class="sec-forma">Model</th>
-        </tr>
-      </thead>
+      <thead><tr>
+        <th>Email</th>
+        <th>Name</th>
+        <th>Morta</th>
+        <th>Tag</th>
+        <th>Revizto</th>
+        <th>Rev Co</th>
+        <th>Rev Dept</th>
+        <th>Location</th>
+        <th>License Role</th>
+        <th>Project Role</th>
+        <th title="Invite to license">L</th>
+        <th title="Invite to project">P</th>
+        <th>Forma</th>
+        <th>Forma Co</th>
+        <th>Forma Role</th>
+        <th>Docs</th>
+        <th>Design</th>
+        <th>Model</th>
+      </tr></thead>
       <tbody>`;
 
     previewUsers.filter(u => !u._skip).forEach(u => {
@@ -1287,25 +1198,24 @@ function renderReadonlyTable() {
         const revProjName = u.revizto_project_role_id ? lookup(u.revizto_project_role_id, revProjById, 'project role') : '';
 
         html += `<tr>
-          <td class="stick-l1"></td>
-          <td class="stick-l2">${esc(u.email)}</td>
-          <td class="stick-l3">${cell(fullName)}</td>
-          <td class="sec-morta sec-divider-l">${xmark(u.morta)}</td>
-          <td class="sec-morta">${u.morta ? (lookup(u.morta_tag_id, mortaTagsById, 'morta tag') || '<span class="muted">—</span>') : '<span class="muted">—</span>'}</td>
-          <td class="sec-revizto sec-divider-l">${xmark(u.revizto)}</td>
-          <td class="sec-revizto">${u.revizto ? cell(u.revizto_company)    : '<span class="muted">—</span>'}</td>
-          <td class="sec-revizto">${u.revizto ? cell(u.revizto_department) : '<span class="muted">—</span>'}</td>
-          <td class="sec-revizto">${u.revizto ? cell(u.revizto_location)   : '<span class="muted">—</span>'}</td>
-          <td class="sec-revizto">${u.revizto ? cell(revLicName)           : '<span class="muted">—</span>'}</td>
-          <td class="sec-revizto">${u.revizto ? (revProjName || '<span class="muted">—</span>') : '<span class="muted">—</span>'}</td>
-          <td class="sec-revizto">${u.revizto ? flag(u.revizto_invite_license !== false) : '<span class="muted">—</span>'}</td>
-          <td class="sec-revizto">${u.revizto ? flag(u.revizto_invite_project === true)  : '<span class="muted">—</span>'}</td>
-          <td class="sec-forma sec-divider-l">${xmark(u.forma)}</td>
-          <td class="sec-forma">${u.forma ? (lookup(u.forma_company_id, formaCoById, 'forma company') || '<span class="muted">—</span>') : '<span class="muted">—</span>'}</td>
-          <td class="sec-forma">${u.forma ? ((u.forma_role_ids || []).map(rid => lookup(rid, formaRoleById, 'forma role')).join(', ') || '<span class="muted">—</span>') : '<span class="muted">—</span>'}</td>
-          <td class="sec-forma">${u.forma ? flag(has('docs'))                 : '<span class="muted">—</span>'}</td>
-          <td class="sec-forma">${u.forma ? flag(has('designCollaboration'))  : '<span class="muted">—</span>'}</td>
-          <td class="sec-forma">${u.forma ? flag(has('modelCoordination'))    : '<span class="muted">—</span>'}</td>
+          <td>${esc(u.email)}</td>
+          <td>${cell(fullName)}</td>
+          <td>${xmark(u.morta)}</td>
+          <td>${u.morta ? (lookup(u.morta_tag_id, mortaTagsById, 'morta tag') || '<span class="muted">—</span>') : '<span class="muted">—</span>'}</td>
+          <td>${xmark(u.revizto)}</td>
+          <td>${u.revizto ? cell(u.revizto_company)    : '<span class="muted">—</span>'}</td>
+          <td>${u.revizto ? cell(u.revizto_department) : '<span class="muted">—</span>'}</td>
+          <td>${u.revizto ? cell(u.revizto_location)   : '<span class="muted">—</span>'}</td>
+          <td>${u.revizto ? cell(revLicName)           : '<span class="muted">—</span>'}</td>
+          <td>${u.revizto ? (revProjName || '<span class="muted">—</span>') : '<span class="muted">—</span>'}</td>
+          <td>${u.revizto ? flag(u.revizto_invite_license !== false) : '<span class="muted">—</span>'}</td>
+          <td>${u.revizto ? flag(u.revizto_invite_project === true)  : '<span class="muted">—</span>'}</td>
+          <td>${xmark(u.forma)}</td>
+          <td>${u.forma ? (lookup(u.forma_company_id, formaCoById, 'forma company') || '<span class="muted">—</span>') : '<span class="muted">—</span>'}</td>
+          <td>${u.forma ? ((u.forma_role_ids || []).map(rid => lookup(rid, formaRoleById, 'forma role')).join(', ') || '<span class="muted">—</span>') : '<span class="muted">—</span>'}</td>
+          <td>${u.forma ? flag(has('docs'))                 : '<span class="muted">—</span>'}</td>
+          <td>${u.forma ? flag(has('designCollaboration'))  : '<span class="muted">—</span>'}</td>
+          <td>${u.forma ? flag(has('modelCoordination'))    : '<span class="muted">—</span>'}</td>
         </tr>`;
     });
     html += '</tbody></table>';
@@ -1361,7 +1271,7 @@ function renderResults(bulk) {
             <button class="btn btn-primary"   onclick="openInviteCard()">Send More Invites</button>
         </div>`;
     showStage('results');
-    document.getElementById('inviteCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    document.getElementById('inviteCardBody').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 /* ═══════════════════════════════════════════════════
