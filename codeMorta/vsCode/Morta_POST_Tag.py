@@ -1,7 +1,7 @@
 import json
 import os
 import requests
-from Morta_Config import API_KEY, _ROOT_DIR
+from Morta_Config import API_KEY, EXPORTS_DIR
 from Morta_GET_User import find_user_by_email
 
 BASE_URL    = "https://api.morta.io"
@@ -10,7 +10,6 @@ HEADERS     = {
     "Content-Type":  "application/json",
     "Accept":        "application/json",
 }
-EXPORTS_DIR = os.path.join(_ROOT_DIR, "exports")
 TAGS_JSON   = os.path.join(EXPORTS_DIR, "morta_tags.json")
 
 

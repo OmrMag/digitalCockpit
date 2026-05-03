@@ -1,32 +1,106 @@
 import json
+import csv
 import os
-from Morta_Config import _ROOT_DIR, EXPORTS_DIR
-from Morta_GET_members import get_hub_members, to_email_dict
+import requests
+from Morta_Config import API_KEY, HUB_ID, EXPORTS_DIR
 
-MEMBERS_JSON = os.path.join(EXPORTS_DIR, "morta_members.json")
+BASE_URL = "https://api.morta.io"
+HEADERS  = {"Authorization": f"Bearer {API_KEY}"}
 
 
-def find_user_by_email(email: str) -> dict | None:
-    """Fetch fresh members from API, save to JSON, and look up by email."""
+def get_hub_members() -> list:
+    """Fetch all members from the active Morta hub."""
+    response = requests.get(
+        f"{BASE_URL}/v1/hub/{HUB_ID}/members",
+        headers=HEADERS,
+        timeout=15,
+    )
+    print(f"[Morta] Members status={response.status_code}")
+    if response.status_code != 200:
+        print(f"[Morta] Error: {response.text[:300]}")
+        return []
+    return response.json().get("data", [])
+
+
+def to_email_dict(members: list) -> dict:
+    """Convert member list to email-keyed dict."""
+    result = {}
+    for m in members:
+        u = m.get("user", {})
+        email = u.get("email", "").lower().strip()
+        if email:
+            tags = [
+                {"name": t.get("value", ""), "tag_reference_id": t.get("publicId", "")}
+                for t in u.get("tags", [])
+                if isinstance(t, dict)
+            ]
+            result[email] = {
+                "name":         u.get("name", ""),
+                "email":        email,
+                "public_id":    u.get("publicId", ""),
+                "project_role": m.get("projectRole", ""),
+                "role_method":  m.get("roleAssignedMethod", ""),
+                "tags":         tags,
+                "joined":       m.get("createdAt", ""),
+            }
+    return result
+
+
+def flatten_members(members: list) -> list:
+    """Flatten member records for CSV export."""
+    rows = []
+    for m in members:
+        u    = m.get("user", {})
+        tags = [t.get("value", "") for t in u.get("tags", []) if isinstance(t, dict)]
+        rows.append({
+            "name":        u.get("name", ""),
+            "email":       u.get("email", ""),
+            "public_id":   u.get("publicId", ""),
+            "role":        m.get("projectRole", ""),
+            "role_method": m.get("roleAssignedMethod", ""),
+            "tags":        ", ".join(tags),
+            "joined":      m.get("createdAt", ""),
+        })
+    return rows
+
+
+def find_user_by_email(email: str):
+    """Fetch fresh members and look up by email."""
     members = get_hub_members()
     if not members:
         return None
-    email_dict = to_email_dict(members)
-    # Update cached JSON
-    os.makedirs(EXPORTS_DIR, exist_ok=True)
-    with open(MEMBERS_JSON, "w") as f:
-        json.dump(email_dict, f, indent=2)
-    return email_dict.get(email.strip().lower())
+    return to_email_dict(members).get(email.strip().lower())
+
+
+def save_json(members: list, filename: str = "morta_members.json"):
+    path = os.path.join(EXPORTS_DIR, filename)
+    with open(path, "w") as f:
+        json.dump(members, f, indent=2)
+    print(f"[Morta] Saved {len(members)} members to {path}")
+
+
+def save_csv(members: list, filename: str = "morta_members.csv"):
+    rows = flatten_members(members)
+    if not rows:
+        print("[Morta] No members to save.")
+        return
+    path = os.path.join(EXPORTS_DIR, filename)
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=rows[0].keys())
+        writer.writeheader()
+        writer.writerows(rows)
+    print(f"[Morta] Saved {len(rows)} members to {path}")
 
 
 if __name__ == "__main__":
-    email = input("Enter user email: ").strip()
-    user  = find_user_by_email(email)
-    if user:
-        print(f"\nName:  {user.get('name')}")
-        print(f"Email: {user.get('email')}")
-        print(f"Role:  {user.get('project_role')}")
-        print(f"Tags:  {user.get('tags')}")
-        print(f"ID:    {user.get('public_id')}")
+    if not HUB_ID:
+        print("[Morta] No active hub set. Select a Morta hub in the sidebar first.")
+        exit(1)
+
+    members = get_hub_members()
+    if members:
+        save_json(members)
+        save_csv(members)
+        print(f"[Morta] Done. {len(members)} members extracted.")
     else:
-        print(f"No user found with email: {email}")
+        print("[Morta] No members returned from Morta API.")

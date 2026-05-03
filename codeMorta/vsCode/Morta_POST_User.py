@@ -1,11 +1,10 @@
 import json
 import os
 import requests
-from Morta_Config import API_KEY, HUB_ID, _ROOT_DIR
+from Morta_Config import API_KEY, HUB_ID, EXPORTS_DIR
 
 BASE_URL    = "https://api.morta.io"
 HEADERS     = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"}
-EXPORTS_DIR = os.path.join(_ROOT_DIR, "exports")
 os.makedirs(EXPORTS_DIR, exist_ok=True)
 
 

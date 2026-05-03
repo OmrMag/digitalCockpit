@@ -1,10 +1,12 @@
 import json
+import os
+from Morta_Config import EXPORTS_DIR
 from Morta_GET_members import get_hub_members, to_email_dict
 
-MEMBERS_JSON = "morta_members.json"
+MEMBERS_JSON = os.path.join(EXPORTS_DIR, "morta_members.json")
 
 
-def find_user_by_email(email: str) -> dict | None:
+def find_user_by_email(email: str):
     """Fetch fresh members from API, save to JSON, and look up by email."""
     members = get_hub_members()
     if not members:
@@ -12,7 +14,7 @@ def find_user_by_email(email: str) -> dict | None:
 
     email_dict = to_email_dict(members)
 
-    # Update the local JSON
+    os.makedirs(EXPORTS_DIR, exist_ok=True)
     with open(MEMBERS_JSON, "w") as f:
         json.dump(email_dict, f, indent=2)
 
@@ -21,7 +23,7 @@ def find_user_by_email(email: str) -> dict | None:
 
 if __name__ == "__main__":
     email = input("Enter user email: ").strip()
-    user = find_user_by_email(email)
+    user  = find_user_by_email(email)
     if user:
         print(f"\nName:  {user.get('name')}")
         print(f"Email: {user.get('email')}")
