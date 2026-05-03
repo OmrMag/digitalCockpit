@@ -46,24 +46,93 @@
     /* expand panel */
     .expand-panel{display:none;border:1px solid var(--accent);border-top:none;border-radius:0 0 var(--radius-lg) var(--radius-lg);background:white;margin-bottom:8px;overflow:hidden;}
     .expand-panel.open{display:block;}
-    /* expand table */
-    .exp-table{width:100%;border-collapse:collapse;font-size:var(--fs-xs);}
-    .exp-table th{padding:8px 10px;font-size:var(--fs-xs);font-weight:600;text-transform:uppercase;letter-spacing:0.4px;color:var(--text-dark-muted);border-bottom:2px solid var(--border-cream);white-space:nowrap;background:var(--cream);text-align:left;}
-    .exp-table td{padding:8px 10px;border-bottom:1px solid var(--border-cream);vertical-align:middle;color:var(--text-dark);}
-    .exp-table tr:last-child td{border-bottom:none;}
-    .exp-table tr.row-rejected td{opacity:0.4;}
+
+    /* ── Pending-submission user rows table — matches #previewTable
+         (the inline Invite Users editing surface) for visual consistency:
+         minimal uppercase muted headers (no cream fill), tight row padding,
+         borderless cell selects until focus, compact 13px checkboxes. */
+    .exp-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: var(--fs-xs);
+    }
+    .exp-table th {
+        padding: 6px 8px;
+        font-size: 10px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.4px;
+        color: var(--text-dark-muted);
+        border-bottom: 2px solid var(--border-cream);
+        white-space: nowrap;
+        text-align: left;
+        background: transparent;
+    }
+    .exp-table td {
+        padding: 5px 8px;
+        font-size: var(--fs-xs);
+        border-bottom: 1px solid var(--border-cream);
+        color: var(--text-dark);
+        vertical-align: middle;
+        white-space: nowrap;
+        background: white;
+    }
+    .exp-table tr:last-child td { border-bottom: none; }
+    .exp-table tr.row-rejected td { opacity: 0.4; }
+    /* Override the global table tr:hover from style.css the same way
+       #previewTable does, so rows don't paint a hover layer. */
+    .exp-table tr:hover { background: transparent; }
     /* platform column shading */
     .col-morta  {background:rgba(74,158,255,0.10);}
     .col-revizto{background:rgba(220,80,80,0.09);}
     .col-forma  {background:rgba(245,158,11,0.11);}
-    /* inline selects */
-    .exp-sel{padding:3px 6px;border:1px solid var(--border-cream);border-radius:3px;font-family:var(--font);font-size:var(--fs-xs);background:white;width:100%;min-width:100px;}
-    .exp-sel:focus{outline:none;border-color:var(--accent);}
-    .exp-toggle{display:flex;align-items:center;gap:4px;font-size:var(--fs-xs);cursor:pointer;white-space:nowrap;}
-    .exp-toggle input{width:12px;height:12px;accent-color:var(--navy);}
-    .exp-modules{display:flex;gap:8px;flex-wrap:wrap;}
-    /* expand footer */
-    .expand-footer{display:flex;align-items:center;justify-content:space-between;padding:10px 16px;background:var(--cream);border-top:1px solid var(--border-cream);}
+
+    /* Inline selects: same borderless-until-hover/focus pattern as
+       .cell-input on the Invite Users table. Renamed visually but keeps
+       the .exp-sel class so existing JS bindings still work. */
+    .exp-sel {
+        padding: 3px 5px;
+        border: 1px solid transparent;
+        border-radius: 3px;
+        background: transparent;
+        font-family: var(--font);
+        font-size: var(--fs-xs);
+        color: var(--text-dark);
+        width: 100%;
+        min-width: 90px;
+        cursor: pointer;
+    }
+    .exp-sel:hover { border-color: var(--border-cream); background: white; }
+    .exp-sel:focus { outline: none; border-color: var(--accent); background: white; box-shadow: 0 0 0 2px rgba(74,158,255,.15); }
+
+    /* Compact checkbox toggles. Match cell-check from Invite Users (13px,
+       navy-accented). The label flex layout stays unchanged. */
+    .exp-toggle {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        font-size: var(--fs-xs);
+        cursor: pointer;
+        white-space: nowrap;
+    }
+    .exp-toggle input {
+        width: 13px;
+        height: 13px;
+        accent-color: var(--navy);
+        cursor: pointer;
+    }
+    .exp-modules { display: flex; gap: 8px; flex-wrap: wrap; }
+
+    /* Expand footer — keep the cream tint to set it apart from the
+       table rows above (matches expand-panel anatomy for actions). */
+    .expand-footer {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 10px 16px;
+        background: var(--cream);
+        border-top: 1px solid var(--border-cream);
+    }
     /* status badges */
     .plt-dot{width:7px;height:7px;border-radius:50%;display:inline-block;flex-shrink:0;}
     .plt-dot.on{background:var(--accent);}
