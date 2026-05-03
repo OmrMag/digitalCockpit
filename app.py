@@ -2458,6 +2458,10 @@ async def api_registry_sync_mine(request: Request, user: str = Depends(require_u
     Revizto / Forma fetches in series too — they share the same registry write
     target and there's no benefit to parallelising across platforms here.
 
+    Revizto roles are cached per region during one sync run: the role list is
+    license-scoped, so two projects in the same region share the same roles.
+    Without this cache we'd fetch identical data N times for N projects.
+
     Returns a per-project results map so the UI can show what synced and what
     didn't. A failure on one project does not abort the others.
     """
@@ -2467,12 +2471,14 @@ async def api_registry_sync_mine(request: Request, user: str = Depends(require_u
     else:
         keys = [k for k, v in registry.items() if user in v.get("admins", [])]
 
+    revizto_roles_cache: dict = {}  # region -> list[dict] | "error message"
+
     per_project = {}
     for key in keys:
         try:
             per_project[key] = {
                 "name":   registry[key].get("name", key),
-                "synced": _sync_project_metadata(user, key, registry),
+                "synced": _sync_project_metadata(user, key, registry, revizto_roles_cache),
             }
         except Exception as e:
             # Keep going — one project's failure shouldn't block the others
@@ -2489,13 +2495,19 @@ async def api_registry_sync_mine(request: Request, user: str = Depends(require_u
     })
 
 
-def _sync_project_metadata(user: str, key: str, registry: dict) -> dict:
+def _sync_project_metadata(user: str, key: str, registry: dict,
+                           revizto_roles_cache: dict = None) -> dict:
     """Fetch fresh metadata from Morta/Revizto/Forma for one project and write
     it into the registry entry in place.
 
     Mutates `registry[key]['platforms']`. Caller is responsible for
     `save_registry(registry)` once all desired keys are synced — batching
     the save is faster than writing once per project.
+
+    `revizto_roles_cache` (optional) memoises Revizto license-roles fetches
+    across projects in a single batch sync. Keys are region names; values are
+    either a list of role dicts (success) or an error string. Pass None for
+    one-off syncs of a single project.
 
     Returns a flat results dict reporting counts on success and error strings
     on failure, so the UI can show a per-platform status. Partial success is
@@ -2538,7 +2550,13 @@ def _sync_project_metadata(user: str, key: str, registry: dict) -> dict:
         except Exception as e:
             results["morta_error"] = str(e)
 
-    # ── Revizto project roles + license roles ─────────────────────────────
+    # ── Revizto roles + license roles ─────────────────────────────────────
+    # Revizto's role concept is license-scoped — the same role list applies
+    # across every project under that license/region. The endpoint is
+    # /license/{license_uuid}/role/list, NOT /project/{uuid}/role/list
+    # (which doesn't exist and returns 404). We resolve license UUID via
+    # the existing helper, fetch once per region, and reuse across projects
+    # via revizto_roles_cache.
     rev_uuid   = platforms.get("revizto", {}).get("project_uuid", "")
     rev_region = platforms.get("revizto", {}).get("region", "dubai")
     # Always store the safe license roles (no License Admin)
@@ -2549,27 +2567,48 @@ def _sync_project_metadata(user: str, key: str, registry: dict) -> dict:
     ]
     if rev_uuid:
         try:
-            token = revizto_get_token_for_region(config, rev_region, email=user)
-            if not token:
-                results["revizto_error"] = f"No valid Revizto token for {rev_region} — enter your access code in Settings first"
+            cache = revizto_roles_cache if revizto_roles_cache is not None else {}
+            cached = cache.get(rev_region)
+            if isinstance(cached, list):
+                # Reuse the role list fetched earlier in this batch
+                platforms["revizto"]["roles"] = cached
+                results["revizto_roles"] = len(cached)
+            elif isinstance(cached, str):
+                # Earlier project in same region failed; surface the same error
+                results["revizto_roles_error"] = cached
             else:
-                base_url = f"https://api.{rev_region}.revizto.com/v5"
-                headers  = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
-                r = http_requests.get(
-                    f"{base_url}/project/{rev_uuid}/role/list",
-                    headers=headers, timeout=10
-                )
-                if r.status_code == 200:
-                    raw = r.json().get("data", {})
-                    roles = []
-                    if isinstance(raw, dict):
-                        roles = [{"id": v.get("id"), "uuid": v.get("uuid",""), "name": v.get("name","")} for v in raw.values()]
-                    elif isinstance(raw, list):
-                        roles = [{"id": v.get("id"), "uuid": v.get("uuid",""), "name": v.get("name","")} for v in raw]
-                    platforms["revizto"]["roles"] = roles
-                    results["revizto_roles"] = len(roles)
+                token = revizto_get_token_for_region(config, rev_region, email=user)
+                if not token:
+                    err = f"No valid Revizto token for {rev_region} — enter your access code in Settings first"
+                    cache[rev_region] = err
+                    results["revizto_error"] = err
                 else:
-                    results["revizto_roles_error"] = f"{r.status_code}: {r.text[:150]}"
+                    license_uuid, _ = revizto_resolve_license(config, rev_region, email=user)
+                    if not license_uuid:
+                        err = f"Could not resolve license UUID for {rev_region}"
+                        cache[rev_region] = err
+                        results["revizto_roles_error"] = err
+                    else:
+                        base_url = f"https://api.{rev_region}.revizto.com/v5"
+                        headers  = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+                        r = http_requests.get(
+                            f"{base_url}/license/{license_uuid}/role/list",
+                            headers=headers, timeout=10
+                        )
+                        if r.status_code == 200:
+                            raw = r.json().get("data", {})
+                            roles = []
+                            if isinstance(raw, dict):
+                                roles = [{"id": v.get("id"), "uuid": v.get("uuid", ""), "name": v.get("name", "")} for v in raw.values()]
+                            elif isinstance(raw, list):
+                                roles = [{"id": v.get("id"), "uuid": v.get("uuid", ""), "name": v.get("name", "")} for v in raw]
+                            platforms["revizto"]["roles"] = roles
+                            results["revizto_roles"] = len(roles)
+                            cache[rev_region] = roles
+                        else:
+                            err = f"{r.status_code}: {r.text[:150]}"
+                            cache[rev_region] = err
+                            results["revizto_roles_error"] = err
         except Exception as e:
             results["revizto_error"] = str(e)
 
@@ -2605,7 +2644,7 @@ def _sync_project_metadata(user: str, key: str, registry: dict) -> dict:
                 if r.status_code == 200:
                     raw = r.json()
                     role_list = raw.get("results", raw) if isinstance(raw, dict) else raw
-                    roles = [{"id": ro.get("id",""), "name": ro.get("name","")} for ro in role_list if ro.get("name")]
+                    roles = [{"id": ro.get("id", ""), "name": ro.get("name", "")} for ro in role_list if ro.get("name")]
                     if roles:
                         platforms["forma"]["roles"] = roles
                         results["forma_roles"] = len(roles)
