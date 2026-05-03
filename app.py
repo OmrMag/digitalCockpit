@@ -5338,16 +5338,12 @@ async def api_invite_single(request: Request, user: str = Depends(require_user))
 
     first_name = data.get("first_name", "")
     last_name  = data.get("last_name", "")
-    company    = data.get("company", "")
-    department = data.get("department", "")
 
-    # Revizto-specific identity overrides — admins can put a user under a
-    # different Company/Department on the Revizto license than the user's
-    # top-level identity (consultant on someone else's project, etc.).
-    # Both fall back to the top-level value if not specified. Location has
-    # no top-level analog — it's Revizto-specific.
-    revizto_company    = data.get("revizto_company") or company
-    revizto_department = data.get("revizto_department") or department
+    # No top-level Company / Department — each platform owns its own.
+    # The result dict still has the keys (for backward-compat with
+    # invite-log shape) but they're empty for direct invites.
+    revizto_company    = data.get("revizto_company", "")
+    revizto_department = data.get("revizto_department", "")
     revizto_location   = data.get("revizto_location", "")
 
     result = {
@@ -5356,8 +5352,8 @@ async def api_invite_single(request: Request, user: str = Depends(require_user))
         "email":            email,
         "first_name":       first_name,
         "last_name":        last_name,
-        "company":          company,
-        "department":       department,
+        "company":          "",
+        "department":       "",
         "morta_status":     "skipped",
         "revizto_status":   "skipped",
         "forma_status":     "skipped",
@@ -5416,8 +5412,6 @@ async def api_invite_preview(file: UploadFile = File(...), user: str = Depends(r
       Email                            (REQUIRED)
       First Name
       Last Name                        (also accepts double-space "Last  Name")
-      Company
-      Department
 
       Morta Access                     YES / NO   (default NO)
       Morta Tag                        Permission tag NAME from registry
@@ -5430,11 +5424,8 @@ async def api_invite_preview(file: UploadFile = File(...), user: str = Depends(r
       Revizto To License               YES / NO   (default YES)
       Revizto To Project               YES / NO   (default YES)
       Revizto Company                  Company NAME for license membership
-                                       (defaults to top-level Company if blank)
       Revizto Department               Department for license membership
-                                       (defaults to top-level Department if blank)
       Revizto Location                 Office location for license membership
-                                       (no fallback — leave blank if not relevant)
 
       ACC Access                       YES / NO   (default NO)
       Forma Company                    Company NAME (resolved to id from registry)
@@ -5559,22 +5550,19 @@ async def api_invite_preview(file: UploadFile = File(...), user: str = Depends(r
         if yesno(row, "Forma Design Coordination",  default=False):    products.append({"key": "designCollaboration",   "access": "member"})
         if yesno(row, "Forma Model Coordination",   default=False):    products.append({"key": "modelCoordination",     "access": "member"})
 
-        # Revizto can override the top-level Company/Department for
-        # license-membership purposes (e.g. user works for ALEC but is
-        # joining Revizto under the EGIS consultant company). If the
-        # CSV doesn't specify, top-level values are used.
-        top_company    = cell(row, "Company")
-        top_department = cell(row, "Department")
-        rev_company    = cell(row, "Revizto Company") or top_company
-        rev_department = cell(row, "Revizto Department") or top_department
-        rev_location   = cell(row, "Revizto Location")  # no top-level fallback
+        # Each platform owns its own identity fields. There's no top-level
+        # Company / Department in the direct invite flow — Revizto carries
+        # its own Company / Department / Location, Forma uses its own
+        # company_id from its registry. Empty Revizto cells stay empty;
+        # there's no top-level to fall back to.
+        rev_company    = cell(row, "Revizto Company")
+        rev_department = cell(row, "Revizto Department")
+        rev_location   = cell(row, "Revizto Location")
 
         users.append({
             "email":      email,
             "first_name": cell(row, "First Name"),
             "last_name":  cell(row, "Last  Name", "Last Name"),
-            "company":    top_company,
-            "department": top_department,
             "morta":      morta_on,
             "revizto":    revizto_on,
             "forma":      forma_on,
@@ -5643,17 +5631,20 @@ async def api_invite_bulk(request: Request, user: str = Depends(require_user)):
         email      = (u.get("email") or "").strip()
         first_name = u.get("first_name", "")
         last_name  = u.get("last_name", "")
-        company    = u.get("company", "")
-        department = u.get("department", "")
 
+        # No top-level Company / Department in the direct invite flow.
+        # Each platform owns its own identity values. (The invite_log
+        # row keeps the company/department fields for backward
+        # compatibility with portal-derived entries — direct invites
+        # just write empty strings.)
         result = {
             "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "mode": "bulk",
             "email": email,
             "first_name": first_name,
             "last_name": last_name,
-            "company": company,
-            "department": department,
+            "company": "",
+            "department": "",
             "morta_status": "skipped",
             "revizto_status": "skipped",
             "forma_status": "skipped",
@@ -5676,10 +5667,10 @@ async def api_invite_bulk(request: Request, user: str = Depends(require_user)):
             proj_role = u.get("revizto_project_role_id") or None
             to_lic    = bool(u.get("revizto_invite_license", True))
             to_proj   = bool(u.get("revizto_invite_project", True))
-            # Revizto-specific identity overrides (parallel to Single).
-            # Empty -> fall back to the user's top-level Company / Department.
-            rev_co    = u.get("revizto_company") or company
-            rev_dept  = u.get("revizto_department") or department
+            # Revizto-specific identity values come straight from the per-user
+            # record. No fallback — if admin left them blank, they go blank.
+            rev_co    = u.get("revizto_company", "")
+            rev_dept  = u.get("revizto_department", "")
             rev_loc   = u.get("revizto_location", "")
             r = revizto_invite(
                 email, first_name, last_name, rev_co, rev_dept, config,
