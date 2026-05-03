@@ -282,10 +282,21 @@ let _access   = {}; // per-user access keyed by "key/idx/uIdx"
 
 async function loadPending() {
     try {
-        const [sr, rr] = await Promise.all([fetch('/api/pending'), fetch('/api/registry')]);
-        const sd = await sr.json();
-        _subRegistry = rr.ok ? await rr.json() : {};
-        _allSubs  = sd.submissions || [];
+        // Wait for base.html to finish loading the registry, then reuse it.
+        // Falls back to our own fetch if base.html's load failed for any reason.
+        await (window.cockpit?.ready || Promise.resolve());
+        let registryPromise;
+        if (window.cockpit?.registry) {
+            registryPromise = Promise.resolve(window.cockpit.registry);
+        } else {
+            registryPromise = fetch('/api/registry').then(r => r.ok ? r.json() : {});
+        }
+        const [sd, reg] = await Promise.all([
+            fetch('/api/pending').then(r => r.json()),
+            registryPromise,
+        ]);
+        _subRegistry = reg || {};
+        _allSubs     = sd.submissions || [];
         renderPendingList();
         document.getElementById('pendingRefreshLabel').textContent =
             'Updated ' + new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
@@ -384,8 +395,11 @@ function renderExpandPanel(key, idx, panel) {
     const sub      = _subData[cacheKey];
     const reg      = _subRegistry[key] || {};
     const plat     = reg.platforms  || {};
-    const tags     = plat.morta?.tags      || [];
-    const revRoles = plat.revizto?.roles   || [];
+    const tags     = plat.morta?.tags           || [];
+    const revRoles = plat.revizto?.roles         || [];
+    const revLicRoles = plat.revizto?.license_roles || [
+        {id:2, name:'Collaborator'}, {id:3, name:'Content Creator'}, {id:1, name:'Guest'}
+    ];
     const foCos    = plat.forma?.companies || [];
     const foRoles  = plat.forma?.roles     || [];
 
@@ -444,9 +458,7 @@ function renderExpandPanel(key, idx, panel) {
                 <input type="checkbox" class="row-chk-plt" data-ak="${ak}" data-field="revizto" ${a.revizto?'checked':''} style="cursor:pointer;width:13px;height:13px;accent-color:#dc5050;" title="Include Revizto">
             </td>
             <td class="col-revizto">${u.revizto ? `<select class="exp-sel" data-ak="${ak}" data-field="revizto_license_role_id">
-                <option value="2" ${a.revizto_license_role_id==2?'selected':''}>Collaborator</option>
-                <option value="3" ${a.revizto_license_role_id==3?'selected':''}>Content Creator</option>
-                <option value="1" ${a.revizto_license_role_id==1?'selected':''}>Guest</option>
+                ${revLicRoles.map(r => `<option value="${r.id}" ${a.revizto_license_role_id==r.id?'selected':''}>${r.name}</option>`).join('')}
             </select>` : '—'}</td>
             <td class="col-revizto">${u.revizto ? `<select class="exp-sel" data-ak="${ak}" data-field="revizto_project_role_id"><option value="">— None —</option>${revPOpts}</select>` : '—'}</td>
             <td class="col-revizto">${u.revizto ? `
@@ -612,8 +624,14 @@ let activeCtx   = {};
 
 async function loadActiveContext() {
     try {
-        const res = await fetch('/api/context');
-        const ctx = await res.json();
+        // Reuse the context base.html already fetched. Fall back to our own
+        // fetch only if it's missing for some reason (e.g., base load failed).
+        await (window.cockpit?.ready || Promise.resolve());
+        let ctx = window.cockpit?.context;
+        if (!ctx) {
+            const res = await fetch('/api/context');
+            ctx = res.ok ? await res.json() : {};
+        }
         activeCtx   = ctx;
         projectData = {
             revizto_project_uuid: ctx.revizto_project_uuid || '',
@@ -655,13 +673,16 @@ function closeInviteModal(){document.getElementById('inviteModal').classList.rem
 function handleFile(input){if(input.files.length>0)document.getElementById('fileName').textContent=input.files[0].name;}
 
 function populateSingleInviteOptions() {
-    const activeKey = activeCtx.active_project_key || '';
-    const reg       = _subRegistry[activeKey] || {};
-    const plat      = reg.platforms || {};
-    const tags      = plat.morta?.tags      || [];
-    const revRoles  = plat.revizto?.roles   || [];
-    const foCos     = plat.forma?.companies || [];
-    const foRoles   = plat.forma?.roles     || [];
+    const activeKey    = activeCtx.active_project_key || '';
+    const reg          = _subRegistry[activeKey] || {};
+    const plat         = reg.platforms || {};
+    const tags         = plat.morta?.tags           || [];
+    const revRoles     = plat.revizto?.roles         || [];
+    const revLicRoles  = plat.revizto?.license_roles || [
+        {id:2, name:'Collaborator'}, {id:3, name:'Content Creator'}, {id:1, name:'Guest'}
+    ];
+    const foCos        = plat.forma?.companies || [];
+    const foRoles      = plat.forma?.roles     || [];
 
     // Morta tags
     const mortaSel = document.getElementById('invMortaTag');
@@ -670,6 +691,16 @@ function populateSingleInviteOptions() {
         const o = document.createElement('option');
         o.value = t.tag_reference_id; o.textContent = t.name;
         mortaSel.appendChild(o);
+    });
+
+    // Revizto license roles (from registry, no License Admin)
+    const revLicSel = document.getElementById('invRevLicRole');
+    revLicSel.innerHTML = '';
+    revLicRoles.forEach((r, i) => {
+        const o = document.createElement('option');
+        o.value = r.id; o.textContent = r.name;
+        if (i === 0) o.selected = true;
+        revLicSel.appendChild(o);
     });
 
     // Revizto project roles
