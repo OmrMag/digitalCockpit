@@ -218,9 +218,17 @@
             <div class="ext-desc">Extracted model properties from the selected model. Large export — may take time.</div>
             <div class="ext-footer"><span class="ext-output">→ forma_model_properties.csv</span><button class="btn btn-sm btn-primary" onclick="runExtractor(this)">Run</button></div>
         </div>
-        <div class="extractor-card disabled" data-script="Proccesed_Model_Properties" data-level="3" data-platform="forma">
-            <div class="ext-header"><div class="ext-title">Model Health Report</div><span class="ext-badge forma">L3</span></div>
-            <div class="ext-desc">Physical elements, quality flags, worksets and model health summary. Requires Model Properties to be run first.</div>
+    </div>
+
+    <div class="ext-level-header">
+        <span class="ext-level-badge l4">L4</span>
+        Reporting — runs against the output of an L3 extraction
+    </div>
+    <div class="ext-grid">
+        <div class="extractor-card disabled" data-script="Proccesed_Model_Properties" data-level="4" data-platform="forma" data-l4="true">
+            <div class="ext-header"><div class="ext-title">Model Health Report</div><span class="ext-badge forma">L4</span></div>
+            <div class="ext-desc">Physical elements, quality flags, worksets and model health summary. Requires Model Properties to be run for the currently selected model.</div>
+            <div class="ext-l4-status" data-l4-status>Checking dependency…</div>
             <div class="ext-footer"><span class="ext-output">→ forma_model_report.csv</span><button class="btn btn-sm btn-primary" onclick="runExtractor(this)">Run</button></div>
         </div>
     </div>
@@ -248,6 +256,24 @@
 .ext-header { display:flex; align-items:flex-start; justify-content:space-between; gap:8px; }
 .ext-title { font-size:var(--fs-sm); font-weight:600; color:var(--navy); }
 .ext-desc { font-size:var(--fs-xs); color:var(--text-dark-muted); line-height:1.5; flex:1; }
+
+/* L4 status line: shows the dependency-check verdict on report cards.
+   Tinted by state: amber when pending, green when ready, red when blocked.
+   Green is rare (most life is "needs prereq"). The line itself is muted
+   to keep the card from getting visually noisy. */
+.ext-l4-status {
+    font-size: 10.5px;
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--text-dark-muted);
+    padding: 4px 8px;
+    border-radius: 4px;
+    background: rgba(11,37,69,0.04);
+    line-height: 1.4;
+}
+.ext-l4-status.ready    { background: rgba(52,211,153,0.12); color: #047857; }
+.ext-l4-status.blocked  { background: rgba(245,158,11,0.10); color: #92400e; }
+.ext-l4-status.error    { background: rgba(239,68,68,0.10);  color: #991b1b; }
+
 .ext-footer { display:flex; align-items:center; justify-content:flex-end; gap:6px; margin-top:4px; }
 .ext-output { display: none; }
 .ext-badge { font-size:var(--fs-xs); padding:2px 7px; border-radius:3px; font-weight:600; flex-shrink:0; }
@@ -443,6 +469,10 @@ function saveReviztoModel() {
     if (hasModel) {
         try { activeCtx._revizto_model = JSON.parse(val); } catch {}
     }
+    // Notify L4 dependency-gating (forward-compatible — no Revizto L4
+    // scripts today, but if one's added later it'll re-evaluate
+    // automatically without further changes here).
+    window.dispatchEvent(new CustomEvent('cockpit:modelChanged', { detail: { val } }));
 }
 
 // ── Forma model fetch & select ────────────────────────────────────────────
@@ -488,12 +518,20 @@ async function saveModelToConfig() {
     document.querySelectorAll('#tab-forma .extractor-card[data-level="3"]').forEach(c => {
         c.classList.toggle('disabled', !id);
     });
-    if (!id) return;
+    if (!id) {
+        // Still notify L4 cards — they need to know context is gone
+        window.dispatchEvent(new CustomEvent('cockpit:modelChanged', { detail: { id: '', name: '' } }));
+        return;
+    }
     await fetch('/api/context/model', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ project_id: activeCtx.forma_project_id, model_item_id: id, model_name: name })
     });
+    // Notify L4 dependency-gating that the active model changed.
+    // Cards depending on Model Properties for a specific model now need
+    // to re-check whether their stored prereq still matches.
+    window.dispatchEvent(new CustomEvent('cockpit:modelChanged', { detail: { id, name } }));
 }
 
 // ── Run extractor ─────────────────────────────────────────────────────────
@@ -637,6 +675,14 @@ async function runExtractor(btn) {
                 bakeBtn.disabled = false;
                 bakeBtn.textContent = 'Bake';
             }
+        }
+
+        // ── L4 status refresh ───────────────────────────────────────────────
+        // A successful run might have just satisfied a dependency — e.g.
+        // Model Properties run unlocks Model Health Report. Re-evaluate
+        // every L4 card on the page so their gating reflects the new state.
+        if (data.status === 'success') {
+            refreshL4Statuses();
         }
     } catch(e) {
         termAdd('err', `✗ Request failed: ${e.message}`);
@@ -872,6 +918,81 @@ async function bakeExtractor(btn) {
 injectBakeButtons();
 printBootBanner();
 
+// ═══════════════════════════════════════════════════════════════════════════
+// L4 dependency gating
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Reporting (L4) cards consume the output of an L3 extraction. They stay
+// faded/disabled until the user has run that L3 prerequisite for the
+// currently-selected context (model, project, etc.). The cockpit's
+// /api/l4/status endpoint is the source of truth — we fetch it for each
+// L4 card on:
+//
+//   • page load
+//   • active context change (model/project switch from the sidebar)
+//   • after any successful Run (a fresh L3 run may have just unlocked
+//     a dependent report)
+//
+// Each L4 card carries data-l4="true" and has an .ext-l4-status line
+// inside it that we update with the verdict text + color.
+
+async function refreshL4Statuses() {
+    const cards = document.querySelectorAll('.extractor-card[data-l4="true"]');
+    for (const card of cards) {
+        await refreshOneL4Status(card);
+    }
+}
+
+async function refreshOneL4Status(card) {
+    const script = card.dataset.script;
+    const statusEl = card.querySelector('[data-l4-status]');
+    const runBtn   = card.querySelector('.btn.btn-primary');
+    if (!script || !statusEl) return;
+
+    try {
+        const res  = await fetch(`/api/l4/status?script=${encodeURIComponent(script)}`);
+        const data = await res.json();
+
+        statusEl.classList.remove('ready', 'blocked', 'error');
+
+        if (data.ready) {
+            statusEl.classList.add('ready');
+            statusEl.textContent = `✓ ${data.message}`;
+            // Allow the run button. Note: also remove the card-level
+            // .disabled class if present (added by the L3 default-disabled
+            // pattern — but L4 cards are always shown so their disabled
+            // is just the button).
+            card.classList.remove('disabled');
+            if (runBtn) runBtn.disabled = false;
+        } else if (data.reason === 'no_context') {
+            statusEl.classList.add('blocked');
+            statusEl.textContent = data.message || 'No active context.';
+            card.classList.add('disabled');
+            if (runBtn) runBtn.disabled = true;
+        } else {
+            statusEl.classList.add('blocked');
+            statusEl.textContent = data.message || 'Dependency not satisfied.';
+            card.classList.add('disabled');
+            if (runBtn) runBtn.disabled = true;
+        }
+    } catch (e) {
+        statusEl.classList.remove('ready', 'blocked');
+        statusEl.classList.add('error');
+        statusEl.textContent = 'Status check failed.';
+    }
+}
+
+// Hook into the project-change event the sidebar fires when the user
+// switches active project. Same event also fires when the active model
+// changes (saveModelToConfig publishes one). We listen to both.
+window.addEventListener('cockpit:projectChanged', () => refreshL4Statuses());
+window.addEventListener('cockpit:modelChanged',   () => refreshL4Statuses());
+
 loadActiveContext();
+
+// Initial L4 status fetch — runs once after the page is up. Done after
+// loadActiveContext() so the active model is resolved by the time we
+// ask the server about it.
+setTimeout(refreshL4Statuses, 200);
 </script>
 {% endblock %}

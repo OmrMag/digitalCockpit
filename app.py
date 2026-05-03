@@ -3129,6 +3129,15 @@ def prepare_forma_3l_token(user: str, user_temp: Path) -> Path | None:
     return token_path
 
 
+@app.get("/api/l4/status")
+async def api_l4_status(script: str, user: str = Depends(require_user)):
+    """Tell the UI whether an L4 script is ready to run for the user's
+    current active context. Used to gate Run buttons on report cards."""
+    if not script:
+        return JSONResponse({"ready": False, "reason": "no_script", "message": "No script specified."})
+    return JSONResponse(_check_l4_dependency(user, script))
+
+
 @app.post("/api/extract")
 async def api_extract(request: Request, user: str = Depends(require_user)):
     body         = await request.json()
@@ -3146,6 +3155,23 @@ async def api_extract(request: Request, user: str = Depends(require_user)):
     script_path = SCRIPT_DIRS[platform_key] / f"{script_name}.py"
     if not script_path.exists():
         return JSONResponse({"status": "error", "message": f"Script not found: {script_name}.py"}, status_code=404)
+
+    # ── L4 dependency pre-flight ───────────────────────────────────────
+    # If the script is a registered L4 (depends on another script's
+    # output), refuse to run when the user's current selection doesn't
+    # match what was last processed. The UI also gates the Run button
+    # but this is the safety net.
+    if script_name in L4_DEPENDENCIES:
+        dep_check = _check_l4_dependency(user, script_name)
+        if not dep_check.get("ready"):
+            return JSONResponse({
+                "status":  "error",
+                "message": dep_check.get("message", "Dependency not satisfied."),
+                "output":  [],
+                "files":   [],
+                "l4_blocked": True,
+                "reason":     dep_check.get("reason"),
+            }, status_code=409)
 
     # Resolve per-user temp dir and clean up stale ones opportunistically
     cleanup_stale_temp_dirs()
@@ -3218,6 +3244,15 @@ async def api_extract(request: Request, user: str = Depends(require_user)):
                         "size_kb":  round(f.stat().st_size / 1024, 1),
                     })
 
+        # If this script is a registered L4 prerequisite, record the run
+        # so future L4 reports can validate the user's context against it.
+        # No-op for scripts not in _L3_TRACKED_PREREQS.
+        if ok:
+            try:
+                _stamp_l3_run(user, script_name, [f["filename"] for f in files])
+            except Exception as e:
+                print(f"[l4] Failed to stamp L3 run for {script_name}: {e}")
+
         return JSONResponse({
             "status":  "success" if ok else "error",
             "message": "Extraction complete." if ok else f"Script exited with code {result.returncode}.",
@@ -3284,6 +3319,23 @@ async def api_extract_stream(request: Request, user: str = Depends(require_user)
             payload = json.dumps({"status": "error", "message": f"Script not found: {script_name}.py", "files": []})
             yield f'event: done\ndata: {payload}\n\n'
         return StreamingResponse(_err(), media_type="text/event-stream")
+
+    # ── L4 dependency pre-flight ───────────────────────────────────────
+    # Same check as the batch endpoint, but the error is delivered via
+    # an SSE `done` event so the live terminal sees it inline.
+    if script_name in L4_DEPENDENCIES:
+        dep_check = _check_l4_dependency(user, script_name)
+        if not dep_check.get("ready"):
+            err_msg = dep_check.get("message", "Dependency not satisfied.")
+            async def _err_dep():
+                payload = json.dumps({
+                    "status":     "error",
+                    "message":    err_msg,
+                    "files":      [],
+                    "l4_blocked": True,
+                })
+                yield f'event: done\ndata: {payload}\n\n'
+            return StreamingResponse(_err_dep(), media_type="text/event-stream")
 
     # Resolve per-user temp dir and clean up stale ones opportunistically
     cleanup_stale_temp_dirs()
@@ -3415,6 +3467,14 @@ async def api_extract_stream(request: Request, user: str = Depends(require_user)
                             "size_kb":  round(f.stat().st_size / 1024, 1),
                         })
 
+            # Stamp L3 prerequisite run for L4 dependency tracking.
+            # See _stamp_l3_run / L4_DEPENDENCIES for the full flow.
+            if ok:
+                try:
+                    _stamp_l3_run(user, script_name, [f["filename"] for f in files])
+                except Exception as e:
+                    print(f"[l4] Failed to stamp L3 run for {script_name}: {e}")
+
             done_payload = json.dumps({
                 "status":  "success" if ok else "error",
                 "message": "Extraction complete." if ok else f"Script exited with code {returncode}.",
@@ -3536,6 +3596,172 @@ FORMA_L1_SCRIPTS = {
     "Forma_GET_2L_Status",
     "Forma_GET_3L_Status",
 }
+
+# ═══════════════════════════════════════════════════════════════════════════
+# L4 dependency tracking
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# L4 scripts (Reporting layer) consume the output of an L3 extraction and
+# turn it into a domain-specific report. The hazard is silent staleness:
+# if the user runs Model Properties for Model A, then changes the active
+# selection to Model B and clicks the Health Report, the report would run
+# against Model A's data while presenting itself as Model B's results.
+#
+# The fix has two parts:
+#   1. After every L3 prerequisite run succeeds, stamp the user's config
+#      with `forma.last_runs[<script>] = {context_key, context_value,
+#      ran_at, files}`. This records "what was being processed when this
+#      script last ran successfully".
+#   2. When the user clicks Run on an L4, look up the dependency in
+#      L4_DEPENDENCIES, read the recorded context_value, compare to the
+#      current value at the same path. Match → proceed. Mismatch / never
+#      run → refuse with a clear error.
+#
+# Adding new L4 reports is a one-line entry here. The cockpit handles the
+# rest — UI gating in extractions.html reads from /api/l4/status, the
+# extract endpoints enforce the same check before spawning subprocesses.
+
+L4_DEPENDENCIES = {
+    "Proccesed_Model_Properties": {
+        "platform":           "forma",
+        "requires":           "Forma_GET_Model_Properties",
+        "context_path":       "forma.model_item_id",
+        "context_label_path": "forma.model_name",
+        "human_prereq":       "Model Properties",
+        "human_thing":        "model",
+    },
+}
+
+# Build the inverse: scripts that we should stamp on success because at
+# least one L4 depends on them. Scripts not in this set don't need stamping.
+_L3_TRACKED_PREREQS = {dep["requires"] for dep in L4_DEPENDENCIES.values()}
+
+
+def _read_dotted_path(d: dict, path: str):
+    """Walk a config dict by 'a.b.c' path. Returns '' on any miss."""
+    cur = d
+    for part in path.split("."):
+        if not isinstance(cur, dict):
+            return ""
+        cur = cur.get(part, "")
+    return cur if isinstance(cur, str) else (str(cur) if cur else "")
+
+
+def _stamp_l3_run(user: str, script_name: str, files: list):
+    """Record a successful L3 run on the user's config so dependent L4
+    scripts can later check whether the user's currently-selected context
+    still matches what was processed.
+
+    No-op for scripts that aren't a known prerequisite of any L4."""
+    if script_name not in _L3_TRACKED_PREREQS:
+        return
+
+    # Find the dependency entry that points at this script (only one for now,
+    # but we look it up generically so multiple-L4-on-same-prereq is fine)
+    dep = next((d for d in L4_DEPENDENCIES.values() if d["requires"] == script_name), None)
+    if not dep:
+        return
+
+    cfg = load_config(user)
+    context_value = _read_dotted_path(cfg, dep["context_path"])
+    context_label = _read_dotted_path(cfg, dep["context_label_path"]) or context_value
+    if not context_value:
+        # Without a context value, we can't meaningfully stamp the run —
+        # the L4 dependency check would be ambiguous. Skip silently.
+        return
+
+    cfg.setdefault("forma", {}).setdefault("last_runs", {})[script_name] = {
+        "context_path":  dep["context_path"],
+        "context_value": context_value,
+        "context_label": context_label,
+        "ran_at":        int(_time_for_cache.time()),
+        "files":         list(files or []),
+    }
+    save_config(cfg, user)
+
+
+def _check_l4_dependency(user: str, l4_script: str) -> dict:
+    """Check whether the L4 script can run given the user's current state.
+
+    Returns a dict with:
+      ready:           bool
+      reason:          str (one of 'ready', 'never_run', 'context_mismatch',
+                            'no_context', 'unknown_script')
+      message:         human-readable
+      current_context: {value, label} of current selection
+      prereq:          {script, ran_at, context_value, context_label, files}
+                       — only populated if a previous run was recorded
+    """
+    dep = L4_DEPENDENCIES.get(l4_script)
+    if not dep:
+        return {
+            "ready":   False,
+            "reason":  "unknown_script",
+            "message": f"No dependency configured for '{l4_script}'.",
+        }
+
+    cfg = load_config(user)
+    current_value = _read_dotted_path(cfg, dep["context_path"])
+    current_label = _read_dotted_path(cfg, dep["context_label_path"]) or current_value
+
+    if not current_value:
+        return {
+            "ready":   False,
+            "reason":  "no_context",
+            "message": f"No active {dep['human_thing']} selected. Pick a {dep['human_thing']} above first.",
+            "current_context": {"value": "", "label": ""},
+        }
+
+    last_runs = (cfg.get("forma", {}) or {}).get("last_runs", {}) or {}
+    prereq    = last_runs.get(dep["requires"])
+
+    if not prereq:
+        return {
+            "ready":   False,
+            "reason":  "never_run",
+            "message": (
+                f"Run {dep['human_prereq']} for '{current_label}' first. "
+                f"This report consumes its output."
+            ),
+            "current_context": {"value": current_value, "label": current_label},
+            "prereq":          None,
+        }
+
+    if prereq.get("context_value") != current_value:
+        prev_label = prereq.get("context_label") or prereq.get("context_value", "?")
+        return {
+            "ready":   False,
+            "reason":  "context_mismatch",
+            "message": (
+                f"{dep['human_prereq']} was last run for '{prev_label}', but the active "
+                f"{dep['human_thing']} is now '{current_label}'. Re-run "
+                f"{dep['human_prereq']} for '{current_label}' before running this report."
+            ),
+            "current_context": {"value": current_value, "label": current_label},
+            "prereq":          {
+                "script":        dep["requires"],
+                "context_value": prereq.get("context_value", ""),
+                "context_label": prereq.get("context_label", ""),
+                "ran_at":        prereq.get("ran_at"),
+                "files":         prereq.get("files", []),
+            },
+        }
+
+    # Match — ready to run.
+    return {
+        "ready":   True,
+        "reason":  "ready",
+        "message": f"{dep['human_prereq']} ready for '{current_label}'.",
+        "current_context": {"value": current_value, "label": current_label},
+        "prereq":          {
+            "script":        dep["requires"],
+            "context_value": prereq.get("context_value", ""),
+            "context_label": prereq.get("context_label", ""),
+            "ran_at":        prereq.get("ran_at"),
+            "files":         prereq.get("files", []),
+        },
+    }
+
 
 def load_packages_index() -> dict:
     """Load the package index (blob or local). Cached like other loaders."""
