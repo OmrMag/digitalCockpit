@@ -33,9 +33,9 @@
     .exp-table tr:last-child td{border-bottom:none;}
     .exp-table tr.row-rejected td{opacity:0.4;}
     /* platform column shading */
-    .col-morta  {background:rgba(74,158,255,0.04);}
-    .col-revizto{background:rgba(220,80,80,0.04);}
-    .col-forma  {background:rgba(245,158,11,0.04);}
+    .col-morta  {background:rgba(74,158,255,0.10);}
+    .col-revizto{background:rgba(220,80,80,0.09);}
+    .col-forma  {background:rgba(245,158,11,0.11);}
     /* inline selects */
     .exp-sel{padding:3px 6px;border:1px solid var(--border-cream);border-radius:3px;font-family:var(--font);font-size:var(--fs-xs);background:white;width:100%;min-width:100px;}
     .exp-sel:focus{outline:none;border-color:var(--accent);}
@@ -100,10 +100,18 @@
     #previewTable, #reviewTable {
         margin: 8px 0 0;
         overflow-x: auto;
+        max-width: 100%;
+        width: 100%;
     }
     #previewTable table, #reviewTable table {
-        width: 100%;
-        border-collapse: collapse;
+        /* Let the table size to its content so a wide schema triggers
+           the wrapper's overflow-x:auto. width:auto + min-width:100%
+           covers both the narrow case (table fills card) and the wide
+           case (table exceeds card → wrapper scrolls). */
+        width: auto;
+        min-width: 100%;
+        border-collapse: separate;
+        border-spacing: 0;
         font-size: var(--fs-xs);
     }
     #previewTable th, #reviewTable th {
@@ -124,7 +132,39 @@
         color: var(--text-dark);
         white-space: nowrap;
         vertical-align: middle;
+        background: white;  /* opaque so sticky cell doesn't bleed */
     }
+    /* Freeze the include-checkbox + Email columns so admin always sees
+       who they're configuring, even when scrolled to far-right Forma
+       columns. The 32px offset for Email is the include-cell width. */
+    #previewTable th:nth-child(1),
+    #previewTable td:nth-child(1),
+    #reviewTable th:nth-child(1),
+    #reviewTable td:nth-child(1) {
+        position: sticky;
+        left: 0;
+        z-index: 2;
+        background: white;
+        min-width: 28px;
+        width: 28px;
+    }
+    #previewTable th:nth-child(2),
+    #previewTable td:nth-child(2),
+    #reviewTable th:nth-child(2),
+    #reviewTable td:nth-child(2) {
+        position: sticky;
+        left: 28px;
+        z-index: 2;
+        background: white;
+        min-width: 180px;
+        box-shadow: 1px 0 0 var(--border-cream);
+    }
+    /* Headers in the sticky columns need higher z-index to stay above
+       the body rows during horizontal scroll. */
+    #previewTable thead th:nth-child(1),
+    #previewTable thead th:nth-child(2),
+    #reviewTable thead th:nth-child(1),
+    #reviewTable thead th:nth-child(2) { z-index: 3; }
     #previewTable tr:hover td { background: #fafbfc; }
     /* Empty-state row */
     #previewTable .empty-row td {
@@ -159,12 +199,21 @@
     }
     /* When a row's platform is OFF, fade that platform's cells. The JS
        toggles .morta-off / .revizto-off / .forma-off on the <tr>. */
-    tr.morta-off   td.col-morta   .cell-input,
-    tr.morta-off   td.col-morta   .cell-check input,
-    tr.revizto-off td.col-revizto .cell-input,
-    tr.revizto-off td.col-revizto .cell-check input,
-    tr.forma-off   td.col-forma   .cell-input,
-    tr.forma-off   td.col-forma   .cell-check input { opacity: .35; pointer-events: none; }
+    /* When a row's platform is OFF, fade ALL inputs/selects in that
+       platform's cells. Selector matches any control directly inside
+       a td.col-* (not a descendant of .cell-check, which is on the td
+       itself, not nested). */
+    tr.morta-off   td.col-morta   input,
+    tr.morta-off   td.col-morta   select,
+    tr.revizto-off td.col-revizto input,
+    tr.revizto-off td.col-revizto select,
+    tr.forma-off   td.col-forma   input,
+    tr.forma-off   td.col-forma   select { opacity: .35; pointer-events: none; }
+    /* Also fade the platform's tinted background so the whole section
+       reads as inert. */
+    tr.morta-off   td.col-morta,
+    tr.revizto-off td.col-revizto,
+    tr.forma-off   td.col-forma { background: rgba(150,150,150,0.04); }
 
     /* Faded helper text shown in readonly review */
     .muted    { color: var(--text-dark-muted); font-style: italic; }
@@ -220,7 +269,7 @@
 
     <!-- Body — collapsed (display:none) until + Invite is clicked.
          When expanded, contains stage panels: Compose / Review / Results. -->
-    <div id="inviteCardBody" style="display:none;padding:0 16px 16px;">
+    <div id="inviteCardBody" style="display:none;padding:0 16px 16px;min-width:0;max-width:100%;overflow:hidden;">
 
         <!-- Stage A: Compose -->
         <div id="inviteCompose">
@@ -927,16 +976,16 @@ function renderCompose() {
         <th>Morta</th>
         <th>Tag</th>
         <th>Revizto</th>
-        <th>Rev Co</th>
-        <th>Rev Dept</th>
+        <th>Company</th>
+        <th>Department</th>
         <th>Location</th>
-        <th>License Role</th>
-        <th>Project Role</th>
+        <th>License</th>
+        <th>Project</th>
         <th title="Invite to license">L</th>
         <th title="Invite to project">P</th>
         <th>Forma</th>
-        <th>Forma Co</th>
-        <th>Forma Role</th>
+        <th>Company</th>
+        <th>Role</th>
         <th>Docs</th>
         <th>Design</th>
         <th>Model</th>
@@ -1174,16 +1223,16 @@ function renderReadonlyTable() {
         <th>Morta</th>
         <th>Tag</th>
         <th>Revizto</th>
-        <th>Rev Co</th>
-        <th>Rev Dept</th>
+        <th>Company</th>
+        <th>Department</th>
         <th>Location</th>
-        <th>License Role</th>
-        <th>Project Role</th>
+        <th>License</th>
+        <th>Project</th>
         <th title="Invite to license">L</th>
         <th title="Invite to project">P</th>
         <th>Forma</th>
-        <th>Forma Co</th>
-        <th>Forma Role</th>
+        <th>Company</th>
+        <th>Role</th>
         <th>Docs</th>
         <th>Design</th>
         <th>Model</th>
