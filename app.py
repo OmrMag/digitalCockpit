@@ -1300,7 +1300,7 @@ def morta_invite(email, config, hub_id: str = None, tag_reference_id: str = None
     return {"status": "success"}
 
 
-def revizto_fetch_license_member_suggestions(license_uuid: str, region: str, token: str,
+def revizto_fetch_license_member_suggestions(licenses: list, region: str, token: str,
                                              timeout: int = 15) -> dict:
     """Pull license members and aggregate their company/department values for
     use as autocomplete suggestions in the invite form.
@@ -1309,62 +1309,86 @@ def revizto_fetch_license_member_suggestions(license_uuid: str, region: str, tok
     Response shape: data is a dict keyed by member_id; each value has a
     `user` sub-dict and top-level `company`, `department` fields.
 
+    Iterates ALL licenses (not just the one that worked for roles) because
+    member-read permission may differ from role-read permission on the same
+    account. Aggregates results across all licenses that returned data.
+
     Revizto's member endpoint does not expose a `location` field even though
     the invite payload accepts one — locations seem to be invite-only metadata
     that doesn't round-trip back. So we return an empty list for locations;
     the invite form will fall back to free-text entry for that column.
 
+    `licenses` is a list of license dicts as returned by /user/licenses,
+    each having a `uuid` field. We try each license in turn.
+
     Returns: {"companies": [...], "departments": [...], "locations": [],
-              "_error": "..."} where _error is omitted on success, present
-    with a short reason string on failure. The caller can surface this as
-    a result so the UI/admin can diagnose silent failures.
+              "_attempts": [list of per-license diagnostics],
+              "_member_count": N,
+              "_error": "..."} where _error is omitted if at least one
+    license returned data.
     """
     suggestions = {"companies": [], "departments": [], "locations": []}
-    try:
-        url = f"https://api.{region}.revizto.com/v5/license/{license_uuid}/member/list"
-        headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
-        r = http_requests.get(url, headers=headers, timeout=timeout)
-        if r.status_code != 200:
-            suggestions["_error"] = f"HTTP {r.status_code}: {r.text[:120]}"
-            return suggestions
+    attempts = []
+    seen_co = set()
+    seen_dept = set()
+    member_count = 0
 
-        body = r.json()
-        # Revizto envelope check — same pattern as roles endpoint
-        if body.get("result", 0) < 0:
-            suggestions["_error"] = f"result={body.get('result')}: {body.get('message', '')[:80]}"
-            return suggestions
-        if body.get("data") is None:
-            suggestions["_error"] = "no data in response"
-            return suggestions
-
-        data = body.get("data", {})
-        if not isinstance(data, dict):
-            suggestions["_error"] = f"unexpected data type: {type(data).__name__}"
-            return suggestions
-
-        seen_co = set()
-        seen_dept = set()
-        member_count = 0
-        for _mid, member in data.items():
-            if not isinstance(member, dict):
+    for lic in (licenses or []):
+        lic_uuid = lic.get("uuid", "") if isinstance(lic, dict) else ""
+        if not lic_uuid:
+            continue
+        try:
+            url = f"https://api.{region}.revizto.com/v5/license/{lic_uuid}/member/list"
+            headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+            r = http_requests.get(url, headers=headers, timeout=timeout)
+            if r.status_code != 200:
+                # Revizto frames 404s in JSON; capture a short reason
+                short_msg = r.text[:80]
+                try:
+                    body_err = r.json()
+                    short_msg = (body_err.get("message") or short_msg)[:80]
+                except Exception:
+                    pass
+                attempts.append(f"{lic_uuid[:8]}=HTTP{r.status_code}({short_msg})")
                 continue
-            member_count += 1
-            co = (member.get("company") or "").strip()
-            dept = (member.get("department") or "").strip()
-            # Case-insensitive dedupe but preserve original casing of first-seen
-            if co and co.lower() not in seen_co:
-                seen_co.add(co.lower())
-                suggestions["companies"].append(co)
-            if dept and dept.lower() not in seen_dept:
-                seen_dept.add(dept.lower())
-                suggestions["departments"].append(dept)
 
-        suggestions["companies"].sort(key=str.lower)
-        suggestions["departments"].sort(key=str.lower)
-        # Stash member count for diagnostics
-        suggestions["_member_count"] = member_count
-    except Exception as e:
-        suggestions["_error"] = f"exception: {type(e).__name__}: {str(e)[:120]}"
+            body = r.json()
+            if body.get("result", 0) < 0:
+                attempts.append(f"{lic_uuid[:8]}=result_{body.get('result')}")
+                continue
+            if body.get("data") is None:
+                attempts.append(f"{lic_uuid[:8]}=no_data")
+                continue
+
+            data = body.get("data", {})
+            if not isinstance(data, dict):
+                attempts.append(f"{lic_uuid[:8]}=unexpected_type")
+                continue
+
+            this_count = 0
+            for _mid, member in data.items():
+                if not isinstance(member, dict):
+                    continue
+                this_count += 1
+                co = (member.get("company") or "").strip()
+                dept = (member.get("department") or "").strip()
+                if co and co.lower() not in seen_co:
+                    seen_co.add(co.lower())
+                    suggestions["companies"].append(co)
+                if dept and dept.lower() not in seen_dept:
+                    seen_dept.add(dept.lower())
+                    suggestions["departments"].append(dept)
+            member_count += this_count
+            attempts.append(f"{lic_uuid[:8]}=ok({this_count})")
+        except Exception as e:
+            attempts.append(f"{lic_uuid[:8]}=exc({type(e).__name__})")
+
+    suggestions["companies"].sort(key=str.lower)
+    suggestions["departments"].sort(key=str.lower)
+    suggestions["_attempts"] = attempts
+    suggestions["_member_count"] = member_count
+    if member_count == 0:
+        suggestions["_error"] = "no members readable from " + str(len(attempts)) + " license(s): " + " | ".join(attempts)
     return suggestions
 
 
@@ -2841,13 +2865,15 @@ def _sync_project_metadata(user: str, key: str, registry: dict,
 
                             # ── Member suggestions ─────────────────────────────
                             # Fetch license members (their company/department
-                            # values) to power the autocomplete on the invite
-                            # form. Same `used_license` we just discovered for
-                            # roles, same token. License-scoped, so cached per
-                            # region and reused across all projects in this
-                            # license/region.
+                            # values) for the invite form's autocomplete.
+                            # Iterate ALL licenses — member-read permission
+                            # may differ from role-read permission on the same
+                            # account (e.g., user can read roles for some
+                            # licenses but only members for a different one).
+                            # Suggestions are non-critical, so partial failures
+                            # are fine. License-scoped → cached per region.
                             sug = revizto_fetch_license_member_suggestions(
-                                used_license, rev_region, token
+                                licenses, rev_region, token
                             )
                             # Strip diagnostic keys before storing in registry
                             sug_clean = {
@@ -2861,8 +2887,13 @@ def _sync_project_metadata(user: str, key: str, registry: dict,
                                 len(sug_clean["companies"])
                                 + len(sug_clean["departments"])
                             )
-                            # Surface fetch errors so the admin can diagnose
-                            if sug.get("_error"):
+                            # Surface fetch errors so the admin can diagnose,
+                            # but only when ZERO members were readable. If we
+                            # got at least some, count it as a partial win and
+                            # don't pollute the success banner with per-license
+                            # 404s (which are common — admins typically only
+                            # admin a subset of licenses on the account).
+                            if sug.get("_error") and sug.get("_member_count", 0) == 0:
                                 results["revizto_suggestions_error"] = sug["_error"]
                             if "_member_count" in sug:
                                 results["revizto_member_count"] = sug["_member_count"]
