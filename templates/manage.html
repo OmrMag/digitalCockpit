@@ -96,9 +96,103 @@
     .target-info .target-row{display:flex;align-items:center;gap:8px;margin:4px 0}
     .target-info .target-label{font-weight:600;width:60px;text-transform:uppercase;letter-spacing:.3px;color:var(--text-dark-muted)}
     .target-info .target-value{color:var(--navy);font-weight:500}
-    .preview-table{margin:12px 0;max-height:400px;overflow-y:auto}
-    .preview-table table{font-size:var(--fs-xs)}
-    .preview-table td,.preview-table th{padding:6px 10px}
+    /* ── Step 2 Review table — wide multi-section schema ───────────────────
+       Mimics the packages.html inline preview pattern: bounded box, sticky
+       header, internal horizontal+vertical scroll. The table can be wider
+       than its container; scroll horizontally to see Forma columns when
+       the modal is narrow.
+
+       Two-row sticky header (top:0 and top:Npx) so platform-section labels
+       stay above column names while scrolling. Plus sticky-left columns
+       (checkbox + Email) so admin always sees who they're inviting even
+       after scrolling 20+ columns to the right. */
+    .preview-table {
+        margin: 12px 0;
+        max-height: 440px;
+        max-width: 100%;
+        overflow: auto;
+        border: 1px solid var(--border-cream);
+        border-radius: var(--radius);
+        background: white;
+    }
+    .preview-table table {
+        border-collapse: separate;   /* needed for sticky cells to layer cleanly */
+        border-spacing: 0;
+        font-size: 11.5px;
+        font-family: var(--font);
+    }
+    .preview-table th,
+    .preview-table td {
+        padding: 5px 9px;
+        text-align: left;
+        white-space: nowrap;
+        vertical-align: top;
+        border-bottom: 1px solid var(--border-cream);
+        background: white; /* opaque, prevents bleed-through under sticky */
+    }
+    /* Top header row — section labels (Morta / Revizto / Forma).
+       z-index: 4 so it sits above column-name row AND sticky-left cells. */
+    .preview-table thead tr.row-section th {
+        position: sticky;
+        top: 0;
+        z-index: 4;
+        background: var(--cream);
+        font-weight: 600;
+        font-size: var(--fs-xs);
+        color: var(--navy);
+        text-align: center;
+        text-transform: uppercase;
+        letter-spacing: 0.6px;
+        border-bottom: 1px solid var(--border-cream);
+    }
+    /* Bottom header row — actual column names. Stick directly under the
+       section row. The 27px is the section row's measured height — if you
+       change padding/font on .row-section, retune this. */
+    .preview-table thead tr.row-cols th {
+        position: sticky;
+        top: 27px;
+        z-index: 3;
+        background: #eef1f5;
+        font-weight: 600;
+        color: var(--navy);
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.4px;
+        box-shadow: inset 0 -1px 0 var(--border-cream);
+    }
+    /* Section colors — faded in body, slightly stronger in header.
+       Body cells inherit from these classes for visual grouping. */
+    .preview-table .sec-morta-head    { background: rgba( 74,158,255,0.28); }
+    .preview-table .sec-revizto-head  { background: rgba(220, 80, 80,0.28); }
+    .preview-table .sec-forma-head    { background: rgba(245,158, 11,0.28); }
+    .preview-table .sec-morta         { background: rgba( 74,158,255,0.06); }
+    .preview-table .sec-revizto       { background: rgba(220, 80, 80,0.05); }
+    .preview-table .sec-forma         { background: rgba(245,158, 11,0.06); }
+    /* Section dividers — vertical separators between platform groups */
+    .preview-table .sec-divider-l { border-left: 2px solid var(--border-cream); }
+    /* Sticky left columns: checkbox + Email + Name. z-index 2 (under
+       headers) but above body rows. The thead cells in these columns get
+       z-index 5 (above their row's z-index) to stay frozen at top-left
+       corner. */
+    .preview-table .stick-l1 { position: sticky; left: 0;        z-index: 2; }
+    .preview-table .stick-l2 { position: sticky; left: 32px;     z-index: 2; min-width: 200px; }
+    .preview-table .stick-l3 { position: sticky; left: 232px;    z-index: 2; min-width: 130px; box-shadow: 1px 0 0 var(--border-cream); }
+    .preview-table thead .stick-l1,
+    .preview-table thead .stick-l2,
+    .preview-table thead .stick-l3 { z-index: 5; }
+    /* Body cells in sticky-left columns need to be opaque and tinted to
+       not bleed through scrolling content underneath */
+    .preview-table tbody .stick-l1,
+    .preview-table tbody .stick-l2,
+    .preview-table tbody .stick-l3 { background: white; }
+    .preview-table tbody tr:hover td { background: #fafbfc; }
+    .preview-table tbody tr:hover .sec-morta   { background: rgba( 74,158,255,0.10); }
+    .preview-table tbody tr:hover .sec-revizto { background: rgba(220, 80, 80,0.09); }
+    .preview-table tbody tr:hover .sec-forma   { background: rgba(245,158, 11,0.10); }
+    /* Compact yes/no flag look — used for Invite to Lic/Project, Forma modules */
+    .preview-table .flag-on  { color: var(--success); font-weight: 600; }
+    .preview-table .flag-off { color: var(--text-dark-muted); text-decoration: line-through; }
+    .preview-table .muted    { color: var(--text-dark-muted); font-style: italic; }
 </style>
 {% endblock %}
 
@@ -218,6 +312,10 @@
                                 <label>Project Role</label>
                                 <select class="exp-sel" id="invRevProjRole"><option value="">— None —</option></select>
                             </div>
+                            <div class="form-group" style="margin:0;flex:1;min-width:130px;">
+                                <label>Location</label>
+                                <input type="text" class="exp-sel" id="invRevLocation" placeholder="Office location">
+                            </div>
                             <div style="display:flex;flex-direction:column;gap:4px;padding-bottom:4px;">
                                 <label class="exp-toggle"><input type="checkbox" id="invRevLicense" checked><span style="font-size:var(--fs-xs)">Invite to license</span></label>
                                 <label class="exp-toggle"><input type="checkbox" id="invRevProject" checked><span style="font-size:var(--fs-xs)">Invite to project</span></label>
@@ -257,7 +355,7 @@
                 <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" style="display:none" onchange="handleFile(this)">
                 <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-top:8px;">
                     <p style="font-size:var(--fs-xs);color:var(--text-dark-muted);margin:0;flex:1;">
-                        Required: <strong>Email</strong>. Optional: First Name, Last Name, Company, Department, Morta Access (YES/NO), Morta Tag, Revizto Access, Revizto License Role, Revizto Project Role, Revizto To License, Revizto To Project, ACC Access, Forma Company, Forma Role, Forma Docs, Forma Design Coordination, Forma Model Coordination.
+                        Required: <strong>Email</strong>. Optional: First Name, Last Name, Company, Department, Morta Access (YES/NO), Morta Tag, Revizto Access, Revizto License Role, Revizto Project Role, Revizto To License, Revizto To Project, Revizto Company, Revizto Department, Revizto Location, ACC Access, Forma Company, Forma Role, Forma Docs, Forma Design Coordination, Forma Model Coordination.
                     </p>
                     <button type="button" class="btn btn-secondary" style="font-size:var(--fs-xs);white-space:nowrap;flex-shrink:0;" onclick="downloadBulkTemplate()">
                         ↓ Template CSV
@@ -696,6 +794,7 @@ function downloadBulkTemplate() {
         "Morta Access","Morta Tag",
         "Revizto Access","Revizto License Role","Revizto Project Role",
         "Revizto To License","Revizto To Project",
+        "Revizto Company","Revizto Department","Revizto Location",
         "ACC Access","Forma Company","Forma Role",
         "Forma Docs","Forma Design Coordination","Forma Model Coordination"
     ];
@@ -712,11 +811,17 @@ function downloadBulkTemplate() {
     const exFoCo     = (plat.forma?.companies   || [])[0]?.name      || 'EGIS';
     const exFoRole   = (plat.forma?.roles       || [])[0]?.name      || '';
 
+    // Revizto Company/Department example values left blank intentionally —
+    // the typical case is "use top-level Company and Department." Filling
+    // them in only matters when the user appears under a different
+    // org on the Revizto license. Location has no top-level analog so we
+    // ship a sensible example.
     const example = [
         "user@example.com","John","Smith","EGIS","Digital Construction",
         "YES",exTag,
         "YES",exRevLic,exRevProj,
         "YES","YES",
+        "","","Abu Dhabi",
         "YES",exFoCo,exFoRole,
         "YES","NO","NO"
     ];
@@ -846,6 +951,13 @@ async function goNext(){
                 revizto_project_role_id: document.getElementById('invRevProjRole').value || null,
                 revizto_invite_license:  document.getElementById('invRevLicense').checked,
                 revizto_invite_project:  document.getElementById('invRevProject').checked,
+                // Revizto-specific identity overrides — Single only exposes
+                // Location since the Bulk CSV is the typical place to specify
+                // a different Revizto Company/Department from top-level. The
+                // server falls back to top-level when these are empty.
+                revizto_company:         '',
+                revizto_department:      '',
+                revizto_location:        document.getElementById('invRevLocation').value,
                 forma_company_id:        document.getElementById('invFormaCompany').value,
                 forma_role_ids:          formaRoleId ? [formaRoleId] : [],
                 forma_products:          formaProducts.length ? formaProducts : [{key:'docs',access:'member'}],
@@ -897,19 +1009,143 @@ function renderPreview(){
         <div class="target-row"><span class="platform-tag morta target-label">Morta</span><span class="target-value">${mortaHub}</span></div>
         <div class="target-row"><span class="platform-tag revizto target-label">Revizto</span><span class="target-value">${rProj}</span></div>
         <div class="target-row"><span class="platform-tag forma target-label">Forma</span><span class="target-value">${fProj}</span></div>`;
-    let html='<table><thead><tr><th></th><th>Email</th><th>Name</th><th>Company</th><th>Morta</th><th>Revizto</th><th>Forma</th></tr></thead><tbody>';
-    previewUsers.forEach((u,i)=>{
-        html+=`<tr><td><input type="checkbox" class="preview-check" checked data-index="${i}"></td>
-            <td>${u.email}</td><td>${u.first_name} ${u.last_name}</td><td>${u.company}</td>
-            <td>${u.morta?'<span class="status-dot success" style="display:inline-block"></span>':'—'}</td>
-            <td>${u.revizto?'<span class="status-dot success" style="display:inline-block"></span>':'—'}</td>
-            <td>${u.forma?'<span class="status-dot success" style="display:inline-block"></span>':'—'}</td></tr>`;
+
+    // ── Build name-lookups from the active project's registry ─────────
+    // previewUsers carries IDs (tag_reference_id, role IDs, company IDs);
+    // the Review screen needs to show NAMES so admins can verify they're
+    // inviting the right person to the right thing. Lookups built once
+    // per render from _subRegistry (already loaded by the Manage page).
+    const ak   = activeCtx?.active_project_key || '';
+    const reg  = (_subRegistry || {})[ak] || {};
+    const plat = reg.platforms || {};
+
+    const mortaTagsById  = {}; (plat.morta?.tags                || []).forEach(t => { if (t.tag_reference_id) mortaTagsById[t.tag_reference_id] = t.name; });
+    const revLicById     = {}; (plat.revizto?.license_roles     || []).forEach(r => { revLicById[r.id] = r.name; });
+    const revProjById    = {}; (plat.revizto?.roles             || []).forEach(r => { revProjById[r.id] = r.name; });
+    const formaCoById    = {}; (plat.forma?.companies           || []).forEach(c => { formaCoById[c.id] = c.name; });
+    const formaRoleById  = {}; (plat.forma?.roles               || []).forEach(r => { formaRoleById[r.id] = r.name; });
+
+    // Tiny escaper so registry data with quotes/angle brackets renders safely
+    const esc = s => String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+
+    // Cell helpers — render either the value or a muted dash
+    const cell    = v => v ? esc(v) : '<span class="muted">—</span>';
+    const flag    = on => on ? '<span class="flag-on">✓</span>' : '<span class="flag-off">✗</span>';
+    const xmark   = on => on ? '<span class="flag-on">×</span>' : '<span class="muted">—</span>';
+    // Resolve an ID to a name via lookup table, with diagnostic fallback so
+    // admins can see WHICH ID didn't resolve when the registry is stale.
+    const lookup  = (id, table, kind) => {
+        if (!id) return '';
+        if (table[id]) return table[id];
+        const short = String(id).length > 8 ? String(id).slice(0, 8) + '…' : String(id);
+        return `<span class="muted" title="${kind} id ${esc(String(id))} not in registry">id ${esc(short)}</span>`;
+    };
+    const resolveProducts = u => {
+        const products = u.forma_products || [];
+        return {
+            docs:   products.some(p => p.key === 'docs'),
+            design: products.some(p => p.key === 'designCollaboration'),
+            model:  products.some(p => p.key === 'modelCoordination'),
+        };
+    };
+
+    // ── Build the table ──────────────────────────────────────────────
+    // Two header rows: section labels (colspan-grouped) on top, column
+    // names below. Section header colspans are computed from the column
+    // counts: 5 identity + 2 morta + 8 revizto + 6 forma = 21 columns
+    // total. The leading checkbox is column 1 (no section).
+    let html = `<table>
+      <colgroup>
+        <col><col><col><col><col><col>
+        <col><col>
+        <col><col><col><col><col><col><col><col>
+        <col><col><col><col><col><col>
+      </colgroup>
+      <thead>
+        <tr class="row-section">
+          <th colspan="5" style="background:var(--cream);"></th>
+          <th colspan="2" class="sec-morta-head sec-divider-l">MORTA</th>
+          <th colspan="8" class="sec-revizto-head sec-divider-l">REVIZTO</th>
+          <th colspan="6" class="sec-forma-head sec-divider-l">FORMA</th>
+        </tr>
+        <tr class="row-cols">
+          <th class="stick-l1" style="width:32px;"></th>
+          <th class="stick-l2">Email</th>
+          <th class="stick-l3">Name</th>
+          <th>Company</th>
+          <th>Department</th>
+
+          <th class="sec-morta sec-divider-l">On</th>
+          <th class="sec-morta">Tag</th>
+
+          <th class="sec-revizto sec-divider-l">On</th>
+          <th class="sec-revizto">Company</th>
+          <th class="sec-revizto">Department</th>
+          <th class="sec-revizto">Location</th>
+          <th class="sec-revizto">License Role</th>
+          <th class="sec-revizto">Project Role</th>
+          <th class="sec-revizto">L</th>
+          <th class="sec-revizto">P</th>
+
+          <th class="sec-forma sec-divider-l">On</th>
+          <th class="sec-forma">Company</th>
+          <th class="sec-forma">Role</th>
+          <th class="sec-forma">Docs</th>
+          <th class="sec-forma">Design</th>
+          <th class="sec-forma">Model</th>
+        </tr>
+      </thead>
+      <tbody>`;
+
+    previewUsers.forEach((u, i) => {
+        // Identity columns
+        const fullName = ((u.first_name || '') + ' ' + (u.last_name || '')).trim();
+        // Revizto effective values (mirror server fallback logic)
+        const revCo   = u.revizto_company    || u.company    || '';
+        const revDept = u.revizto_department || u.department || '';
+        const revLoc  = u.revizto_location   || '';
+        const revLicName  = u.revizto_license_role_id ? (revLicById[u.revizto_license_role_id] || `id ${u.revizto_license_role_id}`) : '';
+        const revProjName = u.revizto_project_role_id ? lookup(u.revizto_project_role_id, revProjById, 'project role') : '';
+        const products = resolveProducts(u);
+
+        html += `<tr>
+          <td class="stick-l1" style="width:32px;">
+            <input type="checkbox" class="preview-check" checked data-index="${i}">
+          </td>
+          <td class="stick-l2">${esc(u.email)}</td>
+          <td class="stick-l3">${cell(fullName)}</td>
+          <td>${cell(u.company)}</td>
+          <td>${cell(u.department)}</td>
+
+          <td class="sec-morta sec-divider-l">${xmark(u.morta)}</td>
+          <td class="sec-morta">${u.morta ? lookup(u.morta_tag_id, mortaTagsById, 'morta tag') || '<span class="muted">—</span>' : '<span class="muted">—</span>'}</td>
+
+          <td class="sec-revizto sec-divider-l">${xmark(u.revizto)}</td>
+          <td class="sec-revizto">${u.revizto ? cell(revCo) : '<span class="muted">—</span>'}</td>
+          <td class="sec-revizto">${u.revizto ? cell(revDept) : '<span class="muted">—</span>'}</td>
+          <td class="sec-revizto">${u.revizto ? cell(revLoc) : '<span class="muted">—</span>'}</td>
+          <td class="sec-revizto">${u.revizto ? cell(revLicName) : '<span class="muted">—</span>'}</td>
+          <td class="sec-revizto">${u.revizto ? (revProjName || '<span class="muted">—</span>') : '<span class="muted">—</span>'}</td>
+          <td class="sec-revizto">${u.revizto ? flag(u.revizto_invite_license !== false) : '<span class="muted">—</span>'}</td>
+          <td class="sec-revizto">${u.revizto ? flag(u.revizto_invite_project === true)  : '<span class="muted">—</span>'}</td>
+
+          <td class="sec-forma sec-divider-l">${xmark(u.forma)}</td>
+          <td class="sec-forma">${u.forma ? lookup(u.forma_company_id, formaCoById, 'forma company') || '<span class="muted">—</span>' : '<span class="muted">—</span>'}</td>
+          <td class="sec-forma">${u.forma ? ((u.forma_role_ids || []).map(rid => lookup(rid, formaRoleById, 'forma role')).join(', ') || '<span class="muted">—</span>') : '<span class="muted">—</span>'}</td>
+          <td class="sec-forma">${u.forma ? flag(products.docs)   : '<span class="muted">—</span>'}</td>
+          <td class="sec-forma">${u.forma ? flag(products.design) : '<span class="muted">—</span>'}</td>
+          <td class="sec-forma">${u.forma ? flag(products.model)  : '<span class="muted">—</span>'}</td>
+        </tr>`;
     });
-    html+='</tbody></table>';
-    document.getElementById('previewTable').innerHTML=html;
-    document.querySelectorAll('.preview-check').forEach(cb=>{cb.addEventListener('change',function(){
-        previewUsers[parseInt(this.dataset.index)]._skip=!this.checked;
-        document.getElementById('footerLeft').textContent=`${previewUsers.filter(u=>!u._skip).length} user(s) ready`;
+    html += '</tbody></table>';
+    document.getElementById('previewTable').innerHTML = html;
+
+    // Re-attach change handler on the now-rendered checkboxes
+    document.querySelectorAll('.preview-check').forEach(cb => { cb.addEventListener('change', function(){
+        previewUsers[parseInt(this.dataset.index)]._skip = !this.checked;
+        document.getElementById('footerLeft').textContent = `${previewUsers.filter(u => !u._skip).length} user(s) ready`;
     });});
 }
 
