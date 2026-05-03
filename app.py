@@ -2989,6 +2989,146 @@ def write_script_config(user: str, user_temp: Path) -> Path:
         json.dump(merged, f, indent=2)
     return config_path
 
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Forma 3-legged token: refresh + per-admin file writer
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# Round 1 of this feature stored the OAuth session in the admin's blob
+# config under forma.3l_session. Round 2 (this code) bridges that storage
+# into the running script:
+#
+#   1. Before launching a Forma subprocess, we check if the admin has a
+#      stored session
+#   2. If it's expired (or expiring within 60s), we refresh it server-side
+#      using the stored refresh_token and persist the new tokens
+#   3. We write the (possibly-refreshed) access_token to a per-admin token
+#      file in the admin's temp dir
+#   4. We pass that file path to the subprocess via COCKPIT_FORMA_3L_TOKEN_FILE
+#   5. The patched Forma_MasterScript.get_3legged_token() reads from that
+#      env-var path instead of its hardcoded default — eliminating the race
+#      condition where simultaneous extractions by different admins would
+#      cross-contaminate each other's tokens via a shared file
+#
+# All of this is best-effort. If anything fails (refresh rejected, file
+# write fails, etc.), the script falls back to its 2-legged path with a
+# message in the terminal.
+
+def _forma_refresh_3l_session(user: str, session: dict) -> dict | None:
+    """Use the stored refresh_token to get a fresh access_token.
+
+    Saves the new tokens to the admin's blob config (Autodesk rotates
+    refresh_tokens, so we have to capture the new one). Returns the
+    updated session dict, or None on failure.
+    """
+    import time as _time
+
+    refresh_token = session.get("refresh_token") or ""
+    if not refresh_token:
+        return None
+
+    cid, sec = _forma_3l_creds(user)
+    if not cid or not sec:
+        return None
+
+    import base64
+    basic = base64.b64encode(f"{cid}:{sec}".encode("ascii")).decode("ascii")
+
+    try:
+        resp = http_requests.post(
+            FORMA_OAUTH_TOKEN_URL,
+            headers={
+                "Authorization": f"Basic {basic}",
+                "Content-Type":  "application/x-www-form-urlencoded",
+                "Accept":        "application/json",
+            },
+            data={
+                "grant_type":    "refresh_token",
+                "refresh_token": refresh_token,
+            },
+            timeout=15,
+        )
+    except Exception as e:
+        print(f"[forma-3l] Refresh request failed: {e}")
+        return None
+
+    if resp.status_code != 200:
+        print(f"[forma-3l] Refresh returned {resp.status_code}: {resp.text[:200]}")
+        return None
+
+    try:
+        data = resp.json()
+    except ValueError:
+        return None
+
+    if not data.get("access_token"):
+        return None
+
+    expires_in = int(data.get("expires_in") or 3600)
+    new_session = {
+        "access_token":  data["access_token"],
+        # Autodesk rotates refresh tokens — use the new one if returned,
+        # otherwise carry over the existing one.
+        "refresh_token": data.get("refresh_token") or refresh_token,
+        "expires_at":    int(_time.time()) + expires_in - 30,
+        "scope":         data.get("scope", session.get("scope", "")),
+        "obtained_at":   int(_time.time()),
+    }
+
+    # Persist the rotated refresh token + fresh access token back to blob
+    cfg = load_config(user)
+    cfg.setdefault("forma", {})["3l_session"] = new_session
+    save_config(cfg, user)
+    return new_session
+
+
+def prepare_forma_3l_token(user: str, user_temp: Path) -> Path | None:
+    """Best-effort: ensure a fresh 3-legged token is available on disk for
+    the running subprocess. Returns the path to the token file, or None
+    if the admin has no stored session (in which case the script will
+    fall back to 2-legged on its own).
+
+    Behavior:
+      • No stored session   → return None (no file written)
+      • Session valid       → write file, return path
+      • Session expiring    → refresh, write file, return path
+      • Refresh fails       → return None (script falls back to 2-legged)
+    """
+    import time as _time
+
+    cfg = load_config(user)
+    session = (cfg.get("forma", {}) or {}).get("3l_session")
+    if not session or not session.get("access_token"):
+        return None
+
+    # Refresh if within 60s of expiry (or already past)
+    expires_at = int(session.get("expires_at") or 0)
+    if expires_at <= int(_time.time()) + 60:
+        refreshed = _forma_refresh_3l_session(user, session)
+        if not refreshed:
+            return None
+        session = refreshed
+
+    # Write to user's temp dir using the same JSON shape Forma_MasterScript
+    # expects (access_token, refresh_token, expires_at). We deliberately do
+    # NOT use the script's default filename so it's clear the cockpit owns
+    # this file. The patched get_3legged_token() picks up the path via
+    # COCKPIT_FORMA_3L_TOKEN_FILE env var.
+    token_path = user_temp / "_forma_3l_token.json"
+    payload = {
+        "access_token":  session["access_token"],
+        "refresh_token": session.get("refresh_token", ""),
+        "expires_at":    session.get("expires_at", 0),
+    }
+    try:
+        with open(token_path, "w") as f:
+            json.dump(payload, f)
+    except OSError as e:
+        print(f"[forma-3l] Failed to write token file: {e}")
+        return None
+    return token_path
+
+
 @app.post("/api/extract")
 async def api_extract(request: Request, user: str = Depends(require_user)):
     body         = await request.json()
@@ -3028,6 +3168,13 @@ async def api_extract(request: Request, user: str = Depends(require_user)):
     script_env["COCKPIT_USER"]        = user
     script_env["COCKPIT_EXPORTS_DIR"] = str(user_temp)
     script_env["COCKPIT_CONFIG"]      = str(config_path)
+    # If this admin has a stored Forma 3-legged session, refresh if needed
+    # and write the access_token to a per-admin file. Patched
+    # Forma_MasterScript.get_3legged_token() reads this path. Best-effort:
+    # if the token can't be prepared, the script falls back to 2-legged.
+    forma_3l_path = prepare_forma_3l_token(user, user_temp)
+    if forma_3l_path:
+        script_env["COCKPIT_FORMA_3L_TOKEN_FILE"] = str(forma_3l_path)
 
     # Snapshot existing files' mtimes BEFORE the run so we can identify
     # files that were actually created/modified by THIS extraction.
@@ -3158,6 +3305,10 @@ async def api_extract_stream(request: Request, user: str = Depends(require_user)
     script_env["COCKPIT_EXPORTS_DIR"] = str(user_temp)
     script_env["COCKPIT_CONFIG"]      = str(config_path)
     script_env["PYTHONUNBUFFERED"]    = "1"
+    # See /api/extract for full notes on the Forma 3-legged token plumbing.
+    forma_3l_path = prepare_forma_3l_token(user, user_temp)
+    if forma_3l_path:
+        script_env["COCKPIT_FORMA_3L_TOKEN_FILE"] = str(forma_3l_path)
 
     # Snapshot existing files' mtimes for the "files produced by this run"
     # filter (same logic as /api/extract).

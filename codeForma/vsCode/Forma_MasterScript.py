@@ -108,7 +108,15 @@ def get_headers() -> dict:
 # 3-legged auth
 # ---------------------------------------------------------------------------
 SCOPES_3L       = "data:read account:read"
-TOKEN_FILE_3L   = os.path.join(_ROOT_DIR, "forma_tokens_3l.json")
+
+# When run as a cockpit subprocess, the parent injects a per-admin token
+# file path via COCKPIT_FORMA_3L_TOKEN_FILE so simultaneous extractions
+# by different admins don't cross-contaminate each other's tokens via a
+# shared file. Falls back to the local default for standalone runs.
+TOKEN_FILE_3L   = os.environ.get(
+    "COCKPIT_FORMA_3L_TOKEN_FILE",
+    os.path.join(_ROOT_DIR, "forma_tokens_3l.json"),
+)
 CALLBACK_URL    = "http://localhost:8080/"
 _auth_code      = None
 
