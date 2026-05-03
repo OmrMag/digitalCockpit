@@ -1300,6 +1300,64 @@ def morta_invite(email, config, hub_id: str = None, tag_reference_id: str = None
     return {"status": "success"}
 
 
+def revizto_fetch_license_member_suggestions(license_uuid: str, region: str, token: str,
+                                             timeout: int = 15) -> dict:
+    """Pull license members and aggregate their company/department values for
+    use as autocomplete suggestions in the invite form.
+
+    Endpoint: GET /v5/license/{uuid}/member/list
+    Response shape: data is a dict keyed by member_id; each value has a
+    `user` sub-dict and top-level `company`, `department` fields.
+
+    Revizto's member endpoint does not expose a `location` field even though
+    the invite payload accepts one — locations seem to be invite-only metadata
+    that doesn't round-trip back. So we return an empty list for locations;
+    the invite form will fall back to free-text entry for that column.
+
+    Returns: {"companies": [...], "departments": [...], "locations": []}
+    On failure: returns the dict with empty lists. Errors are logged but
+    not raised — suggestions are nice-to-have, not critical.
+    """
+    suggestions = {"companies": [], "departments": [], "locations": []}
+    try:
+        url = f"https://api.{region}.revizto.com/v5/license/{license_uuid}/member/list"
+        headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+        r = http_requests.get(url, headers=headers, timeout=timeout)
+        if r.status_code != 200:
+            return suggestions
+
+        body = r.json()
+        # Revizto envelope check — same pattern as roles endpoint
+        if body.get("result", 0) < 0 or body.get("data") is None:
+            return suggestions
+
+        data = body.get("data", {})
+        if not isinstance(data, dict):
+            return suggestions
+
+        seen_co = set()
+        seen_dept = set()
+        for _mid, member in data.items():
+            if not isinstance(member, dict):
+                continue
+            co = (member.get("company") or "").strip()
+            dept = (member.get("department") or "").strip()
+            # Case-insensitive dedupe but preserve original casing of first-seen
+            if co and co.lower() not in seen_co:
+                seen_co.add(co.lower())
+                suggestions["companies"].append(co)
+            if dept and dept.lower() not in seen_dept:
+                seen_dept.add(dept.lower())
+                suggestions["departments"].append(dept)
+
+        suggestions["companies"].sort(key=str.lower)
+        suggestions["departments"].sort(key=str.lower)
+    except Exception:
+        # Suggestions are non-critical; swallow errors
+        pass
+    return suggestions
+
+
 def revizto_invite(email, first_name, last_name, company, department, config,
                    project_uuid=None, license_role_id: int = None,
                    project_role_id: int = None,
@@ -2476,14 +2534,18 @@ async def api_registry_sync_mine(request: Request, user: str = Depends(require_u
     else:
         keys = [k for k, v in registry.items() if user in v.get("admins", [])]
 
-    revizto_roles_cache: dict = {}  # region -> list[dict] | "error message"
+    revizto_roles_cache: dict = {}    # region -> list[dict] | "error message"
+    revizto_member_cache: dict = {}   # region -> {companies, departments, locations}
 
     per_project = {}
     for key in keys:
         try:
             per_project[key] = {
                 "name":   registry[key].get("name", key),
-                "synced": _sync_project_metadata(user, key, registry, revizto_roles_cache),
+                "synced": _sync_project_metadata(
+                    user, key, registry,
+                    revizto_roles_cache, revizto_member_cache
+                ),
             }
         except Exception as e:
             # Keep going — one project's failure shouldn't block the others
@@ -2586,7 +2648,8 @@ def _forma_derive_roles_from_users(account_id: str, clean_pid: str, headers: dic
 
 
 def _sync_project_metadata(user: str, key: str, registry: dict,
-                           revizto_roles_cache: dict = None) -> dict:
+                           revizto_roles_cache: dict = None,
+                           revizto_member_cache: dict = None) -> dict:
     """Fetch fresh metadata from Morta/Revizto/Forma for one project and write
     it into the registry entry in place.
 
@@ -2598,6 +2661,13 @@ def _sync_project_metadata(user: str, key: str, registry: dict,
     across projects in a single batch sync. Keys are region names; values are
     either a list of role dicts (success) or an error string. Pass None for
     one-off syncs of a single project.
+
+    `revizto_member_cache` (optional) memoises Revizto license-member
+    suggestion fetches across projects in a single batch sync. Same key
+    structure as roles cache (per region); values are dicts of
+    {companies, departments, locations} suggestion lists. License members
+    are license-scoped (not project-scoped), so all projects under the
+    same license share the same suggestion list — hence the cache.
 
     Returns a flat results dict reporting counts on success and error strings
     on failure, so the UI can show a per-platform status. Partial success is
@@ -2658,11 +2728,23 @@ def _sync_project_metadata(user: str, key: str, registry: dict,
     if rev_uuid:
         try:
             cache = revizto_roles_cache if revizto_roles_cache is not None else {}
+            mcache = revizto_member_cache if revizto_member_cache is not None else {}
             cached = cache.get(rev_region)
             if isinstance(cached, list):
                 # Reuse the role list fetched earlier in this batch
                 platforms["revizto"]["roles"] = cached
                 results["revizto_roles"] = len(cached)
+                # Member suggestions (companies/departments/locations) — also
+                # cached per region. If a previous project in the batch
+                # populated them, reuse; otherwise leave the registry slot
+                # untouched so we keep last-known values.
+                cached_sug = mcache.get(rev_region)
+                if isinstance(cached_sug, dict):
+                    platforms["revizto"]["member_suggestions"] = cached_sug
+                    results["revizto_suggestions"] = (
+                        len(cached_sug.get("companies", []))
+                        + len(cached_sug.get("departments", []))
+                    )
             elif isinstance(cached, str):
                 # Earlier project in same region failed; surface the same error
                 results["revizto_roles_error"] = cached
@@ -2746,6 +2828,23 @@ def _sync_project_metadata(user: str, key: str, registry: dict,
                             # Cache the working license back so future calls skip
                             # the loop. Stored in in-memory config; not persisted.
                             config.setdefault(f"revizto_{rev_region}", {})["license_uuid"] = used_license
+
+                            # ── Member suggestions ─────────────────────────────
+                            # Fetch license members (their company/department
+                            # values) to power the autocomplete on the invite
+                            # form. Same `used_license` we just discovered for
+                            # roles, same token. License-scoped, so cached per
+                            # region and reused across all projects in this
+                            # license/region.
+                            sug = revizto_fetch_license_member_suggestions(
+                                used_license, rev_region, token
+                            )
+                            platforms["revizto"]["member_suggestions"] = sug
+                            mcache[rev_region] = sug
+                            results["revizto_suggestions"] = (
+                                len(sug.get("companies", []))
+                                + len(sug.get("departments", []))
+                            )
                         else:
                             err = f"No roles in any of {len(licenses)} license(s): " + " | ".join(attempts)
                             cache[rev_region] = err

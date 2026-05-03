@@ -185,7 +185,6 @@
     #previewTable thead th:nth-child(2),
     #reviewTable thead th:nth-child(1),
     #reviewTable thead th:nth-child(2) { z-index: 3; }
-    #previewTable tr:hover td { background: #fafbfc; }
     /* Empty-state row */
     #previewTable .empty-row td {
         text-align: center;
@@ -982,6 +981,16 @@ function renderCompose() {
     const revProjRoles = plat.revizto?.roles         || [];
     const formaCos     = plat.forma?.companies       || [];
     const formaRoles   = plat.forma?.roles           || [];
+    // Revizto autocomplete suggestions — populated by the project sync from
+    // /v5/license/{uuid}/member/list. Companies and departments come from
+    // existing license members. Locations isn't returned by Revizto's member
+    // endpoint (invite-only field, no round-trip), so that list is
+    // currently always empty — admin types freely. The hybrid <input list>
+    // pattern means typing always works regardless of suggestion presence.
+    const revSug      = plat.revizto?.member_suggestions || {};
+    const revSugCo    = Array.isArray(revSug.companies)   ? revSug.companies   : [];
+    const revSugDept  = Array.isArray(revSug.departments) ? revSug.departments : [];
+    const revSugLoc   = Array.isArray(revSug.locations)   ? revSug.locations   : [];
 
     const esc = s => String(s == null ? '' : s)
         .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -1051,13 +1060,13 @@ function renderCompose() {
                 <input type="checkbox" data-bind="revizto" ${u.revizto ? 'checked' : ''}>
               </td>
               <td class="col-revizto">
-                <input type="text" class="cell-input" data-bind="revizto_company" value="${esc(u.revizto_company)}">
+                <input type="text" class="cell-input" data-bind="revizto_company" value="${esc(u.revizto_company)}" list="dl-rev-companies" autocomplete="off">
               </td>
               <td class="col-revizto">
-                <input type="text" class="cell-input" data-bind="revizto_department" value="${esc(u.revizto_department)}">
+                <input type="text" class="cell-input" data-bind="revizto_department" value="${esc(u.revizto_department)}" list="dl-rev-departments" autocomplete="off">
               </td>
               <td class="col-revizto">
-                <input type="text" class="cell-input" data-bind="revizto_location" value="${esc(u.revizto_location)}">
+                <input type="text" class="cell-input" data-bind="revizto_location" value="${esc(u.revizto_location)}" list="dl-rev-locations" autocomplete="off">
               </td>
               <td class="col-revizto">
                 <select class="cell-input" data-bind="revizto_license_role_id" style="min-width:120px;">${revLicRoles.map(r => `<option value="${r.id}"${sel(r.id, u.revizto_license_role_id)}>${esc(r.name)}</option>`).join('')}</select>
@@ -1094,6 +1103,22 @@ function renderCompose() {
         });
     }
     html += '</tbody></table>';
+
+    // Datalists for Revizto Company / Department / Location autocomplete.
+    // Suggestions come from license members (registry sync). The
+    // `<input list="...">` cells reference these by id. Browser shows
+    // matching suggestions as the admin types but allows typing any value
+    // not in the list — true hybrid behavior.
+    html += `<datalist id="dl-rev-companies">${
+        revSugCo.map(c => `<option value="${esc(c)}">`).join('')
+    }</datalist>`;
+    html += `<datalist id="dl-rev-departments">${
+        revSugDept.map(d => `<option value="${esc(d)}">`).join('')
+    }</datalist>`;
+    html += `<datalist id="dl-rev-locations">${
+        revSugLoc.map(l => `<option value="${esc(l)}">`).join('')
+    }</datalist>`;
+
     document.getElementById('previewTable').innerHTML = html;
 
     // Wire two-way binding — every edit updates previewUsers[i]
