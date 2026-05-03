@@ -185,6 +185,12 @@
     #previewTable thead th:nth-child(2),
     #reviewTable thead th:nth-child(1),
     #reviewTable thead th:nth-child(2) { z-index: 3; }
+    /* Override the global `table tr:hover { background: var(--cream-mid) }`
+       rule from style.css. The td-level section tints (col-morta /
+       col-revizto / col-forma) provide enough visual distinction; an extra
+       hover layer fights with them. We set the row to transparent on hover;
+       the td backgrounds (where set) stay intact. */
+    #previewTable tr:hover, #reviewTable tr:hover { background: transparent; }
     /* Empty-state row */
     #previewTable .empty-row td {
         text-align: center;
@@ -219,15 +225,23 @@
     /* When a row's platform is OFF, fade that platform's cells. The JS
        toggles .morta-off / .revizto-off / .forma-off on the <tr>. */
     /* When a row's platform is OFF, fade ALL inputs/selects in that
-       platform's cells. Selector matches any control directly inside
-       a td.col-* (not a descendant of .cell-check, which is on the td
-       itself, not nested). */
-    tr.morta-off   td.col-morta   input,
+       platform's cells EXCEPT the platform's own On checkbox — otherwise
+       admin couldn't click it again to turn the platform back on.
+       The On checkboxes are identified by data-bind matching the platform
+       name (morta / revizto / forma); :not([data-bind="..."]) excludes them
+       from the lock. */
+    tr.morta-off   td.col-morta   input:not([data-bind="morta"]),
     tr.morta-off   td.col-morta   select,
-    tr.revizto-off td.col-revizto input,
+    tr.revizto-off td.col-revizto input:not([data-bind="revizto"]),
     tr.revizto-off td.col-revizto select,
-    tr.forma-off   td.col-forma   input,
+    tr.forma-off   td.col-forma   input:not([data-bind="forma"]),
     tr.forma-off   td.col-forma   select { opacity: .35; pointer-events: none; }
+    /* The platform's own On checkbox stays visible and clickable when the
+       platform is off — fade it slightly so it reads as "off" but stays
+       clickable to toggle back on. */
+    tr.morta-off   td.col-morta   input[data-bind="morta"],
+    tr.revizto-off td.col-revizto input[data-bind="revizto"],
+    tr.forma-off   td.col-forma   input[data-bind="forma"] { opacity: .55; }
     /* Also fade the platform's tinted background so the whole section
        reads as inert. */
     tr.morta-off   td.col-morta,

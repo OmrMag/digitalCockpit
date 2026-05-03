@@ -1314,9 +1314,10 @@ def revizto_fetch_license_member_suggestions(license_uuid: str, region: str, tok
     that doesn't round-trip back. So we return an empty list for locations;
     the invite form will fall back to free-text entry for that column.
 
-    Returns: {"companies": [...], "departments": [...], "locations": []}
-    On failure: returns the dict with empty lists. Errors are logged but
-    not raised — suggestions are nice-to-have, not critical.
+    Returns: {"companies": [...], "departments": [...], "locations": [],
+              "_error": "..."} where _error is omitted on success, present
+    with a short reason string on failure. The caller can surface this as
+    a result so the UI/admin can diagnose silent failures.
     """
     suggestions = {"companies": [], "departments": [], "locations": []}
     try:
@@ -1324,22 +1325,30 @@ def revizto_fetch_license_member_suggestions(license_uuid: str, region: str, tok
         headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
         r = http_requests.get(url, headers=headers, timeout=timeout)
         if r.status_code != 200:
+            suggestions["_error"] = f"HTTP {r.status_code}: {r.text[:120]}"
             return suggestions
 
         body = r.json()
         # Revizto envelope check — same pattern as roles endpoint
-        if body.get("result", 0) < 0 or body.get("data") is None:
+        if body.get("result", 0) < 0:
+            suggestions["_error"] = f"result={body.get('result')}: {body.get('message', '')[:80]}"
+            return suggestions
+        if body.get("data") is None:
+            suggestions["_error"] = "no data in response"
             return suggestions
 
         data = body.get("data", {})
         if not isinstance(data, dict):
+            suggestions["_error"] = f"unexpected data type: {type(data).__name__}"
             return suggestions
 
         seen_co = set()
         seen_dept = set()
+        member_count = 0
         for _mid, member in data.items():
             if not isinstance(member, dict):
                 continue
+            member_count += 1
             co = (member.get("company") or "").strip()
             dept = (member.get("department") or "").strip()
             # Case-insensitive dedupe but preserve original casing of first-seen
@@ -1352,9 +1361,10 @@ def revizto_fetch_license_member_suggestions(license_uuid: str, region: str, tok
 
         suggestions["companies"].sort(key=str.lower)
         suggestions["departments"].sort(key=str.lower)
-    except Exception:
-        # Suggestions are non-critical; swallow errors
-        pass
+        # Stash member count for diagnostics
+        suggestions["_member_count"] = member_count
+    except Exception as e:
+        suggestions["_error"] = f"exception: {type(e).__name__}: {str(e)[:120]}"
     return suggestions
 
 
@@ -2839,12 +2849,23 @@ def _sync_project_metadata(user: str, key: str, registry: dict,
                             sug = revizto_fetch_license_member_suggestions(
                                 used_license, rev_region, token
                             )
-                            platforms["revizto"]["member_suggestions"] = sug
-                            mcache[rev_region] = sug
+                            # Strip diagnostic keys before storing in registry
+                            sug_clean = {
+                                "companies":   sug.get("companies", []),
+                                "departments": sug.get("departments", []),
+                                "locations":   sug.get("locations", []),
+                            }
+                            platforms["revizto"]["member_suggestions"] = sug_clean
+                            mcache[rev_region] = sug_clean
                             results["revizto_suggestions"] = (
-                                len(sug.get("companies", []))
-                                + len(sug.get("departments", []))
+                                len(sug_clean["companies"])
+                                + len(sug_clean["departments"])
                             )
+                            # Surface fetch errors so the admin can diagnose
+                            if sug.get("_error"):
+                                results["revizto_suggestions_error"] = sug["_error"]
+                            if "_member_count" in sug:
+                                results["revizto_member_count"] = sug["_member_count"]
                         else:
                             err = f"No roles in any of {len(licenses)} license(s): " + " | ".join(attempts)
                             cache[rev_region] = err
