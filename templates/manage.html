@@ -220,7 +220,7 @@
                             </div>
                             <div style="display:flex;flex-direction:column;gap:4px;padding-bottom:4px;">
                                 <label class="exp-toggle"><input type="checkbox" id="invRevLicense" checked><span style="font-size:var(--fs-xs)">Invite to license</span></label>
-                                <label class="exp-toggle"><input type="checkbox" id="invRevProject"><span style="font-size:var(--fs-xs)">Invite to project</span></label>
+                                <label class="exp-toggle"><input type="checkbox" id="invRevProject" checked><span style="font-size:var(--fs-xs)">Invite to project</span></label>
                             </div>
                         </div>
                     </div>
@@ -255,7 +255,14 @@
                     <div class="file-name" id="fileName"></div>
                 </div>
                 <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" style="display:none" onchange="handleFile(this)">
-                <p style="font-size:var(--fs-xs);color:var(--text-dark-muted);margin-top:8px">Columns: Email, First Name, Last Name, Company, Department, Morta Access, Revizto Access, ACC Access</p>
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-top:8px;">
+                    <p style="font-size:var(--fs-xs);color:var(--text-dark-muted);margin:0;flex:1;">
+                        Required: <strong>Email</strong>. Optional: First Name, Last Name, Company, Department, Morta Access (YES/NO), Morta Tag, Revizto Access, Revizto License Role, Revizto Project Role, Revizto To License, Revizto To Project, ACC Access, Forma Company, Forma Role, Forma Docs, Forma Design Coordination, Forma Model Coordination.
+                    </p>
+                    <button type="button" class="btn btn-secondary" style="font-size:var(--fs-xs);white-space:nowrap;flex-shrink:0;" onclick="downloadBulkTemplate()">
+                        ↓ Template CSV
+                    </button>
+                </div>
             </div>
             <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border-cream);font-size:var(--fs-xs);color:var(--text-dark-muted);">
                 Active project from sidebar: <strong style="color:var(--navy);">{{ active_context.active_project_name if active_context else '—' }}</strong>
@@ -678,6 +685,59 @@ function openInviteModal(){
 function closeInviteModal(){document.getElementById('inviteModal').classList.remove('open');showStep(1);}
 function handleFile(input){if(input.files.length>0)document.getElementById('fileName').textContent=input.files[0].name;}
 
+// Download a CSV template that mirrors what /api/invite/preview accepts.
+// One header row + one example row so admins can fill it in. The example
+// values use names that come from the active project's registry where
+// possible (Morta tag, Forma company, Revizto roles), so re-uploading
+// the unmodified template would actually work.
+function downloadBulkTemplate() {
+    const headers = [
+        "Email","First Name","Last Name","Company","Department",
+        "Morta Access","Morta Tag",
+        "Revizto Access","Revizto License Role","Revizto Project Role",
+        "Revizto To License","Revizto To Project",
+        "ACC Access","Forma Company","Forma Role",
+        "Forma Docs","Forma Design Coordination","Forma Model Coordination"
+    ];
+
+    // Pull example values from the active project registry — same source
+    // of truth the invite modal's dropdowns use. Falls back to placeholders
+    // if the registry hasn't been synced yet.
+    const ak   = activeCtx?.active_project_key || '';
+    const reg  = (_subRegistry || {})[ak] || {};
+    const plat = reg.platforms || {};
+    const exTag      = (plat.morta?.tags        || [])[0]?.name      || 'ALEC-Digital Construction';
+    const exRevLic   = (plat.revizto?.license_roles || [])[0]?.name  || 'Collaborator';
+    const exRevProj  = (plat.revizto?.roles     || [])[0]?.name      || '';
+    const exFoCo     = (plat.forma?.companies   || [])[0]?.name      || 'EGIS';
+    const exFoRole   = (plat.forma?.roles       || [])[0]?.name      || '';
+
+    const example = [
+        "user@example.com","John","Smith","EGIS","Digital Construction",
+        "YES",exTag,
+        "YES",exRevLic,exRevProj,
+        "YES","YES",
+        "YES",exFoCo,exFoRole,
+        "YES","NO","NO"
+    ];
+
+    // Quote any cell containing a comma, quote, or newline; escape internal quotes.
+    const csv = (cells) => cells.map(c => {
+        const s = (c == null) ? '' : String(c);
+        return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    }).join(',');
+
+    const blob = new Blob([csv(headers) + "\n" + csv(example) + "\n"], {type: 'text/csv'});
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = 'cockpit_invite_template.csv';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+}
+
 function populateSingleInviteOptions() {
     const activeKey    = activeCtx.active_project_key || '';
     const reg          = _subRegistry[activeKey] || {};
@@ -795,7 +855,16 @@ async function goNext(){
             if(!fi.files.length){alert('Please select a file');btn.textContent='Preview';btn.disabled=false;return;}
             const fd=new FormData();fd.append('file',fi.files[0]);
             const resp=await fetch('/api/invite/preview',{method:'POST',body:fd});
-            const data=await resp.json(); previewUsers=data.users;
+            const data=await resp.json();
+            previewUsers=data.users;
+            // Surface parser warnings (unknown tag/role/company names that
+            // didn't resolve against the registry). These don't block the
+            // import — fields just default to empty/null — but the admin
+            // should know.
+            if (Array.isArray(data.warnings) && data.warnings.length) {
+                showBanner('CSV parsed with ' + data.warnings.length + ' warning(s) — see browser console for details', 'warning');
+                console.warn('[bulk-preview] parser warnings:', data.warnings);
+            }
         }
         renderPreview();btn.textContent='Preview';btn.disabled=false;showStep(2);
     } else if(currentStep===2){
