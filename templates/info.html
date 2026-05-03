@@ -111,6 +111,12 @@
   <a href="#s-flows">Data Flows</a>
   <a href="#s-files">File Map</a>
   <a href="#s-env">Environment</a>
+  <a href="#s-perf">Performance</a>
+  <a href="#s-bake">Bake / Packages</a>
+  <a href="#s-sse">Live Streaming</a>
+  <a href="#s-l4">L4 Reports</a>
+  <a href="#s-deploy">Deploy &amp; Ops</a>
+  <a href="#s-constraints">Constraints</a>
 </div>
 
 <!-- ═══════════════════════════════════════════════════════════════
@@ -1660,6 +1666,347 @@
   <span class="dc-g">"expires_in"</span>:   <span class="dc-d">3600</span>,
   <span class="dc-g">"expires_at"</span>:   <span class="dc-d">1746187200.0</span>            <span class="dc-d">// Unix timestamp</span>
 <span class="dc-w">}</span></pre></div>
+
+</div>
+</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     18  PERFORMANCE &amp; CACHING
+══════════════════════════════════════════════════════════════════ -->
+<div class="doc-section" id="s-perf">
+<div class="doc-section-inner">
+<div class="doc-num">18<br>Performance</div>
+<div class="doc-body">
+
+<h2>In-Memory Cache, TTL &amp; Server Timing</h2>
+<p>The cockpit runs on a single Azure B1 worker. Every page load that hits blob storage adds 10–30 ms per read. With ~10 reads on a complex page render, that's a quarter-second of latency the user feels as &quot;sluggish.&quot; The application avoids this with a process-local read-through cache (<code>_blob_cache</code>) keyed by blob name, with values valid for <code>_BLOB_CACHE_TTL_SEC = 300</code> seconds.</p>
+
+<p>The cache is intentionally simple — a plain dict, no LRU, no eviction beyond TTL expiry. At the scale of a single tenant on a single worker, the working set fits comfortably in memory; complexity here would buy nothing.</p>
+
+<h3>Read-through &amp; invalidate-on-write</h3>
+<p>Every <code>load_*()</code> function asks <code>_cache_get(key)</code> first; on miss it reads from blob and calls <code>_cache_set(key, value)</code>. Every <code>save_*()</code> function writes blob first, then calls <code>_cache_invalidate(key)</code> so the next read fetches the fresh value. This pattern is non-negotiable — forgetting the invalidation in any save path produces a class of bug where users see their own writes for 5 minutes but other tabs see stale data. The Forma 3-legged session save was an example: the original <code>settings_save</code> rebuilt the <code>forma{}</code> dict from scratch, which would have overwritten the OAuth tokens on every Settings save. The fix preserves the <code>3l_session</code> block explicitly even when other Forma fields change.</p>
+
+<div class="doc-note warn">
+  <span class="doc-note-label w">Pitfall</span>
+  <div>Any new mutation path that doesn't go through the existing <code>save_*()</code> helpers will skip cache invalidation and serve stale reads for up to 5 minutes. This is the single most common cause of &quot;why doesn't my change appear?&quot; in development.</div>
+</div>
+
+<h3>Prewarm</h3>
+<p>On worker boot, <code>_prewarm_cache()</code> reads four high-traffic blobs eagerly: <code>admins.json</code>, <code>projects_registry.json</code>, <code>invite_log.json</code>, <code>portal_requests.json</code>. The first request after a cold start would otherwise pay the blob-read tax for each, leading to a perceptible 100–200 ms first-render delay. Prewarming moves that cost off the request path entirely; the user never sees it.</p>
+
+<h3>ServerTimingMiddleware</h3>
+<p>FastAPI's <code>BaseHTTPMiddleware</code> introduces real overhead — every request creates an extra task, copies bodies through async generators, and adds 5–15 ms to every response on a small instance. The cockpit uses a hand-written pure-ASGI middleware (<code>ServerTimingMiddleware</code>) that wraps the call without that machinery. It records per-request timing via a <code>contextvars.ContextVar</code> and emits a <code>Server-Timing</code> response header. The overhead is a single function call per request — single-digit microseconds.</p>
+
+<h3>/api/_diag — production observability</h3>
+<p>An always-on diagnostic endpoint returns the current cache state, recent timing samples, blob-read latency, and feature flags. It exists for one reason: when production feels slow, you don't want to redeploy with debug code; you want to fetch a JSON object and see exactly where time is going. Sample response:</p>
+
+<div class="doc-code"><pre><span class="dc-w">{</span>
+  <span class="dc-g">"_cache_keys_before"</span>: <span class="dc-w">[</span><span class="dc-d">"admins.json"</span>, <span class="dc-d">"projects_registry.json"</span>, ...<span class="dc-w">]</span>,
+  <span class="dc-g">"_cache_size"</span>: <span class="dc-d">6</span>,
+  <span class="dc-g">"load_users"</span>: <span class="dc-d">0.0</span>,                    <span class="dc-d">// cache hit, sub-millisecond</span>
+  <span class="dc-g">"load_registry"</span>: <span class="dc-d">0.0</span>,
+  <span class="dc-g">"blob_read_admins_RAW"</span>: <span class="dc-d">9.8</span>,          <span class="dc-d">// cold blob read, milliseconds</span>
+  <span class="dc-g">"blob_read_registry_RAW"</span>: <span class="dc-d">8.9</span>,
+  <span class="dc-g">"_use_blob"</span>: <span class="dc-d">true</span>,
+  <span class="dc-g">"_members_cache_size"</span>: <span class="dc-d">1</span>,
+  <span class="dc-g">"_members_refreshing"</span>: <span class="dc-w">[]</span>
+<span class="dc-w">}</span></pre></div>
+
+<p>The discrepancy between cached loaders (0.0 ms) and raw blob reads (8–20 ms) shows the cache's value at a glance. If <code>_cache_size</code> drops back to zero or stays below the prewarm count, the worker has restarted recently. If RAW timings climb above 50 ms, blob storage itself is degraded and the cause is upstream.</p>
+
+<h3>Members cache</h3>
+<p>Distinct from the blob cache: <code>_members_cache</code> holds Morta hub member lists indexed by hub ID, which can be thousands of records and are too large to load on every project-detail render. It refreshes lazily and asynchronously — one stale serve is acceptable; a 3-second blocking refresh on every page load is not. The <code>_members_refreshing</code> set tracks in-flight refreshes so concurrent requests don't fan out into duplicate API calls.</p>
+
+</div>
+</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     19  BAKE &amp; PACKAGES
+══════════════════════════════════════════════════════════════════ -->
+<div class="doc-section" id="s-bake">
+<div class="doc-section-inner">
+<div class="doc-num">19<br>Packages</div>
+<div class="doc-body">
+
+<h2>Bake &amp; Packages — Persistent Snapshots</h2>
+<p>Extractions write their output into a per-user temp directory that's <em>volatile</em> — it gets cleaned up when the worker restarts, when the user runs another extraction that overwrites the same filename, or when the daily stale-temp sweep runs. For one-shot debugging this is fine, but admins quickly want to share an extraction's output with someone else, view it again next week, or compare two extractions of the same project taken weeks apart. <strong>Bake</strong> turns a fresh extraction into an immutable, retained, attributable artifact.</p>
+
+<h3>Lifecycle</h3>
+<div class="flow-steps">
+  <div class="flow-step"><div class="flow-step-left"><div class="flow-num">1</div><div class="flow-line"></div></div><div class="flow-content"><strong>Run</strong><span>Admin clicks Run on an extraction card. The script writes outputs to <code>temp/{safe_email}/*.csv|*.json</code>. The frontend stashes the produced filenames on <code>card.dataset.lastRunFiles</code>.</span></div></div>
+  <div class="flow-step"><div class="flow-step-left"><div class="flow-num">2</div><div class="flow-line"></div></div><div class="flow-content"><strong>Bake</strong><span>Admin clicks the (now-active) Bake button. Frontend POSTs to <code>/api/extractions/bake</code> with the file list. Server creates a new <code>pkg_id</code>, copies files to <code>packages/{pkg_id}/</code>, writes metadata to <code>packages_index.json</code>.</span></div></div>
+  <div class="flow-step"><div class="flow-step-left"><div class="flow-num">3</div><div class="flow-line"></div></div><div class="flow-content"><strong>Browse</strong><span>The Packages page lists baked snapshots. Each package shows: platform pill · admin first name · project · timestamp · &quot;expires in N days.&quot; Clicking a card expands it inline with file list, Download, and Preview buttons.</span></div></div>
+  <div class="flow-step"><div class="flow-step-left"><div class="flow-num">4</div><div class="flow-line"></div></div><div class="flow-content"><strong>Expire</strong><span>After 30 days (<code>PACKAGES_RETENTION_DAYS</code>), <code>cleanup_expired_packages()</code> deletes the package directory and removes the index entry on next worker boot.</span></div></div>
+</div>
+
+<h3>Visibility rules</h3>
+<div class="doc-table-wrap"><table class="doc-table">
+<thead><tr><th>Role</th><th>Sees in /packages</th></tr></thead>
+<tbody>
+<tr><td>Owner</td><td>All packages, regardless of who baked them or which project</td></tr>
+<tr><td>Admin</td><td>Their own bakes <em>plus</em> bakes for any project where they're listed in <code>registry[project_id].admins</code></td></tr>
+</tbody>
+</table></div>
+
+<p>The check happens server-side via <code>_user_can_see_package(user, pkg, registry)</code>; client-side filtering is an optimisation, not a security boundary. Every preview, download, and delete endpoint repeats the check.</p>
+
+<h3>Why Forma L1 isn't bakeable</h3>
+<p>Account Projects, Hub Users, 2-Legged Token Status, and 3-Legged Token Status all describe account-wide Forma state — not project-scoped data. Packaging account data as a per-admin shareable artifact creates more confusion than value: whose hub? when was it captured? does the freshness matter? The bake button is suppressed at the UI level for these scripts, and the backend rejects POSTs targeting them with a clear error.</p>
+
+<h3>Storage</h3>
+<p>Packages live on App Service local disk under <code>packages/{pkg_id}/</code>, not in blob storage. This is a deliberate tradeoff: disk reads stream to the wire faster than blob downloads (the preview endpoint reads small slices on every scroll), and the 30-day retention bounds disk growth. The cost is durability — packages survive worker restarts but not slot swaps or App Service plan migrations. For the current usage profile (single tenant, single environment) this is acceptable; if you ever stage to a separate slot, plan for re-baking.</p>
+
+<h3>Preview pipeline</h3>
+<p>The CSV preview endpoint (<code>/api/packages/{pkg_id}/preview/{filename}</code>) is the most defensively-coded piece in the codebase, because a single malformed request used to crash the worker. The current pipeline is layered:</p>
+
+<ol style="font-size:11px;line-height:1.75;color:var(--text-dark);padding-left:18px;">
+  <li><strong>Cheap stat() first.</strong> If the file exceeds <code>PREVIEW_MAX_BYTES</code> (50 MB), return <code>kind: &quot;too_large&quot;</code> with a download URL. The file is never opened — no I/O, no parsing, no risk of OOM.</li>
+  <li><strong>Streaming CSV scan.</strong> For files under the cap, the reader iterates row-by-row. Memory is O(<code>page_size + columns</code>), independent of file size. A 49 MB CSV with 2 million rows uses kilobytes of RAM.</li>
+  <li><strong>Per-column filters.</strong> Query string syntax <code>?q[colname]=value</code> maps to case-insensitive substring matching. Filters apply server-side over the full file, not just the loaded window. Filtered <code>total</code> drives the frontend's infinite-scroll completion logic.</li>
+  <li><strong>Row-scan cap.</strong> Even with streaming, scanning a 5-million-row CSV ties up the worker for ~15 s. <code>PREVIEW_MAX_ROW_SCAN = 500_000</code> caps the work per request; past that, the response includes <code>truncated: true</code> and the title bar shows a red &quot;scan truncated at N&quot; badge.</li>
+</ol>
+
+<h3>Frontend preview state</h3>
+<p>Each open preview maintains a state object on the host element (<code>host.__previewState</code>) tracking pagination, active filters, hidden columns, and a <code>loadEpoch</code> counter. On filter input or model switch, <code>loadEpoch</code> increments; in-flight fetches with the old epoch are silently discarded when their responses arrive. This is the standard guard against stale-response races during rapid user input.</p>
+
+<p>Hidden columns are persisted to <code>localStorage</code> under <code>cockpit:pkg:cols:{pkg_id}:{filename}</code>. The key includes <code>pkg_id</code>, so a re-baked package starts with a fresh state — intentional, because the data may have changed. Filter values are <em>not</em> persisted, on the principle that filters are situational queries while column visibility is a configuration preference.</p>
+
+</div>
+</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     20  LIVE STREAMING — SSE
+══════════════════════════════════════════════════════════════════ -->
+<div class="doc-section" id="s-sse">
+<div class="doc-section-inner">
+<div class="doc-num">20<br>Streaming</div>
+<div class="doc-body">
+
+<h2>Live Streaming Output — Server-Sent Events</h2>
+<p>An extraction running for 60 seconds in a frozen UI feels like a hang. The cockpit solves this with two extraction endpoints:</p>
+
+<div class="doc-grid-2">
+  <div class="doc-card"><h4 class="b">/api/extract</h4><p>Batch endpoint. Runs the script, collects all stdout, returns a single JSON response when done. Used by anything that wants the &quot;script result&quot; as a unit. Backwards-compatible; predates the streaming endpoint.</p></div>
+  <div class="doc-card"><h4 class="b">/api/extract/stream</h4><p>SSE endpoint. Streams each line of script stdout as it's emitted. Used by the Extractions page terminal so admins see output in real time, like running the script locally in VS Code.</p></div>
+</div>
+
+<p>Both endpoints share the same script-resolution, environment-injection, and L4 dependency-check logic. The streaming endpoint adds an async iteration loop and a <code>StreamingResponse</code> wrapper.</p>
+
+<h3>Wire format</h3>
+<p>SSE frames are line-based, with each frame terminated by <code>\n\n</code>:</p>
+
+<div class="doc-code"><pre><span class="dc-d">// per-line stdout, default 'message' event</span>
+<span class="dc-b">data:</span> <span class="dc-w">{</span><span class="dc-g">"type"</span>:<span class="dc-d">"line"</span>,<span class="dc-g">"text"</span>:<span class="dc-d">"Found 85 project(s)"</span><span class="dc-w">}</span>
+
+<span class="dc-d">// keepalive comment — ignored by the client, defeats Azure proxy timeout</span>
+<span class="dc-b">:keepalive</span>
+
+<span class="dc-d">// final completion event with status + files</span>
+<span class="dc-b">event:</span> done
+<span class="dc-b">data:</span> <span class="dc-w">{</span><span class="dc-g">"status"</span>:<span class="dc-d">"success"</span>,<span class="dc-g">"files"</span>:<span class="dc-w">[</span>...<span class="dc-w">]</span><span class="dc-w">}</span></pre></div>
+
+<h3>The async-readline pattern</h3>
+<p>Subprocess output handling looks easy until you have a script that goes silent for several minutes (e.g., downloading a 100 MB index from S3). The naïve approach using <code>subprocess.Popen + run_in_executor(proc.stdout.readline)</code> blocks indefinitely on quiet stdout — keepalive code at the bottom of the loop never executes, the SSE stream stays silent, and Azure's ~230 s front-end proxy idle timeout drops the connection. The browser sees &quot;network error&quot; at exactly the 4-minute mark; the script keeps running serverside but its output is invisible.</p>
+
+<p>The fix uses <code>asyncio.create_subprocess_exec</code> with timed reads:</p>
+
+<div class="doc-code"><pre><span class="dc-r">try:</span>
+    line_bytes = <span class="dc-r">await</span> asyncio.wait_for(proc.stdout.readline(), timeout=5.0)
+<span class="dc-r">except</span> asyncio.TimeoutError:
+    <span class="dc-r">if</span> _time.time() - last_heartbeat &gt; 15:
+        <span class="dc-r">yield</span> <span class="dc-d">":keepalive\n\n"</span>
+        last_heartbeat = _time.time()
+    <span class="dc-r">if</span> proc.returncode <span class="dc-r">is not None</span>: <span class="dc-r">break</span>
+    <span class="dc-r">continue</span></pre></div>
+
+<p>Every 5 seconds the readline is interrupted by the timeout. The keepalive code now runs whether or not the script is producing output. Tested with a script that prints, sleeps 8 s, prints — three keepalives fire during the gap; both real lines are captured intact.</p>
+
+<h3>PYTHONUNBUFFERED=1</h3>
+<p>Python's stdout is line-buffered when connected to a terminal but block-buffered when piped to a subprocess parent. Without intervention, a script's <code>print()</code> calls would accumulate in Python's internal buffer and emit in 4 KB chunks — defeating the live-streaming illusion before it even reached SSE. The cockpit injects <code>PYTHONUNBUFFERED=1</code> into the subprocess environment, which tells Python to flush stdout after every write. The companion <code>-u</code> flag on the Python invocation is belt-and-suspenders.</p>
+
+<h3>Frontend consumption</h3>
+<p>The browser uses <code>fetch().body.getReader()</code> rather than <code>EventSource</code>. Two reasons: <code>EventSource</code> only supports GET (the cockpit POSTs the script name + project context), and <code>fetch</code> handles auth cookies and JSON request bodies without ceremony. The reader yields chunks; a small parser splits on <code>\n\n</code> and routes frames by event type. A <code>state.loadEpoch</code> counter discards any frame whose enclosing run was cancelled by a newer one — same pattern as the package preview filters.</p>
+
+<h3>Connection cancellation</h3>
+<p>If the user navigates away mid-run, the FastAPI generator catches <code>asyncio.CancelledError</code> and calls <code>proc.kill()</code> to terminate the subprocess. Without this, the script would continue running, hold its temp dir locks, and waste API quota. The kill is best-effort; an already-exited process raises an exception that we swallow.</p>
+
+</div>
+</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     21  L4 REPORTING &amp; DEPENDENCY TRACKING
+══════════════════════════════════════════════════════════════════ -->
+<div class="doc-section" id="s-l4">
+<div class="doc-section-inner">
+<div class="doc-num">21<br>L4 Reports</div>
+<div class="doc-body">
+
+<h2>L4 Reporting Layer &amp; Dependency Tracking</h2>
+<p>Layer 4 scripts (Reporting) consume the output of an L3 extraction and produce a derived report. Forma's <em>Model Health Report</em> is the first such script: it reads the model properties extracted by <em>Forma_GET_Model_Properties</em> and emits aggregated health metrics. The risk is silent staleness — if the user runs Properties for Model A, switches to Model B, and clicks Health Report, the report would run against Model A's data while presenting itself as Model B's. The output is plausible-looking, signed with the wrong model, harder to catch than an outright failure.</p>
+
+<h3>The dependency mechanism is generic</h3>
+<p>L4 dependencies are declared once, in a single map:</p>
+
+<div class="doc-code"><pre><span class="dc-m">L4_DEPENDENCIES</span> = <span class="dc-w">{</span>
+    <span class="dc-d">"Proccesed_Model_Properties"</span>: <span class="dc-w">{</span>
+        <span class="dc-g">"platform"</span>:           <span class="dc-d">"forma"</span>,
+        <span class="dc-g">"requires"</span>:           <span class="dc-d">"Forma_GET_Model_Properties"</span>,
+        <span class="dc-g">"context_path"</span>:       <span class="dc-d">"forma.model_item_id"</span>,
+        <span class="dc-g">"context_label_path"</span>: <span class="dc-d">"forma.model_name"</span>,
+        <span class="dc-g">"human_prereq"</span>:       <span class="dc-d">"Model Properties"</span>,
+        <span class="dc-g">"human_thing"</span>:        <span class="dc-d">"model"</span>,
+    <span class="dc-w">}</span>,
+    <span class="dc-d">// Future entries land here. UI gating, run-time check, and stamping</span>
+    <span class="dc-d">// all flow from this single declaration.</span>
+<span class="dc-w">}</span></pre></div>
+
+<p><code>context_path</code> is a dotted path into the user's config that yields the value being processed (the active model URN). <code>context_label_path</code> resolves to a human-readable label for use in error messages. Adding a new L4 report — say, a Revizto clash-summary that depends on Object Tree extraction — is one entry plus the script itself.</p>
+
+<h3>Two-phase enforcement</h3>
+<p>The check fires twice on every L4 invocation:</p>
+
+<div class="flow-steps">
+  <div class="flow-step"><div class="flow-step-left"><div class="flow-num">A</div><div class="flow-line"></div></div><div class="flow-content"><strong>UI gating</strong><span>The Run button on each L4 card is faded/disabled until <code>/api/l4/status?script=...</code> returns <code>ready: true</code>. Status check fires on page load, on <code>cockpit:modelChanged</code> events from the model selector, and on every successful Run completion (which may have just satisfied the dependency).</span></div></div>
+  <div class="flow-step"><div class="flow-step-left"><div class="flow-num">B</div><div class="flow-line"></div></div><div class="flow-content"><strong>Server-side pre-flight</strong><span>If the UI gate is bypassed (DevTools, direct API call, race condition), <code>/api/extract</code> and <code>/api/extract/stream</code> independently call <code>_check_l4_dependency</code> before spawning the subprocess. Mismatch returns HTTP 409 with a clear error message; subprocess is never started.</span></div></div>
+</div>
+
+<h3>Stamping success</h3>
+<p>When an L3 prerequisite finishes successfully, <code>_stamp_l3_run(user, script_name, files)</code> writes a record to the user's config:</p>
+
+<div class="doc-code"><pre><span class="dc-w">{</span>
+  <span class="dc-g">"forma"</span>: <span class="dc-w">{</span>
+    <span class="dc-g">"model_item_id"</span>: <span class="dc-d">"urn:adsk.wipprod:dm.lineage:abc"</span>,
+    <span class="dc-g">"model_name"</span>:    <span class="dc-d">"Building A"</span>,
+    <span class="dc-g">"last_runs"</span>: <span class="dc-w">{</span>
+      <span class="dc-g">"Forma_GET_Model_Properties"</span>: <span class="dc-w">{</span>
+        <span class="dc-g">"context_path"</span>:  <span class="dc-d">"forma.model_item_id"</span>,
+        <span class="dc-g">"context_value"</span>: <span class="dc-d">"urn:adsk.wipprod:dm.lineage:abc"</span>,
+        <span class="dc-g">"context_label"</span>: <span class="dc-d">"Building A"</span>,
+        <span class="dc-g">"ran_at"</span>:        <span class="dc-d">1730000000</span>,
+        <span class="dc-g">"files"</span>:         <span class="dc-w">[</span><span class="dc-d">"forma_model_properties.csv"</span><span class="dc-w">]</span>
+      <span class="dc-w">}</span>
+    <span class="dc-w">}</span>
+  <span class="dc-w">}</span>
+<span class="dc-w">}</span></pre></div>
+
+<p>Only scripts named in some <code>L4_DEPENDENCIES[*].requires</code> are stamped — the set <code>_L3_TRACKED_PREREQS</code> is computed at module load. Other scripts run normally without leaving a record, keeping the config small.</p>
+
+<h3>Cache headers matter</h3>
+<p>The status endpoint returns <code>Cache-Control: no-store</code>, and the frontend fetch passes <code>cache: 'no-store'</code>. Both layers, because either alone misses some browser quirk. Without these, the browser would happily serve a cached pre-switch response when the user changes models — the status text would lag behind the dropdown until a hard refresh. This bug existed for one round before being caught; the lesson is that any GET returning rapidly-changing state needs explicit cache control even if the data itself is correct.</p>
+
+<h3>Per-admin scope</h3>
+<p>The <code>last_runs</code> record lives in each admin's individual config blob. The owner running Properties doesn't satisfy the dependency for other admins on the same project — each admin must run the prerequisite themselves. This is correct: Forma's permissions are user-scoped, and the report runs as the calling admin's identity (via the per-admin 3-legged token). Coupling the dependency check to the admin running it ensures the data and identity stay aligned.</p>
+
+</div>
+</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     22  DEPLOY &amp; OPERATIONS
+══════════════════════════════════════════════════════════════════ -->
+<div class="doc-section" id="s-deploy">
+<div class="doc-section-inner">
+<div class="doc-num">22<br>Deploy</div>
+<div class="doc-body">
+
+<h2>Deploy Pipeline &amp; Operational Discipline</h2>
+<p>The cockpit deploys as a single zip pushed directly to App Service via the Azure CLI. There is no CI/CD, no build step, no staging slot. This is by design — the system is small enough that ceremony adds friction without buying safety, and the entire deploy fits in three commands.</p>
+
+<h3>The deploy command</h3>
+<div class="doc-code"><pre>git archive --format=zip --output=deploy.zip HEAD
+az webapp deploy --resource-group digitalcockpit-rg \
+                 --name digitalcockpit-alec \
+                 --src-path deploy.zip --type zip</pre></div>
+
+<p><code>git archive</code> exports a clean snapshot of HEAD — only tracked files. If your working tree contains uncommitted changes, they're <em>not</em> in the deploy. This is a feature: it's impossible to ship local edits you forgot about. It's also a foot-gun: it's possible to commit a change but forget to deploy, leaving the live site behind your repo.</p>
+
+<p><code>az webapp deploy</code> uploads the zip to the kudu deployment endpoint, where it's extracted in place. Worker processes restart automatically. Total deploy time is typically 30–60 seconds; the first request after deploy hits a cold cache and prewarm runs.</p>
+
+<h3>Cross-file dependencies — ship together</h3>
+<p>A frontend change that calls a new API endpoint and the backend code defining that endpoint <strong>must deploy in the same zip</strong>. Splitting them produces a window where either the UI shows a feature that 404s, or the backend serves an endpoint nothing calls. The cockpit has been bitten by this several times — most recently when the SSE frontend shipped before its <code>/api/extract/stream</code> endpoint, producing repeated &quot;Stream failed: HTTP 404&quot; errors on every Run.</p>
+
+<div class="doc-note warn">
+  <span class="doc-note-label w">Rule</span>
+  <div>If a change touches both <code>app.py</code> (or any backend file) and any template/CSS/JS, deploy them together in one zip. README files for these bundles should explicitly list cross-file dependencies under a &quot;ship together&quot; heading.</div>
+</div>
+
+<h3>The .gitignore foot-gun</h3>
+<p>On Windows, a file saved as <code>gitignore</code> (no leading dot) is not recognised as a git ignore file. Git silently treats it as a regular tracked file and ignores nothing. The cockpit's repository was in this state for an extended period, allowing several runtime-secret JSONs to be committed before the issue was noticed.</p>
+
+<p>The fix is twofold: rename the file (<code>git mv gitignore .gitignore</code>) and audit history for any committed secrets via <code>git ls-files | findstr</code> against known-secret patterns. Anything found in history is rotated immediately — old credentials remain in past commits forever even after deletion from HEAD, which is fine once they've been invalidated upstream.</p>
+
+<h3>Credential rotation playbook</h3>
+<p>Every credential the cockpit holds is rotatable without code changes:</p>
+
+<div class="doc-table-wrap"><table class="doc-table">
+<thead><tr><th>Credential</th><th>Where to rotate</th><th>Settings field to update</th></tr></thead>
+<tbody>
+<tr><td>Morta API key</td><td>Morta admin → API tokens → revoke + regenerate</td><td><code>morta.api_key</code></td></tr>
+<tr><td>Revizto access code (region)</td><td><code>ws.revizto.com/login?request=accessCode</code></td><td><code>revizto_{region}.access_code</code></td></tr>
+<tr><td>Forma 2-legged secret</td><td><code>aps.autodesk.com/myapps</code> → 2-legged app → new secret</td><td><code>forma.client_secret</code></td></tr>
+<tr><td>Forma 3-legged secret</td><td><code>aps.autodesk.com/myapps</code> → 3-legged app → new secret</td><td><code>forma.client_secret_3l</code> + Disconnect/Connect</td></tr>
+</tbody>
+</table></div>
+
+<p>Saving in the Settings UI writes directly to blob storage (the production source of truth). No deploy required for credential changes. Local files are stale moments after rotation but get refreshed next time the worker reads from blob.</p>
+
+<h3>Working with stale local snapshots</h3>
+<p>Multi-round development has a recurring pattern: an AI assistant or human developer holds a snapshot of files from session N, the user makes edits in session N+1 that aren't reflected in the snapshot, and a careless edit overwrites the user's work. The defensive habit is to ask before editing any file that's been around for more than one session, especially HTML and Python that change frequently. Several near-misses during the cockpit's development were caught only by this question.</p>
+
+</div>
+</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     23  RESOURCE CONSTRAINTS
+══════════════════════════════════════════════════════════════════ -->
+<div class="doc-section" id="s-constraints">
+<div class="doc-section-inner">
+<div class="doc-num">23<br>Limits</div>
+<div class="doc-body">
+
+<h2>Resource Constraints &amp; Hard Limits</h2>
+<p>The cockpit runs on Azure App Service B1 — the smallest tier that supports always-on with a meaningful CPU allocation. Knowing the constraints turns &quot;the site went down&quot; into &quot;here's exactly what hit a limit.&quot;</p>
+
+<h3>Compute &amp; memory</h3>
+<div class="doc-table-wrap"><table class="doc-table">
+<thead><tr><th>Resource</th><th>Limit</th><th>What hits it</th></tr></thead>
+<tbody>
+<tr><td>RAM</td><td>1.75 GB</td><td>Loading large CSVs into memory; many concurrent script subprocesses</td></tr>
+<tr><td>vCPU</td><td>1</td><td>Long blocking parses; heavy regex; image processing (none currently)</td></tr>
+<tr><td>Workers</td><td>1 (uvicorn default)</td><td>One long subprocess holds the worker; concurrent admins queue behind it</td></tr>
+<tr><td>Disk</td><td>~10 GB</td><td>Packages directory growth; per-user temp dirs not cleaned</td></tr>
+<tr><td>Idle proxy timeout</td><td>~230 s</td><td>SSE without keepalives; long-polled connections</td></tr>
+</tbody>
+</table></div>
+
+<h3>The 230-second proxy timeout</h3>
+<p>Azure App Service's front-end load balancer drops idle connections at roughly 230 seconds. &quot;Idle&quot; means no bytes flowing in either direction. For SSE this is fatal during long quiet phases — a script downloading a 100 MB index from S3 produces no stdout for minutes, the SSE stream stays silent, the proxy kills the connection. The fix (heartbeat comments every 15 s) is documented in the Streaming section.</p>
+
+<h3>Memory hardening</h3>
+<p>Two patterns dominate OOM defense:</p>
+
+<div class="doc-grid-2">
+  <div class="doc-card"><h4>Stream, don't materialise</h4><p>Anywhere the size of input is unbounded — CSV preview, package listing, member lists — iterate the source and retain only the working window. <code>list(reader)</code> is a red flag in any code path that touches user files. The 126 MB CSV that crashed the worker did so because the preview endpoint did exactly that.</p></div>
+  <div class="doc-card"><h4>Cap before opening</h4><p>For inputs where streaming still risks a slow blow-up (a 49 MB CSV of 5 million short rows takes 15 seconds to scan even streamed), cap with a cheap stat() before any I/O on contents. The preview cap (50 MB byte limit, 500 k row scan limit) applies before the file is ever opened.</p></div>
+</div>
+
+<h3>Growth rates worth watching</h3>
+<p>Three internal data structures grow over time and don't currently auto-archive. None are urgent at current usage but each becomes a problem at some scale:</p>
+
+<ul style="font-size:11px;line-height:1.75;color:var(--text-dark);padding-left:18px;">
+  <li><strong><code>invite_log.json</code></strong> — appended on every invite. Grows linearly with usage. Loaded fully into memory on every Manage page render. At ~10,000 entries (~1 invite/day for 27 years), Manage page load times become noticeable. Mitigation when needed: rolling-window archival to <code>invite_log_archive_{year}.json</code> with the live file holding only the last 90 days.</li>
+  <li><strong><code>portal_requests.json</code></strong> — same shape, same growth rate, same eventual mitigation.</li>
+  <li><strong><code>_blob_cache</code></strong> — per-user config keys are added on first read and never evicted. At 100 admins each visited once, ~100 keys × ~5 KB = 500 KB. Survivable. At 10,000 unique users, 50 MB and growing — would need eviction. Currently unbounded by intent because the user count is bounded by the @alec.ae domain restriction.</li>
+  <li><strong><code>packages/</code> directory</strong> — bounded by the 30-day retention sweep, but a single 126 MB Forma model bake from each of 10 admins per day is 1.2 GB/day. Disk could fill before retention catches up. Worth monitoring; not yet at risk.</li>
+</ul>
+
+<h3>What scaling up looks like</h3>
+<p>The current architecture comfortably supports the present scale. Hypothetical paths if growth demands it: B1 → S1 (3.5 GB RAM, more headroom for memory-bound previews); single worker → multi-worker (requires moving in-memory caches to a shared layer like Redis); local-disk packages → blob-storage packages (loses preview latency but gains durability across slot swaps and blob-managed retention). None of these are needed today; all are tractable when they are.</p>
 
 </div>
 </div>
