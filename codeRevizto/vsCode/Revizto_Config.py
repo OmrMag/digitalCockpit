@@ -38,7 +38,7 @@ REGION  = _ctx.get("revizto_region", "")
 
 if not REGION:
     for _r in ["dubai", "ireland"]:
-        if _full_cfg.get(f"revizto_{_r}", {}).get("license_uuid"):
+        if _full_cfg.get(f"revizto_{_r}", {}).get("access_code"):
             REGION = _r
             break
 
@@ -53,7 +53,9 @@ LICENSE_UUID         = _cfg.get("license_uuid", "")
 AUTH_METHOD          = _cfg.get("auth_method", "")
 DEFAULT_LICENSE_ROLE = _cfg.get("default_license_role", 2)
 ACCESS_CODE          = _cfg.get("access_code", "")
-TOKENS_FILE          = os.path.join(_ROOT_DIR, f"revizto_tokens_{REGION}.json")
+# TOKENS_FILE: local disk fallback only — when COCKPIT_USER is set the
+# MasterScript uses blob storage instead.
+TOKENS_FILE = os.path.join(EXPORTS_DIR, f"revizto_tokens_{REGION}.json")
 
 # ── Active project (set by sidebar context selector) ──────────────────────
 PROJECT_UUID = _ctx.get("revizto_project_uuid", "")
