@@ -5,6 +5,26 @@
 
 {% block head %}
 <style>
+    /* Critical: prevent the flex .main column from growing to its
+       widest descendant's intrinsic content width.
+
+       Two-part fix:
+         (1) min-width: 0 on .main — breaks the flex-item default of
+             min-width:auto that would otherwise force .main to
+             accommodate its widest content.
+         (2) overflow-x: hidden on .page-content — hard boundary one
+             level deeper. Even if some descendant still wants to grow,
+             it gets clipped here. Page-content is NOT sticky, so this
+             doesn't break the .page-header sticky behavior at .main.
+
+       The inner #previewTable wrapper has its own overflow-x:auto, so
+       the wide table scrolls inside that wrapper. This page-content
+       clip is just a safety net.
+
+       Scoped to this page only; other pages with .main / .page-content
+       are unaffected. */
+    .main         { min-width: 0; }
+    .page-content { overflow-x: hidden; }
     .search-bar{display:flex;gap:8px;margin-bottom:20px}
     .search-bar input{flex:1;padding:8px 12px;border:1px solid var(--border-cream);border-radius:var(--radius);font-family:var(--font);font-size:var(--fs-sm);background:#fff}
     .search-bar input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(74,158,255,.1)}
@@ -269,7 +289,7 @@
 
     <!-- Body — collapsed (display:none) until + Invite is clicked.
          When expanded, contains stage panels: Compose / Review / Results. -->
-    <div id="inviteCardBody" style="display:none;padding:0 16px 16px;min-width:0;max-width:100%;overflow:hidden;">
+    <div id="inviteCardBody" style="display:none;padding:0 16px 16px;min-width:0;max-width:100%;">
 
         <!-- Stage A: Compose -->
         <div id="inviteCompose">
