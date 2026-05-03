@@ -1,6 +1,9 @@
 # ── Credentials & tokens — NEVER commit these ─────────────────────────────
 config*.json
 users.json
+users.json.backup-*
+admins.json
+admins.json.backup-*
 revizto_tokens*.json
 forma_tokens*.json
 morta_tokens*.json
@@ -15,6 +18,7 @@ morta_tags.json
 morta_Admin.json
 morta_admin.json
 forma_models_cache.json
+forma_hub_users.json
 
 # ── Per-user temp & exports ────────────────────────────────────────────────
 temp/
