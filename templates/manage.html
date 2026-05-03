@@ -110,6 +110,12 @@
         <input type="text" id="searchEmail" placeholder="Search by email address..." onkeydown="if(event.key==='Enter')searchUser()">
     </div>
     <button class="btn btn-primary" id="btnSearch" onclick="searchUser()">Search</button>
+    <button class="btn btn-secondary" id="btnRefreshMeta" onclick="refreshPlatformMetadata()" title="Re-sync Morta tags, Revizto roles, Forma companies + roles for all your projects">
+        <svg id="refreshMetaIcon" xmlns="http://www.w3.org/2000/svg" width="11" height="11" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" style="vertical-align:-1px;margin-right:4px;">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+        </svg>
+        <span id="refreshMetaLabel">Refresh metadata</span>
+    </button>
     <button class="btn btn-accent" onclick="openInviteModal()">+ Invite</button>
 </div>
 
@@ -967,6 +973,95 @@ function renderUserDetail(data){
 }
 
 function showBanner(msg,type){const b=document.getElementById('resultBanner');b.textContent=msg;b.className='result-banner show '+type;setTimeout(()=>b.classList.remove('show'),5000);}
+
+// ── Platform metadata refresh ─────────────────────────────────────────────
+// Pulls fresh tags / roles / companies from Morta, Revizto, and Forma for
+// every project the caller has access to. Results are written into the
+// projects registry so the invite modal's dropdowns can populate from it.
+//
+// Owners hit every project in the registry; admins hit only projects where
+// they're listed in `admins[]`. The endpoint enforces the same scoping
+// server-side, so a malicious client can't sync projects it shouldn't.
+//
+// Spinner shows during the call. Result banner summarises what synced and
+// what didn't — partial success (e.g., Forma roles failed but Morta tags
+// succeeded) is the common case for admins whose platform access is
+// narrower than their project list.
+async function refreshPlatformMetadata() {
+    const btn   = document.getElementById('btnRefreshMeta');
+    const icon  = document.getElementById('refreshMetaIcon');
+    const label = document.getElementById('refreshMetaLabel');
+    if (btn.disabled) return;
+
+    btn.disabled = true;
+    icon.style.animation = 'spin 0.8s linear infinite';
+    label.textContent = 'Refreshing…';
+
+    try {
+        const res  = await fetch('/api/registry/sync-mine', { method: 'POST' });
+        const data = await res.json();
+
+        if (!res.ok) {
+            showBanner(`Refresh failed: ${data.detail || res.statusText}`, 'error');
+            return;
+        }
+
+        // Tally successes and partial errors across all projects
+        const projects = data.results || {};
+        const projectCount = data.project_count || 0;
+        let successCount = 0;
+        const errorMessages = [];
+
+        for (const [key, info] of Object.entries(projects)) {
+            if (info.error) {
+                errorMessages.push(`${info.name}: ${info.error}`);
+                continue;
+            }
+            const synced = info.synced || {};
+            // A project is "successful" if at least one platform's data
+            // refreshed without error
+            const hasOk = Object.keys(synced).some(k => !k.endsWith('_error'));
+            if (hasOk) successCount++;
+            // Collect any partial errors for the summary
+            for (const [k, v] of Object.entries(synced)) {
+                if (k.endsWith('_error')) {
+                    errorMessages.push(`${info.name} · ${k.replace('_error', '')}: ${v}`);
+                }
+            }
+        }
+
+        // Reload the registry into window.cockpit so subsequent invite-modal
+        // opens see fresh data without a page refresh.
+        try {
+            const regRes = await fetch('/api/registry');
+            if (regRes.ok) {
+                const reg = await regRes.json();
+                _subRegistry = reg;
+                if (window.cockpit) window.cockpit.registry = reg;
+            }
+        } catch (_) { /* not critical */ }
+
+        if (errorMessages.length === 0) {
+            showBanner(`Refreshed ${successCount} of ${projectCount} project(s).`, 'success');
+        } else if (successCount > 0) {
+            // Partial success — show count + first error as hint
+            const first = errorMessages[0];
+            const more = errorMessages.length > 1 ? ` (+${errorMessages.length - 1} more)` : '';
+            showBanner(`Refreshed ${successCount}/${projectCount}. Issue: ${first}${more}`, 'warning');
+            console.warn('[refresh-metadata] full error list:', errorMessages);
+        } else {
+            const first = errorMessages[0] || 'unknown error';
+            showBanner(`Refresh failed for all projects. First issue: ${first}`, 'error');
+            console.warn('[refresh-metadata] full error list:', errorMessages);
+        }
+    } catch (e) {
+        showBanner(`Refresh error: ${e.message}`, 'error');
+    } finally {
+        btn.disabled = false;
+        icon.style.animation = '';
+        label.textContent = 'Refresh metadata';
+    }
+}
 
 function renderMorta(m){
     const c=document.getElementById('mortaContent'),t=document.getElementById('mortaTitle');

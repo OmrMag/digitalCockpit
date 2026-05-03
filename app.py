@@ -2442,15 +2442,79 @@ async def api_registry_sync(key: str, request: Request, user: str = Depends(requ
     if not is_owner(user) and user not in registry[key].get("admins", []):
         raise HTTPException(status_code=403, detail="Not an admin of this project.")
 
-    proj     = registry[key]
+    results = _sync_project_metadata(user, key, registry)
+    save_registry(registry)
+    return JSONResponse({"status": "ok", "synced": results})
+
+
+@app.post("/api/registry/sync-mine")
+async def api_registry_sync_mine(request: Request, user: str = Depends(require_user)):
+    """Sync platform metadata across every project the caller has access to.
+
+    Owner: all projects. Admin: only projects where they're listed in `admins`.
+
+    Each project is synced sequentially (predictable rate against the platforms,
+    simple error handling). Within a project, the sync helper runs Morta /
+    Revizto / Forma fetches in series too — they share the same registry write
+    target and there's no benefit to parallelising across platforms here.
+
+    Returns a per-project results map so the UI can show what synced and what
+    didn't. A failure on one project does not abort the others.
+    """
+    registry = load_registry()
+    if is_owner(user):
+        keys = list(registry.keys())
+    else:
+        keys = [k for k, v in registry.items() if user in v.get("admins", [])]
+
+    per_project = {}
+    for key in keys:
+        try:
+            per_project[key] = {
+                "name":   registry[key].get("name", key),
+                "synced": _sync_project_metadata(user, key, registry),
+            }
+        except Exception as e:
+            # Keep going — one project's failure shouldn't block the others
+            per_project[key] = {
+                "name":  registry[key].get("name", key),
+                "error": str(e),
+            }
+
+    save_registry(registry)
+    return JSONResponse({
+        "status":      "ok",
+        "project_count": len(keys),
+        "results":     per_project,
+    })
+
+
+def _sync_project_metadata(user: str, key: str, registry: dict) -> dict:
+    """Fetch fresh metadata from Morta/Revizto/Forma for one project and write
+    it into the registry entry in place.
+
+    Mutates `registry[key]['platforms']`. Caller is responsible for
+    `save_registry(registry)` once all desired keys are synced — batching
+    the save is faster than writing once per project.
+
+    Returns a flat results dict reporting counts on success and error strings
+    on failure, so the UI can show a per-platform status. Partial success is
+    expected — if the admin doesn't have Forma access for this account, the
+    Morta and Revizto fields still get refreshed.
+
+    Auth strategy:
+    - Morta: caller's API key, fall back to owner's if caller has none
+    - Revizto: caller's per-region access token (refreshed if needed)
+    - Forma: caller's 2-legged token, fall back to owner's account_id if missing
+    """
+    proj      = registry[key]
     platforms = proj.get("platforms", {})
-    config   = load_config(user)
-    results  = {}
+    config    = load_config(user)
+    results   = {}
 
     # ── Morta tags ────────────────────────────────────────────────────────
     hub_id  = platforms.get("morta", {}).get("hub_id", "")
     api_key = config["morta"]["api_key"]
-    # Fall back to owner's Morta key if this admin hasn't set theirs
     if not api_key:
         api_key = load_config(OWNER_EMAIL).get("morta", {}).get("api_key", "")
     if hub_id and api_key:
@@ -2469,10 +2533,12 @@ async def api_registry_sync(key: str, request: Request, user: str = Depends(requ
                             tags.append({"name": cell["value"], "tag_reference_id": cell["id"]})
                 platforms["morta"]["tags"] = tags
                 results["morta_tags"] = len(tags)
+            else:
+                results["morta_tags_error"] = f"{response.status_code}: {response.text[:120]}"
         except Exception as e:
             results["morta_error"] = str(e)
 
-    # ── Revizto project roles ─────────────────────────────────────────────
+    # ── Revizto project roles + license roles ─────────────────────────────
     rev_uuid   = platforms.get("revizto", {}).get("project_uuid", "")
     rev_region = platforms.get("revizto", {}).get("region", "dubai")
     # Always store the safe license roles (no License Admin)
@@ -2487,10 +2553,8 @@ async def api_registry_sync(key: str, request: Request, user: str = Depends(requ
             if not token:
                 results["revizto_error"] = f"No valid Revizto token for {rev_region} — enter your access code in Settings first"
             else:
-                license_uuid, _ = revizto_resolve_license(config, rev_region, email=user)
                 base_url = f"https://api.{rev_region}.revizto.com/v5"
                 headers  = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
-                # Project roles
                 r = http_requests.get(
                     f"{base_url}/project/{rev_uuid}/role/list",
                     headers=headers, timeout=10
@@ -2512,7 +2576,6 @@ async def api_registry_sync(key: str, request: Request, user: str = Depends(requ
     # ── Forma companies + roles ───────────────────────────────────────────
     forma_pid  = platforms.get("forma", {}).get("project_id", "")
     account_id = config["forma"].get("account_id", "")
-    # Fall back to owner's Forma credentials if this admin has none
     if not account_id:
         owner_forma = load_config(OWNER_EMAIL).get("forma", {})
         account_id  = owner_forma.get("account_id", "")
@@ -2520,7 +2583,6 @@ async def api_registry_sync(key: str, request: Request, user: str = Depends(requ
         try:
             token   = forma_get_token(config)
             headers = {"Authorization": f"Bearer {token}"}
-            # Strip b. prefix for HQ endpoints
             clean_pid = forma_pid.lstrip("b.") if forma_pid.startswith("b.") else forma_pid
             # Companies
             r = http_requests.get(
@@ -2534,6 +2596,7 @@ async def api_registry_sync(key: str, request: Request, user: str = Depends(requ
             else:
                 results["forma_companies_error"] = f"{r.status_code}: {r.text[:100]}"
             # Roles — try v1 first then v2
+            roles_found = False
             for roles_url in [
                 f"https://developer.api.autodesk.com/construction/admin/v1/projects/{clean_pid}/roles",
                 f"https://developer.api.autodesk.com/construction/admin/v2/projects/{clean_pid}/roles",
@@ -2546,16 +2609,16 @@ async def api_registry_sync(key: str, request: Request, user: str = Depends(requ
                     if roles:
                         platforms["forma"]["roles"] = roles
                         results["forma_roles"] = len(roles)
+                        roles_found = True
                         break
-            else:
+            if not roles_found:
                 results["forma_roles_error"] = "No roles found"
         except Exception as e:
             results["forma_error"] = str(e)
 
     proj["platforms"] = platforms
-    registry[key] = proj
-    save_registry(registry)
-    return JSONResponse({"status": "ok", "synced": results})
+    registry[key]     = proj
+    return results
 
 
 @app.get("/info", response_class=HTMLResponse)
