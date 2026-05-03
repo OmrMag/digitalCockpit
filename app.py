@@ -2495,6 +2495,91 @@ async def api_registry_sync_mine(request: Request, user: str = Depends(require_u
     })
 
 
+def _forma_derive_roles_from_users(account_id: str, clean_pid: str, headers: dict) -> dict:
+    """Aggregate Forma project roles from existing project members.
+
+    Used as a fallback when the canonical `industry_roles` endpoints all
+    fail. The /construction/admin/v1/projects/{pid}/users endpoint is known
+    to work for 2L tokens (the cockpit uses it for searching users today).
+
+    Returns:
+        {"roles": [{id, name}, ...], "note": str, "shape_seen": str}
+
+    "note" is non-empty when the result is empty — explains why so the caller
+    can surface a useful error. "shape_seen" describes which field carried
+    role data (varies by API version).
+
+    Pagination cap: 5 pages × 200 users = 1000 users scanned. Beyond that we
+    stop and return whatever was found. Real projects max out around 300
+    users, so this is generous.
+    """
+    role_index = {}    # id -> {id, name}  (dedup by id)
+    shape_seen = set()
+    pages_scanned = 0
+    users_scanned = 0
+    last_status = None
+
+    for offset in range(0, 5 * 200, 200):
+        r = http_requests.get(
+            f"https://developer.api.autodesk.com/construction/admin/v1/projects/{clean_pid}/users",
+            headers=headers,
+            params={"limit": 200, "offset": offset},
+            timeout=15,
+        )
+        last_status = r.status_code
+        if r.status_code != 200:
+            break
+
+        try:
+            batch = r.json().get("results", [])
+        except Exception:
+            break
+        if not batch:
+            break
+
+        pages_scanned += 1
+        users_scanned += len(batch)
+
+        for u in batch:
+            # Try multiple shapes. ACC variants:
+            # - "roles": [{"id": "...", "name": "..."}]   (full pairs — best)
+            # - "roleIds": ["..."]                        (ids only — useless without names)
+            # - "industryRoles": [{"id": ..., "name": ..}] (alt shape)
+            for field in ("roles", "industryRoles"):
+                items = u.get(field)
+                if isinstance(items, list) and items:
+                    for ro in items:
+                        if not isinstance(ro, dict):
+                            continue
+                        rid  = ro.get("id") or ro.get("roleId") or ""
+                        name = ro.get("name") or ""
+                        if rid and name and rid not in role_index:
+                            role_index[rid] = {"id": rid, "name": name}
+                            shape_seen.add(field)
+
+        if len(batch) < 200:
+            break
+
+    roles = list(role_index.values())
+    note = ""
+    if not roles:
+        if last_status is None:
+            note = "users endpoint never reached"
+        elif last_status != 200:
+            note = f"users endpoint returned {last_status}"
+        elif users_scanned == 0:
+            note = "no users in project"
+        else:
+            note = f"{users_scanned} users scanned, no role names found in any of the expected fields"
+    return {
+        "roles":      roles,
+        "note":       note,
+        "shape_seen": ",".join(sorted(shape_seen)) or "none",
+        "pages":      pages_scanned,
+        "users":      users_scanned,
+    }
+
+
 def _sync_project_metadata(user: str, key: str, registry: dict,
                            revizto_roles_cache: dict = None) -> dict:
     """Fetch fresh metadata from Morta/Revizto/Forma for one project and write
@@ -2583,38 +2668,81 @@ def _sync_project_metadata(user: str, key: str, registry: dict,
                     cache[rev_region] = err
                     results["revizto_error"] = err
                 else:
-                    license_uuid, _ = revizto_resolve_license(config, rev_region, email=user)
-                    if not license_uuid:
-                        err = f"Could not resolve license UUID for {rev_region}"
+                    base_url = f"https://api.{rev_region}.revizto.com/v5"
+                    headers  = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+
+                    # Fetch ALL licenses for this user/region — not just the first.
+                    # Different licenses on the same account can have different
+                    # role-list permissions. Revizto returns 200 OK with
+                    # `result: -20` ("resource server rejected the request")
+                    # when the token doesn't admin a particular license, even
+                    # though the auth itself is valid. The fix is to iterate
+                    # licenses until one returns roles successfully.
+                    lr = http_requests.get(f"{base_url}/user/licenses", headers=headers, timeout=10)
+                    licenses = []
+                    if lr.status_code == 200:
+                        try:
+                            licenses = lr.json().get("data", {}).get("entities", []) or []
+                        except Exception:
+                            licenses = []
+
+                    if not licenses:
+                        err = f"Could not list user licenses for {rev_region}"
                         cache[rev_region] = err
                         results["revizto_roles_error"] = err
                     else:
-                        base_url = f"https://api.{rev_region}.revizto.com/v5"
-                        headers  = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
-                        url = f"{base_url}/license/{license_uuid}/role/list"
-                        r = http_requests.get(url, headers=headers, timeout=10)
-                        if r.status_code == 200:
-                            raw = r.json().get("data", {})
-                            roles = []
+                        roles = []
+                        used_license = ""
+                        attempts = []
+                        for lic in licenses:
+                            lic_uuid = lic.get("uuid", "")
+                            if not lic_uuid:
+                                continue
+                            r = http_requests.get(
+                                f"{base_url}/license/{lic_uuid}/role/list",
+                                headers=headers, timeout=10
+                            )
+                            if r.status_code != 200:
+                                attempts.append(f"{lic_uuid[:8]}=HTTP{r.status_code}")
+                                continue
+                            try:
+                                body = r.json()
+                            except Exception:
+                                attempts.append(f"{lic_uuid[:8]}=non-JSON")
+                                continue
+
+                            # Revizto error envelope: result < 0 means application
+                            # error despite the 200 OK. Skip this license.
+                            if body.get("result", 0) < 0 or body.get("data") is None:
+                                msg = body.get("message", "no data")
+                                attempts.append(f"{lic_uuid[:8]}=result_{body.get('result')}({msg[:40]})")
+                                continue
+
+                            raw = body.get("data", {})
                             if isinstance(raw, dict):
-                                roles = [{"id": v.get("id"), "uuid": v.get("uuid", ""), "name": v.get("name", "")} for v in raw.values()]
+                                parsed = [{"id": v.get("id"), "uuid": v.get("uuid", ""), "name": v.get("name", "")} for v in raw.values()]
                             elif isinstance(raw, list):
-                                roles = [{"id": v.get("id"), "uuid": v.get("uuid", ""), "name": v.get("name", "")} for v in raw]
+                                parsed = [{"id": v.get("id"), "uuid": v.get("uuid", ""), "name": v.get("name", "")} for v in raw]
+                            else:
+                                attempts.append(f"{lic_uuid[:8]}=unexpected_data_type({type(raw).__name__})")
+                                continue
+
+                            if parsed:
+                                roles = parsed
+                                used_license = lic_uuid
+                                break
+                            else:
+                                attempts.append(f"{lic_uuid[:8]}=empty")
+
+                        if roles:
                             platforms["revizto"]["roles"] = roles
                             results["revizto_roles"] = len(roles)
                             cache[rev_region] = roles
-                            # Diagnostic if roles came back empty — surface
-                            # license + raw shape so we can tell whether it's
-                            # a license-with-no-roles or a parsing miss
-                            if not roles:
-                                results["revizto_roles_diag"] = (
-                                    f"200 OK but empty: license={license_uuid[:8]}, "
-                                    f"raw_type={type(raw).__name__}, "
-                                    f"raw_len={len(raw) if hasattr(raw, '__len__') else '?'}, "
-                                    f"sample={str(r.json())[:300]}"
-                                )
+                            # Cache the working license back so future calls skip
+                            # the loop. Stored in in-memory config; not persisted.
+                            config.setdefault(f"revizto_{rev_region}", {})["license_uuid"] = used_license
                         else:
-                            err = f"{r.status_code} on {url}: {r.text[:200]}"
+                            err = f"No roles in any of {len(licenses)} license(s): " + " | ".join(attempts)
                             cache[rev_region] = err
                             results["revizto_roles_error"] = err
         except Exception as e:
@@ -2631,7 +2759,7 @@ def _sync_project_metadata(user: str, key: str, registry: dict,
             token   = forma_get_token(config)
             headers = {"Authorization": f"Bearer {token}"}
             clean_pid = forma_pid.lstrip("b.") if forma_pid.startswith("b.") else forma_pid
-            # Companies
+            # Companies — already known to work
             r = http_requests.get(
                 f"https://developer.api.autodesk.com/hq/v1/accounts/{account_id}/projects/{clean_pid}/companies",
                 headers=headers, params={"limit": 100}, timeout=15
@@ -2642,28 +2770,62 @@ def _sync_project_metadata(user: str, key: str, registry: dict,
                 results["forma_companies"] = len(companies)
             else:
                 results["forma_companies_error"] = f"{r.status_code}: {r.text[:100]}"
-            # Roles — try v1 first then v2. Capture per-URL response detail
-            # so when both fail we know whether it was 404 (wrong path),
-            # 403 (scope), or 200-with-empty (genuinely zero roles).
+
+            # Roles — try multiple URL shapes. The /construction/admin paths
+            # 404 for 2L tokens (those are user-scoped endpoints). The HQ
+            # namespace works for 2L because it's account-level. The BIM 360
+            # heritage of ACC means roles live at `industry_roles` in HQ.
             roles_found = False
             roles_attempts = []
             for label, roles_url in [
-                ("v1", f"https://developer.api.autodesk.com/construction/admin/v1/projects/{clean_pid}/roles"),
-                ("v2", f"https://developer.api.autodesk.com/construction/admin/v2/projects/{clean_pid}/roles"),
+                ("hq_v2",   f"https://developer.api.autodesk.com/hq/v2/accounts/{account_id}/projects/{clean_pid}/industry_roles"),
+                ("hq_v1",   f"https://developer.api.autodesk.com/hq/v1/accounts/{account_id}/projects/{clean_pid}/industry_roles"),
+                ("adm_v2",  f"https://developer.api.autodesk.com/construction/admin/v2/projects/{clean_pid}/roles"),
+                ("adm_v1",  f"https://developer.api.autodesk.com/construction/admin/v1/projects/{clean_pid}/roles"),
             ]:
                 r = http_requests.get(roles_url, headers=headers, timeout=15)
                 if r.status_code == 200:
                     raw = r.json()
+                    # HQ industry_roles returns a list. Construction admin
+                    # might return {"results": [...]} or a list.
                     role_list = raw.get("results", raw) if isinstance(raw, dict) else raw
+                    if not isinstance(role_list, list):
+                        roles_attempts.append(f"{label}=200 unexpected_shape({type(role_list).__name__})")
+                        continue
                     roles = [{"id": ro.get("id", ""), "name": ro.get("name", "")} for ro in role_list if ro.get("name")]
                     if roles:
                         platforms["forma"]["roles"] = roles
                         results["forma_roles"] = len(roles)
                         roles_found = True
                         break
-                    roles_attempts.append(f"{label}=200 empty (raw_type={type(raw).__name__}, body={str(raw)[:120]})")
+                    roles_attempts.append(f"{label}=200 empty")
                 else:
-                    roles_attempts.append(f"{label}={r.status_code} ({r.text[:120]})")
+                    roles_attempts.append(f"{label}={r.status_code}")
+
+            # Fallback: derive role list by aggregating roles from existing
+            # project members. Triggered only if all canonical endpoints
+            # above failed. The construction/admin/v1/projects/{pid}/users
+            # endpoint is known to work for 2L tokens (the cockpit uses it
+            # for searching users by email today).
+            #
+            # Limitation: this only finds roles assigned to at least one
+            # user. A role defined but not yet used will be missed. For
+            # a populated project this is rarely an issue.
+            if not roles_found:
+                try:
+                    derived = _forma_derive_roles_from_users(
+                        account_id, clean_pid, headers
+                    )
+                    if derived["roles"]:
+                        platforms["forma"]["roles"] = derived["roles"]
+                        results["forma_roles"] = len(derived["roles"])
+                        results["forma_roles_source"] = "derived_from_users"
+                        roles_found = True
+                    else:
+                        roles_attempts.append(f"derive_from_users={derived['note']}")
+                except Exception as e:
+                    roles_attempts.append(f"derive_from_users=exception({e})")
+
             if not roles_found:
                 results["forma_roles_error"] = " | ".join(roles_attempts)
         except Exception as e:
