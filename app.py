@@ -3132,10 +3132,22 @@ def prepare_forma_3l_token(user: str, user_temp: Path) -> Path | None:
 @app.get("/api/l4/status")
 async def api_l4_status(script: str, user: str = Depends(require_user)):
     """Tell the UI whether an L4 script is ready to run for the user's
-    current active context. Used to gate Run buttons on report cards."""
+    current active context. Used to gate Run buttons on report cards.
+
+    Cache-Control: no-store — the answer depends on rapidly-changing
+    state (active model, last-run records). Without this header, the
+    browser may serve a stale response when the model is changed and
+    the UI re-checks via the same URL within seconds.
+    """
     if not script:
-        return JSONResponse({"ready": False, "reason": "no_script", "message": "No script specified."})
-    return JSONResponse(_check_l4_dependency(user, script))
+        return JSONResponse(
+            {"ready": False, "reason": "no_script", "message": "No script specified."},
+            headers={"Cache-Control": "no-store"},
+        )
+    return JSONResponse(
+        _check_l4_dependency(user, script),
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @app.post("/api/extract")
@@ -3374,21 +3386,22 @@ async def api_extract_stream(request: Request, user: str = Depends(require_user)
 
     async def event_stream():
         import time as _time
-        loop = asyncio.get_event_loop()
 
-        # Open the subprocess with stdout+stderr merged into one stream so
-        # output arrives in chronological order (a script that prints to
-        # stderr immediately followed by stdout would otherwise interleave
-        # incorrectly).
+        # Use asyncio.create_subprocess_exec so stdout reads integrate with
+        # the event loop. This is critical for keepalives during long quiet
+        # periods (e.g. the script downloading a big properties.ldjson.gz
+        # from S3) — we can `wait_for(readline, timeout)` and fall through
+        # to keepalive logic when the timeout fires. The previous
+        # subprocess.Popen + run_in_executor(readline) approach blocked
+        # indefinitely on quiet stdout, never firing keepalives, and Azure
+        # killed the SSE connection at ~230s.
         try:
-            proc = subprocess.Popen(
-                [sys.executable, "-u", str(script_path)],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
+            proc = await asyncio.create_subprocess_exec(
+                sys.executable, "-u", str(script_path),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
                 cwd=cwd_str,
                 env=script_env,
-                text=True,
-                bufsize=1,  # line-buffered
             )
         except Exception as e:
             payload = json.dumps({"status": "error", "message": f"Failed to start: {e}", "files": []})
@@ -3396,36 +3409,50 @@ async def api_extract_stream(request: Request, user: str = Depends(require_user)
             return
 
         last_heartbeat = _time.time()
-        timeout_sec = 300
+        # Bumped from 5min → 10min. Big Forma model exports legitimately
+        # take that long (the S3 properties download is the long pole).
+        timeout_sec = 600
         start_ts = _time.time()
         collected_lines = []
 
         try:
             while True:
-                # Check timeout
+                # Hard cap: kill long-running processes
                 if _time.time() - start_ts > timeout_sec:
                     try: proc.kill()
                     except Exception: pass
-                    payload = json.dumps({"status": "error", "message": "Timed out after 5 minutes.", "files": []})
+                    payload = json.dumps({"status": "error", "message": f"Timed out after {timeout_sec // 60} minutes.", "files": []})
                     yield f'event: done\ndata: {payload}\n\n'
                     return
 
-                # Read one line in a thread so we don't block the event loop.
-                # Use a short timeout-style approach: try reading, if no data
-                # within 1s, send a heartbeat and loop.
-                line = await loop.run_in_executor(None, proc.stdout.readline)
-                if line == "":
-                    # EOF — process likely exited
-                    if proc.poll() is not None:
-                        break
-                    # Spurious empty read; emit heartbeat if we've been
-                    # quiet long enough, and continue
-                    if _time.time() - last_heartbeat > 20:
+                # Read a line with a short timeout. If the script is in a
+                # quiet phase (downloading from S3, no stdout output), the
+                # timeout fires and we fall through to keepalive.
+                try:
+                    line_bytes = await asyncio.wait_for(proc.stdout.readline(), timeout=5.0)
+                except asyncio.TimeoutError:
+                    # No new line in 5s. Emit a keepalive if it's been long
+                    # enough since the last frame. SSE comments (lines starting
+                    # with ':') are ignored by the client but keep the TCP
+                    # connection alive across Azure's ~230s proxy idle limit.
+                    if _time.time() - last_heartbeat > 15:
                         yield ":keepalive\n\n"
                         last_heartbeat = _time.time()
+                    # Did the process exit while we were waiting?
+                    if proc.returncode is not None:
+                        break
+                    continue
+
+                if not line_bytes:
+                    # Empty bytes from readline = real EOF
+                    if proc.returncode is not None:
+                        break
+                    # Process still running but stdout closed (unusual). Wait
+                    # for it to exit and break out.
                     await asyncio.sleep(0.1)
                     continue
 
+                line = line_bytes.decode("utf-8", errors="replace")
                 stripped = line.rstrip("\r\n")
                 # Skip purely-blank lines so the terminal stays compact
                 if stripped.strip():
@@ -3434,11 +3461,11 @@ async def api_extract_stream(request: Request, user: str = Depends(require_user)
                     yield f'data: {payload}\n\n'
                     last_heartbeat = _time.time()
 
-            # Drain any remaining bytes (sometimes a few lines are sitting
-            # in the pipe after EOF)
+            # Drain any final bytes the OS pipe still holds
             try:
-                rest = proc.stdout.read()
-                if rest:
+                rest_bytes = await proc.stdout.read()
+                if rest_bytes:
+                    rest = rest_bytes.decode("utf-8", errors="replace")
                     for ln in rest.splitlines():
                         if ln.strip():
                             collected_lines.append(ln)
@@ -3447,7 +3474,7 @@ async def api_extract_stream(request: Request, user: str = Depends(require_user)
             except Exception:
                 pass
 
-            returncode = proc.wait()
+            returncode = await proc.wait()
             saved = any("saved" in l.lower() or "export" in l.lower() for l in collected_lines)
             ok    = returncode == 0 or saved
 

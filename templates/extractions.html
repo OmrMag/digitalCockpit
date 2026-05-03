@@ -950,7 +950,12 @@ async function refreshOneL4Status(card) {
     if (!script || !statusEl) return;
 
     try {
-        const res  = await fetch(`/api/l4/status?script=${encodeURIComponent(script)}`);
+        // cache: 'no-store' — pair with the server's Cache-Control header
+        // so the browser never returns a cached response. Without this,
+        // switching models could show stale status until a hard refresh.
+        const res  = await fetch(`/api/l4/status?script=${encodeURIComponent(script)}`, {
+            cache: 'no-store',
+        });
         const data = await res.json();
 
         statusEl.classList.remove('ready', 'blocked', 'error');
