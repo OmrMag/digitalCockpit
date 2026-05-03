@@ -2591,10 +2591,8 @@ def _sync_project_metadata(user: str, key: str, registry: dict,
                     else:
                         base_url = f"https://api.{rev_region}.revizto.com/v5"
                         headers  = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
-                        r = http_requests.get(
-                            f"{base_url}/license/{license_uuid}/role/list",
-                            headers=headers, timeout=10
-                        )
+                        url = f"{base_url}/license/{license_uuid}/role/list"
+                        r = http_requests.get(url, headers=headers, timeout=10)
                         if r.status_code == 200:
                             raw = r.json().get("data", {})
                             roles = []
@@ -2605,8 +2603,18 @@ def _sync_project_metadata(user: str, key: str, registry: dict,
                             platforms["revizto"]["roles"] = roles
                             results["revizto_roles"] = len(roles)
                             cache[rev_region] = roles
+                            # Diagnostic if roles came back empty — surface
+                            # license + raw shape so we can tell whether it's
+                            # a license-with-no-roles or a parsing miss
+                            if not roles:
+                                results["revizto_roles_diag"] = (
+                                    f"200 OK but empty: license={license_uuid[:8]}, "
+                                    f"raw_type={type(raw).__name__}, "
+                                    f"raw_len={len(raw) if hasattr(raw, '__len__') else '?'}, "
+                                    f"sample={str(r.json())[:300]}"
+                                )
                         else:
-                            err = f"{r.status_code}: {r.text[:150]}"
+                            err = f"{r.status_code} on {url}: {r.text[:200]}"
                             cache[rev_region] = err
                             results["revizto_roles_error"] = err
         except Exception as e:
@@ -2634,11 +2642,14 @@ def _sync_project_metadata(user: str, key: str, registry: dict,
                 results["forma_companies"] = len(companies)
             else:
                 results["forma_companies_error"] = f"{r.status_code}: {r.text[:100]}"
-            # Roles — try v1 first then v2
+            # Roles — try v1 first then v2. Capture per-URL response detail
+            # so when both fail we know whether it was 404 (wrong path),
+            # 403 (scope), or 200-with-empty (genuinely zero roles).
             roles_found = False
-            for roles_url in [
-                f"https://developer.api.autodesk.com/construction/admin/v1/projects/{clean_pid}/roles",
-                f"https://developer.api.autodesk.com/construction/admin/v2/projects/{clean_pid}/roles",
+            roles_attempts = []
+            for label, roles_url in [
+                ("v1", f"https://developer.api.autodesk.com/construction/admin/v1/projects/{clean_pid}/roles"),
+                ("v2", f"https://developer.api.autodesk.com/construction/admin/v2/projects/{clean_pid}/roles"),
             ]:
                 r = http_requests.get(roles_url, headers=headers, timeout=15)
                 if r.status_code == 200:
@@ -2650,8 +2661,11 @@ def _sync_project_metadata(user: str, key: str, registry: dict,
                         results["forma_roles"] = len(roles)
                         roles_found = True
                         break
+                    roles_attempts.append(f"{label}=200 empty (raw_type={type(raw).__name__}, body={str(raw)[:120]})")
+                else:
+                    roles_attempts.append(f"{label}={r.status_code} ({r.text[:120]})")
             if not roles_found:
-                results["forma_roles_error"] = "No roles found"
+                results["forma_roles_error"] = " | ".join(roles_attempts)
         except Exception as e:
             results["forma_error"] = str(e)
 
