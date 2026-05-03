@@ -9,6 +9,7 @@ import hashlib
 import os
 import requests as http_requests
 import io
+import urllib.parse
 from pathlib import Path
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
@@ -2586,11 +2587,42 @@ async def scheduler_page(request: Request, user: str = Depends(require_user)):
     })
 
 @app.get("/settings", response_class=HTMLResponse)
-async def settings_page(request: Request, user: str = Depends(require_user)):
+async def settings_page(request: Request,
+                        forma_3l_connected: str = "",
+                        forma_3l_error: str = "",
+                        user: str = Depends(require_user)):
     config = load_config(user)
+    # If we just landed back from the Forma OAuth flow, surface a banner.
+    # Errors are mapped to readable text — Autodesk's error codes alone
+    # aren't very helpful for end users.
+    message = None
+    message_type = None
+    if forma_3l_connected:
+        message = "Forma account connected. 3-legged extractions can now run with your identity."
+        message_type = "success"
+    elif forma_3l_error:
+        ERR_MAP = {
+            "no_client_id":       "Forma 3-legged client ID is not configured. Ask the system owner to add it.",
+            "no_credentials":     "Forma 3-legged credentials are missing or incomplete.",
+            "missing_code_or_state": "Authorization callback was malformed.",
+            "invalid_state":      "Authorization session expired or could not be verified. Try connecting again.",
+            "exchange_failed":    "Could not reach Autodesk to exchange the authorization code.",
+            "exchange_bad_json":  "Autodesk returned an unexpected response. Try connecting again.",
+            "no_access_token":    "Autodesk responded but no access token was provided.",
+            "access_denied":      "You denied the authorization request.",
+        }
+        message = ERR_MAP.get(forma_3l_error)
+        if not message:
+            # Pass through token-exchange status codes (e.g. "exchange_400") raw
+            if forma_3l_error.startswith("exchange_"):
+                code = forma_3l_error.replace("exchange_", "")
+                message = f"Autodesk rejected the token exchange (HTTP {code}). Check your client ID/secret and registered callback URL."
+            else:
+                message = f"Forma authorization failed: {forma_3l_error}"
+        message_type = "error"
     return templates.TemplateResponse(request=request, name="settings.html", context={
         "active_page": "settings", "config": config,
-        "message": None, "message_type": None,
+        "message": message, "message_type": message_type,
         "current_user": user, "is_owner": is_owner(user),
     })
 
@@ -2603,6 +2635,11 @@ async def settings_save(request: Request, user: str = Depends(require_user),
     forma_client_id_3l: str = Form(""), forma_client_secret_3l: str = Form(""),
     forma_account_id: str = Form(""), forma_project_id: str = Form(""), forma_admin_user_id: str = Form("")):
     existing = load_config(user)
+    # Preserve the per-admin 3-legged token block if it exists. Settings save
+    # rebuilds the forma{} dict from form fields, so without this anyone who
+    # saved Settings after connecting Forma would lose their tokens.
+    existing_forma   = existing.get("forma", {}) or {}
+    existing_session = existing_forma.get("3l_session") or existing_forma.get("forma_3l_session")
     config = {
         "morta": {"api_key": morta_api_key, "hub_id": existing["morta"].get("hub_id", "")},
         "revizto_dubai": {
@@ -2621,6 +2658,8 @@ async def settings_save(request: Request, user: str = Depends(require_user),
         "projects":       existing.get("projects", {"morta": [], "revizto": [], "forma": []}),
         "active_context": existing.get("active_context", get_default_config()["active_context"]),
     }
+    if existing_session:
+        config["forma"]["3l_session"] = existing_session
     save_config(config, user)
     return templates.TemplateResponse(request=request, name="settings.html", context={
         "active_page": "settings", "config": config,
@@ -2633,6 +2672,247 @@ async def extractions_page(request: Request, user: str = Depends(require_user)):
     return templates.TemplateResponse(request=request, name="extractions.html", context={
         "active_page": "extractions", "current_user": user,
     })
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Forma 3-legged OAuth flow
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# Standard OAuth 2.0 authorization code flow with PKCE. Each admin can
+# connect their own Autodesk identity to the cockpit, granting Forma
+# scripts access to their resources without manual token caching.
+#
+# Flow:
+#   1. /auth/forma/start  → server redirects browser to Autodesk's consent page
+#   2. Admin authenticates with Autodesk, approves scopes
+#   3. Autodesk redirects back to /auth/forma/callback?code=...
+#   4. Server exchanges code for {access_token, refresh_token, expires_at}
+#   5. Server stores tokens in this admin's config under forma.3l_session
+#
+# Token refresh happens lazily — when a Forma script needs the token, the
+# cockpit checks expiry and refreshes via /auth/forma/refresh (internal
+# helper) before launching the subprocess. (That part lands in Round 2.)
+#
+# Per-admin: each admin has their own forma.3l_session block. Owner's tokens
+# don't grant other admins access — Forma's permissions are user-scoped.
+#
+# Required APS app config: the redirect URI registered with Autodesk MUST
+# match what we send. We compute it from request.base_url so it works in
+# both prod and dev — but the URL must be explicitly added to the APS app's
+# Callback URL list at https://aps.autodesk.com/myapps.
+
+FORMA_OAUTH_SCOPES = "data:read data:write"
+FORMA_OAUTH_AUTHORIZE_URL = "https://developer.api.autodesk.com/authentication/v2/authorize"
+FORMA_OAUTH_TOKEN_URL     = "https://developer.api.autodesk.com/authentication/v2/token"
+
+# In-memory state map for OAuth: {state_token: {user, code_verifier, created_at}}.
+# Used to defend against CSRF and to look up the PKCE verifier on callback.
+# Entries auto-expire after 10 minutes — the consent flow shouldn't take
+# longer than that. Worker-restart wipes the map; an admin mid-flow during
+# a restart would just re-click Connect.
+_FORMA_OAUTH_STATES: dict = {}
+_FORMA_OAUTH_STATE_TTL = 600  # seconds
+
+def _forma_redirect_uri(request: Request) -> str:
+    """Build the absolute callback URI that Autodesk will redirect to.
+    Honors X-Forwarded-Proto (Azure App Service uses HTTPS termination)."""
+    scheme = request.headers.get("x-forwarded-proto", request.url.scheme)
+    host   = request.headers.get("host", request.url.hostname or "localhost")
+    return f"{scheme}://{host}/auth/forma/callback"
+
+def _forma_3l_creds(user: str) -> tuple[str, str]:
+    """Return (client_id_3l, client_secret_3l) for this admin, falling back to owner's."""
+    cfg = load_config(user).get("forma", {}) or {}
+    cid = cfg.get("client_id_3l") or ""
+    sec = cfg.get("client_secret_3l") or ""
+    if not cid or not sec:
+        owner_cfg = load_config(OWNER_EMAIL).get("forma", {}) or {}
+        cid = cid or owner_cfg.get("client_id_3l") or ""
+        sec = sec or owner_cfg.get("client_secret_3l") or ""
+    return cid, sec
+
+def _forma_save_session(user: str, token_data: dict):
+    """Persist the OAuth token block onto the admin's config.
+
+    token_data shape (from Autodesk's /token response):
+      access_token, refresh_token, expires_in, token_type, ...
+    """
+    import time as _time
+    cfg = load_config(user)
+    expires_in = int(token_data.get("expires_in") or 3600)
+    cfg.setdefault("forma", {})["3l_session"] = {
+        "access_token":  token_data.get("access_token", ""),
+        "refresh_token": token_data.get("refresh_token", ""),
+        "expires_at":    int(_time.time()) + expires_in - 30,  # 30s safety margin
+        "scope":         token_data.get("scope", ""),
+        "obtained_at":   int(_time.time()),
+    }
+    save_config(cfg, user)
+
+def _forma_clear_session(user: str):
+    cfg = load_config(user)
+    if "3l_session" in cfg.get("forma", {}):
+        cfg["forma"].pop("3l_session", None)
+        save_config(cfg, user)
+
+
+@app.get("/auth/forma/start")
+async def auth_forma_start(request: Request, user: str = Depends(require_user)):
+    """Initiate the Forma 3-legged OAuth flow.
+
+    Redirects the browser to Autodesk's authorization page with a state
+    token that ties the eventual callback back to this admin.
+    """
+    import secrets, hashlib, base64, time as _time
+
+    cid, _sec = _forma_3l_creds(user)
+    if not cid:
+        # No 3-legged client_id configured — bounce back to settings with an error
+        return RedirectResponse(url="/settings?forma_3l_error=no_client_id", status_code=302)
+
+    # Generate state + PKCE verifier+challenge
+    state    = secrets.token_urlsafe(24)
+    verifier = secrets.token_urlsafe(48)  # 64 chars, in OAuth's required 43-128 range
+    challenge_bytes = hashlib.sha256(verifier.encode("ascii")).digest()
+    challenge = base64.urlsafe_b64encode(challenge_bytes).decode("ascii").rstrip("=")
+
+    # Stash state → user mapping so callback can verify CSRF + look up verifier
+    # Opportunistically prune expired entries to keep the dict small.
+    now = int(_time.time())
+    for stale_state, meta in list(_FORMA_OAUTH_STATES.items()):
+        if now - meta.get("created_at", 0) > _FORMA_OAUTH_STATE_TTL:
+            _FORMA_OAUTH_STATES.pop(stale_state, None)
+
+    _FORMA_OAUTH_STATES[state] = {
+        "user":          user,
+        "code_verifier": verifier,
+        "created_at":    now,
+    }
+
+    redirect_uri = _forma_redirect_uri(request)
+    auth_url = (
+        f"{FORMA_OAUTH_AUTHORIZE_URL}"
+        f"?response_type=code"
+        f"&client_id={urllib.parse.quote(cid)}"
+        f"&redirect_uri={urllib.parse.quote(redirect_uri)}"
+        f"&scope={urllib.parse.quote(FORMA_OAUTH_SCOPES)}"
+        f"&state={urllib.parse.quote(state)}"
+        f"&code_challenge={challenge}"
+        f"&code_challenge_method=S256"
+    )
+    return RedirectResponse(url=auth_url, status_code=302)
+
+
+@app.get("/auth/forma/callback")
+async def auth_forma_callback(request: Request, code: str = "", state: str = "",
+                              error: str = "", error_description: str = ""):
+    """Handle the redirect back from Autodesk's authorization page.
+
+    Validates the state token, exchanges the code for tokens, persists the
+    session block on the originating admin's config. Then redirects back
+    to /settings with a success or error flag.
+    """
+    # If Autodesk reported an error directly, surface it
+    if error:
+        return RedirectResponse(
+            url=f"/settings?forma_3l_error={urllib.parse.quote(error)}",
+            status_code=302,
+        )
+    if not code or not state:
+        return RedirectResponse(url="/settings?forma_3l_error=missing_code_or_state", status_code=302)
+
+    # Validate state — must match an entry in our in-memory map
+    state_meta = _FORMA_OAUTH_STATES.pop(state, None)  # one-shot use
+    if not state_meta:
+        return RedirectResponse(url="/settings?forma_3l_error=invalid_state", status_code=302)
+
+    user = state_meta["user"]
+    verifier = state_meta["code_verifier"]
+
+    cid, sec = _forma_3l_creds(user)
+    if not cid or not sec:
+        return RedirectResponse(url="/settings?forma_3l_error=no_credentials", status_code=302)
+
+    redirect_uri = _forma_redirect_uri(request)
+
+    # Exchange authorization code for tokens. Autodesk's v2 token endpoint
+    # accepts client credentials via Basic auth (preferred) or in the form body.
+    import base64
+    basic = base64.b64encode(f"{cid}:{sec}".encode("ascii")).decode("ascii")
+
+    try:
+        # Run the blocking HTTP request in a worker thread so we don't
+        # block the event loop while talking to Autodesk
+        loop = asyncio.get_event_loop()
+        def _exchange():
+            return http_requests.post(
+                FORMA_OAUTH_TOKEN_URL,
+                headers={
+                    "Authorization": f"Basic {basic}",
+                    "Content-Type":  "application/x-www-form-urlencoded",
+                    "Accept":        "application/json",
+                },
+                data={
+                    "grant_type":    "authorization_code",
+                    "code":          code,
+                    "redirect_uri":  redirect_uri,
+                    "code_verifier": verifier,
+                },
+                timeout=20,
+            )
+        resp = await loop.run_in_executor(None, _exchange)
+    except Exception as e:
+        print(f"[forma-oauth] Token exchange request failed: {e}")
+        return RedirectResponse(url="/settings?forma_3l_error=exchange_failed", status_code=302)
+
+    if resp.status_code != 200:
+        # Log the body for debugging (it includes Autodesk's specific error)
+        print(f"[forma-oauth] Token exchange returned {resp.status_code}: {resp.text[:300]}")
+        return RedirectResponse(
+            url=f"/settings?forma_3l_error=exchange_{resp.status_code}",
+            status_code=302,
+        )
+
+    try:
+        token_data = resp.json()
+    except ValueError:
+        return RedirectResponse(url="/settings?forma_3l_error=exchange_bad_json", status_code=302)
+
+    if not token_data.get("access_token"):
+        return RedirectResponse(url="/settings?forma_3l_error=no_access_token", status_code=302)
+
+    _forma_save_session(user, token_data)
+    return RedirectResponse(url="/settings?forma_3l_connected=1", status_code=302)
+
+
+@app.post("/auth/forma/disconnect")
+async def auth_forma_disconnect(user: str = Depends(require_user)):
+    """Clear this admin's stored Forma 3-legged session."""
+    _forma_clear_session(user)
+    return JSONResponse({"status": "ok"})
+
+
+@app.get("/api/auth/forma/status")
+async def auth_forma_status(user: str = Depends(require_user)):
+    """Report whether this admin has a stored Forma 3-legged session, and
+    when it expires. Used by the Settings UI to show the connection pill."""
+    import time as _time
+    cfg = load_config(user).get("forma", {}) or {}
+    sess = cfg.get("3l_session") or {}
+    if not sess.get("access_token"):
+        return JSONResponse({"connected": False})
+    expires_at = int(sess.get("expires_at") or 0)
+    now = int(_time.time())
+    seconds_remaining = max(0, expires_at - now)
+    refresh_present = bool(sess.get("refresh_token"))
+    return JSONResponse({
+        "connected":          True,
+        "access_expires_in":  seconds_remaining,
+        "refresh_present":    refresh_present,
+        "scope":              sess.get("scope", ""),
+        "obtained_at":        sess.get("obtained_at"),
+    })
+
 
 @app.get("/packages", response_class=HTMLResponse)
 async def packages_page(request: Request, user: str = Depends(require_user)):

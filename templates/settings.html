@@ -169,6 +169,35 @@
             Project selection is managed from the sidebar context selector.
         </p>
         {% endif %}
+
+        <!-- User Authentication (3-legged) — every admin connects their own
+             Autodesk identity here. Independent of the org-level credentials
+             the owner sets above. Renders for owner AND non-owner. -->
+        <div class="forma-3l-auth">
+            <div class="forma-3l-head">
+                <div class="forma-3l-title">User Authentication (3-legged)</div>
+                <span class="forma-3l-pill" id="forma3lPill">
+                    <span class="forma-3l-pill-dot"></span>
+                    <span id="forma3lPillText">Checking…</span>
+                </span>
+            </div>
+            <p class="forma-3l-blurb">
+                Connect your Autodesk identity so Forma extractions that need user-level
+                permissions (model properties, project members, etc.) can run as you. Each
+                admin authorises individually — your token is private to your account.
+            </p>
+            <div class="forma-3l-actions">
+                <button type="button" class="btn btn-primary btn-sm" id="forma3lConnectBtn"
+                        onclick="window.location.href='/auth/forma/start'">
+                    Connect Forma Account
+                </button>
+                <button type="button" class="btn btn-secondary btn-sm" id="forma3lDisconnectBtn"
+                        onclick="disconnectForma()" style="display:none;">
+                    Disconnect
+                </button>
+            </div>
+            <p class="forma-3l-note" id="forma3lNote" style="display:none;"></p>
+        </div>
     </div>
 
     <div style="display:flex; gap:12px; justify-content:flex-end;">
@@ -242,6 +271,68 @@
     border-color: var(--border-cream);
     letter-spacing: 2px;
 }
+
+/* ── User Authentication (3-legged) ── */
+.forma-3l-auth {
+    margin-top: 18px;
+    padding: 16px;
+    border: 1px solid var(--border-cream);
+    border-radius: var(--radius);
+    background: var(--cream-mid, #f5f1ea);
+}
+.forma-3l-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 6px;
+}
+.forma-3l-title {
+    font-size: var(--fs-sm);
+    font-weight: 600;
+    color: var(--navy);
+}
+.forma-3l-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-size: var(--fs-xs);
+    font-weight: 500;
+    background: rgba(11,37,69,0.06);
+    color: var(--text-dark-muted);
+    white-space: nowrap;
+}
+.forma-3l-pill-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: rgba(11,37,69,0.25);
+}
+.forma-3l-pill.connected      { background: rgba(52,211,153,0.12); color: #047857; }
+.forma-3l-pill.connected .forma-3l-pill-dot { background: #34d399; }
+.forma-3l-pill.expiring       { background: rgba(251,191,36,0.18); color: #92400e; }
+.forma-3l-pill.expiring .forma-3l-pill-dot  { background: #f59e0b; }
+.forma-3l-pill.expired        { background: rgba(248,113,113,0.15); color: #991b1b; }
+.forma-3l-pill.expired .forma-3l-pill-dot   { background: #ef4444; }
+
+.forma-3l-blurb {
+    font-size: var(--fs-xs);
+    color: var(--text-dark-muted);
+    margin: 0 0 12px 0;
+    line-height: 1.55;
+}
+.forma-3l-actions {
+    display: flex;
+    gap: 8px;
+}
+.forma-3l-note {
+    font-size: var(--fs-xs);
+    color: var(--text-dark-muted);
+    margin: 10px 0 0 0;
+    font-style: italic;
+}
 </style>
 <script>
 function switchReviztoTab(region, btn) {
@@ -250,5 +341,99 @@ function switchReviztoTab(region, btn) {
     document.getElementById('revizto-tab-' + region).style.display = 'block';
     btn.classList.add('active');
 }
+
+// ── Forma 3-legged status pill ────────────────────────────────────────
+// Fetches the current admin's Forma OAuth session state and updates the
+// pill/buttons accordingly. Called on page load and after disconnect.
+async function refreshForma3lStatus() {
+    const pill        = document.getElementById('forma3lPill');
+    const pillText    = document.getElementById('forma3lPillText');
+    const connectBtn  = document.getElementById('forma3lConnectBtn');
+    const discBtn     = document.getElementById('forma3lDisconnectBtn');
+    const note        = document.getElementById('forma3lNote');
+    if (!pill) return;
+    try {
+        const res = await fetch('/api/auth/forma/status');
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+
+        // Reset visual state
+        pill.classList.remove('connected', 'expiring', 'expired');
+
+        if (!data.connected) {
+            pillText.textContent = 'Not connected';
+            connectBtn.textContent = 'Connect Forma Account';
+            connectBtn.style.display = 'inline-flex';
+            discBtn.style.display    = 'none';
+            note.style.display       = 'none';
+            return;
+        }
+
+        const secs = data.access_expires_in || 0;
+        // The refresh_token is what determines whether we can renew without
+        // re-consent. If it's missing (rare — Autodesk usually returns one),
+        // treat the connection as expiring as soon as the access token does.
+        if (secs <= 0 && !data.refresh_present) {
+            pill.classList.add('expired');
+            pillText.textContent = 'Token expired — reconnect';
+            connectBtn.textContent = 'Reconnect Forma Account';
+            connectBtn.style.display = 'inline-flex';
+            discBtn.style.display    = 'inline-flex';
+            note.style.display       = 'none';
+        } else if (secs <= 0) {
+            // Access token expired but refresh_token present — server will
+            // refresh on next use (Round 2). Show as connected with note.
+            pill.classList.add('expiring');
+            pillText.textContent = 'Refreshing on next use';
+            connectBtn.textContent = 'Reconnect';
+            connectBtn.style.display = 'inline-flex';
+            discBtn.style.display    = 'inline-flex';
+            note.style.display       = 'block';
+            note.textContent = 'Access token expired. Will auto-refresh next time you run a Forma extraction.';
+        } else {
+            pill.classList.add('connected');
+            pillText.textContent = `Connected · expires in ${_humanizeSecs(secs)}`;
+            connectBtn.textContent = 'Reconnect';
+            connectBtn.style.display = 'inline-flex';
+            discBtn.style.display    = 'inline-flex';
+            note.style.display       = 'none';
+        }
+    } catch (e) {
+        pillText.textContent = 'Status unavailable';
+        connectBtn.style.display = 'inline-flex';
+        discBtn.style.display    = 'none';
+    }
+}
+
+// Format a duration in seconds as a compact human string. Picks the
+// largest meaningful unit (days/hours/minutes/seconds).
+function _humanizeSecs(s) {
+    if (s >= 86400) {
+        const d = Math.floor(s / 86400);
+        const h = Math.floor((s % 86400) / 3600);
+        return h > 0 ? `${d}d ${h}h` : `${d}d`;
+    }
+    if (s >= 3600) {
+        const h = Math.floor(s / 3600);
+        const m = Math.floor((s % 3600) / 60);
+        return m > 0 ? `${h}h ${m}m` : `${h}h`;
+    }
+    if (s >= 60) return `${Math.floor(s/60)}m`;
+    return `${s}s`;
+}
+
+async function disconnectForma() {
+    if (!confirm('Disconnect your Forma account? You\'ll need to reconnect before running 3-legged Forma extractions.')) return;
+    try {
+        const res = await fetch('/auth/forma/disconnect', { method: 'POST' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        await refreshForma3lStatus();
+    } catch (e) {
+        alert('Disconnect failed: ' + e.message);
+    }
+}
+
+// On page load
+document.addEventListener('DOMContentLoaded', refreshForma3lStatus);
 </script>
 {% endblock %}
