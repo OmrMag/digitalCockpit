@@ -381,6 +381,39 @@
         padding: 12px;
     }
 
+    /* "File too large" pane — shown when the file exceeds the inline
+       preview byte cap. Steers the user toward Download. */
+    .pkg-preview-toolarge {
+        padding: 28px 24px;
+        text-align: center;
+        color: var(--text-dark);
+    }
+    .pkg-preview-toolarge .em {
+        font-size: var(--fs-base);
+        font-weight: 600;
+        color: var(--navy);
+        margin-bottom: 8px;
+    }
+    .pkg-preview-toolarge p {
+        font-size: var(--fs-xs);
+        color: var(--text-dark-muted);
+        max-width: 520px;
+        margin: 0 auto 16px;
+        line-height: 1.55;
+    }
+    .pkg-preview-toolarge .btn-download-lg {
+        display: inline-block;
+        padding: 8px 18px;
+        background: var(--navy);
+        color: white;
+        border-radius: var(--radius);
+        font-size: var(--fs-sm);
+        font-weight: 600;
+        text-decoration: none;
+        cursor: pointer;
+    }
+    .pkg-preview-toolarge .btn-download-lg:hover { background: #001633; }
+
     /* ── Empty state ────────────────────────────────────────────────────── */
     .pkg-empty {
         text-align: center;
@@ -568,6 +601,23 @@ async function previewFile(e, pkgId, filename) {
                     </div>
                     <pre class="pkg-preview-json">${esc(pretty)}</pre>
                 </div>`;
+        } else if (data.kind === 'too_large') {
+            // File exceeded the inline-preview byte cap. Inline rendering
+            // would freeze the browser and risk OOM on the worker, so the
+            // server returns a "too_large" payload and we present a clean
+            // download-to-view UI instead. Download itself streams from
+            // disk and works fine at any size.
+            host.innerHTML = `
+                <div class="pkg-preview">
+                    <div class="pkg-preview-bar">
+                        <div class="pkg-preview-title">${esc(filename)} · ${esc(String(data.size_mb))} MB</div>
+                    </div>
+                    <div class="pkg-preview-toolarge">
+                        <div class="em">File too large to preview inline</div>
+                        <p>This file is ${esc(String(data.size_mb))} MB. The inline preview is capped at ${esc(String(data.max_mb))} MB to keep the browser responsive. Download the file to inspect its contents in a tool that handles large datasets (Excel, VS Code, jq, etc.).</p>
+                        <a class="pkg-action btn-download-lg" href="${esc(data.download_url)}">Download (${esc(String(data.size_mb))} MB)</a>
+                    </div>
+                </div>`;
         } else {
             host.innerHTML = `<div class="pkg-preview"><div class="pkg-preview-bar"><div class="pkg-preview-title">Unsupported preview type.</div></div></div>`;
         }
@@ -620,6 +670,7 @@ async function renderCsvPreview(host, pkgId, filename, firstPageData) {
         filters:    {},        // { columnName: filterText }  — empty values are stripped
         cancelled:  false,
         loadEpoch:  0,         // bumped on every reset; in-flight fetches with stale epoch are discarded
+        truncated:  !!firstPageData.truncated,  // server hit its row-scan cap
     };
     host.__previewState = state;
 
@@ -727,7 +778,10 @@ async function renderCsvPreview(host, pkgId, filename, firstPageData) {
         const filteredNote = activeCount > 0
             ? ` · <span style="color:#f59e0b;">filtered to ${state.total.toLocaleString()}</span>`
             : '';
-        titleEl.innerHTML = `${esc(filename)} · ${state.total.toLocaleString()} row${state.total === 1 ? '' : 's'}${filteredNote}`;
+        const truncatedNote = state.truncated
+            ? ` · <span style="color:#dc2626;" title="File has more rows than the preview scan cap. Download to see all data.">scan truncated at ${state.total.toLocaleString()}</span>`
+            : '';
+        titleEl.innerHTML = `${esc(filename)} · ${state.total.toLocaleString()} row${state.total === 1 ? '' : 's'}${filteredNote}${truncatedNote}`;
     }
 
     function clearAllFilters() {
@@ -766,6 +820,7 @@ async function renderCsvPreview(host, pkgId, filename, firstPageData) {
             const data = await res.json();
             if (myEpoch !== state.loadEpoch) return;
             state.total      = data.total || 0;
+            state.truncated  = !!data.truncated;
             state.loadedRows = (data.rows || []).length;
             state.nextPage   = 2;
             state.hasMore    = state.loadedRows < state.total && (data.rows || []).length > 0;
@@ -818,6 +873,9 @@ async function renderCsvPreview(host, pkgId, filename, firstPageData) {
     } else {
         setFootText(`<span style="opacity:0.5;">Scroll for more…</span>`);
     }
+    // Refresh title once so the truncated note (if any) shows up. The
+    // inline template at first render doesn't include it.
+    _updateTitle();
 
     // ── Infinite scroll ──────────────────────────────────────────────
     async function loadMore() {

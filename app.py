@@ -3515,6 +3515,19 @@ PACKAGES_DIR = BASE_DIR / "packages"
 PACKAGES_DIR.mkdir(exist_ok=True)
 PACKAGES_RETENTION_DAYS = 30
 
+# Inline-preview guardrails. Files larger than this byte threshold can't be
+# rendered inline — the browser would lock up and the server would risk
+# OOM trying to read them. Big files always download fine (download is a
+# stream from disk straight to the wire), it's only the in-memory parsing
+# that's restricted.
+PREVIEW_MAX_BYTES = 50 * 1024 * 1024  # 50 MB
+
+# When scanning a CSV linearly to compute pagination, stop after this many
+# data rows. Past this point we report a truncated preview rather than
+# pinning the worker for tens of seconds. Most files are nowhere near
+# this; only catastrophically wide datasets hit it.
+PREVIEW_MAX_ROW_SCAN = 500_000
+
 # Forma L1 scripts cannot be baked (per ALEC's call: account-wide data
 # isn't useful as a per-admin shareable package).
 FORMA_L1_SCRIPTS = {
@@ -3758,13 +3771,18 @@ async def api_package_preview(pkg_id: str, filename: str,
                               user: str = Depends(require_user)):
     """Inline preview for a baked package file.
 
-    For .csv: returns paginated rows + column list. Supports per-column
-              filtering via query params of the form `q[<column>]=<value>`.
-              Multiple filters AND together (case-insensitive substring
-              match). Filtered rows are counted into `total` so the
-              frontend's infinite-scroll knows when to stop.
+    For .csv: returns paginated rows + column list. Streams the file
+              line-by-line so memory stays O(page_size) regardless of
+              file size. Supports per-column filtering via query params
+              of the form `q[<column>]=<value>` (case-insensitive
+              substring, multiple filters AND together). Truncates the
+              scan at PREVIEW_MAX_ROW_SCAN rows for pathological cases.
 
     For .json: returns the parsed JSON (no pagination — clients render trees).
+
+    Files larger than PREVIEW_MAX_BYTES return a "too_large" response —
+    the user sees a "download to view" message in the UI rather than
+    locking up the browser or OOM'ing the server.
     """
     index = load_packages_index()
     pkg = index.get(pkg_id)
@@ -3780,6 +3798,22 @@ async def api_package_preview(pkg_id: str, filename: str,
     if not fpath.exists():
         raise HTTPException(status_code=404, detail="File not in package.")
 
+    # ── Size guardrail ─────────────────────────────────────────────────
+    # Cheap stat() — no read. If the file's too big, bail before doing
+    # any I/O on its contents.
+    try:
+        size_bytes = fpath.stat().st_size
+    except OSError:
+        size_bytes = 0
+    if size_bytes > PREVIEW_MAX_BYTES:
+        return JSONResponse({
+            "kind":         "too_large",
+            "size_bytes":   size_bytes,
+            "size_mb":      round(size_bytes / (1024 * 1024), 1),
+            "max_mb":       round(PREVIEW_MAX_BYTES / (1024 * 1024), 1),
+            "download_url": f"/api/packages/{pkg_id}/files/{safe_name}",
+        })
+
     if fpath.suffix == ".json":
         try:
             with open(fpath) as f:
@@ -3791,7 +3825,7 @@ async def api_package_preview(pkg_id: str, filename: str,
     if fpath.suffix == ".csv":
         import csv as _csv
 
-        # ── Parse per-column filters from query string ────────────────────
+        # ── Parse per-column filters from query string ────────────────
         # Accepts both q[colname]=value and q.colname=value. Empty values
         # are dropped (treated as "no filter for that column"). Values are
         # lowercased once for case-insensitive substring matching.
@@ -3807,46 +3841,75 @@ async def api_package_preview(pkg_id: str, filename: str,
             if col_name:
                 column_filters[col_name] = value.lower()
 
+        page = max(1, page)
+        start_index = (page - 1) * page_size
+        end_index   = start_index + page_size
+
         try:
-            with open(fpath, newline="", encoding="utf-8") as f:
+            with open(fpath, newline="", encoding="utf-8", errors="replace") as f:
                 reader = _csv.reader(f)
-                rows = list(reader)
-            if not rows:
-                return JSONResponse({"kind": "csv", "columns": [], "rows": [],
-                                     "total": 0, "page": 1, "page_size": page_size,
-                                     "filtered": bool(column_filters)})
-            columns = rows[0]
-            data_rows = rows[1:]
+                # Header
+                try:
+                    columns = next(reader)
+                except StopIteration:
+                    return JSONResponse({
+                        "kind": "csv", "columns": [], "rows": [],
+                        "total": 0, "page": 1, "page_size": page_size,
+                        "filtered": bool(column_filters), "truncated": False,
+                    })
 
-            # Apply filters (if any) before paginating. We map column names
-            # to their indices once, then per-row check each (idx, needle)
-            # pair. A filter on a column not in the file is silently
-            # ignored — better UX than 400'ing the request.
-            if column_filters:
-                col_index = {name: i for i, name in enumerate(columns)}
-                checks = [(col_index[c], n) for c, n in column_filters.items() if c in col_index]
-                if checks:
-                    def _matches(row):
-                        for idx, needle in checks:
-                            if idx >= len(row):
-                                return False
-                            if needle not in (row[idx] or "").lower():
-                                return False
-                        return True
-                    data_rows = [r for r in data_rows if _matches(r)]
+                # Pre-compute filter checks once: list of (col_index, lower_needle)
+                # tuples. Filters on columns not in the file are silently dropped.
+                filter_checks = []
+                if column_filters:
+                    col_index = {name: i for i, name in enumerate(columns)}
+                    filter_checks = [
+                        (col_index[c], n)
+                        for c, n in column_filters.items() if c in col_index
+                    ]
 
-            total = len(data_rows)
-            page = max(1, page)
-            start = (page - 1) * page_size
-            end   = start + page_size
+                def _matches(row):
+                    for idx, needle in filter_checks:
+                        if idx >= len(row):
+                            return False
+                        if needle not in (row[idx] or "").lower():
+                            return False
+                    return True
+
+                # Streaming scan: walk the file once, collect only rows in
+                # the current page's window, count matches. Memory is
+                # O(page_size + columns), independent of file size.
+                page_rows = []
+                total_matches = 0
+                rows_scanned = 0
+                truncated = False
+
+                for row in reader:
+                    rows_scanned += 1
+                    if rows_scanned > PREVIEW_MAX_ROW_SCAN:
+                        truncated = True
+                        break
+                    if filter_checks and not _matches(row):
+                        continue
+                    # This row "counts" — increment total and possibly capture
+                    if start_index <= total_matches < end_index:
+                        page_rows.append(row)
+                    total_matches += 1
+                    # Optimisation: once we've passed end_index AND we have no
+                    # filters, we can stop after a full extra page (just to
+                    # confirm there's more) and return. We DO need an accurate
+                    # total to drive infinite-scroll's "End of file" logic,
+                    # so we can't bail early. Carry on counting.
+
             return JSONResponse({
                 "kind":      "csv",
                 "columns":   columns,
-                "rows":      data_rows[start:end],
-                "total":     total,
+                "rows":      page_rows,
+                "total":     total_matches,
                 "page":      page,
                 "page_size": page_size,
                 "filtered":  bool(column_filters),
+                "truncated": truncated,
             })
         except (OSError, UnicodeDecodeError) as e:
             raise HTTPException(status_code=500, detail=f"Failed to read CSV: {e}")
