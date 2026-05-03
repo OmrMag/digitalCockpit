@@ -89,7 +89,10 @@
 
     /* Inline selects: same borderless-until-hover/focus pattern as
        .cell-input on the Invite Users table. Renamed visually but keeps
-       the .exp-sel class so existing JS bindings still work. */
+       the .exp-sel class so existing JS bindings still work.
+       max-width prevents the select from stretching to fill the cell
+       when the table has few columns (e.g., only Morta requested) — the
+       cell expands but the control stays a sensible size. */
     .exp-sel {
         padding: 3px 5px;
         border: 1px solid transparent;
@@ -100,6 +103,7 @@
         color: var(--text-dark);
         width: 100%;
         min-width: 90px;
+        max-width: 200px;
         cursor: pointer;
     }
     .exp-sel:hover { border-color: var(--border-cream); background: white; }
@@ -612,10 +616,16 @@ function renderExpandPanel(key, idx, panel) {
     let thead = `<tr>
         <th style="width:28px;"><input type="checkbox" id="selAll-${key}-${idx}" title="Toggle all" style="cursor:pointer;width:13px;height:13px;accent-color:var(--navy);"></th>
         <th>Email</th><th>Name</th><th>Company</th><th>Dept</th>`;
-    if (hasM) thead += `<th class="col-morta" style="width:16px;" title="Morta">M</th><th class="col-morta">Tag</th>`;
-    if (hasR) thead += `<th class="col-revizto" style="width:16px;" title="Revizto">R</th><th class="col-revizto">Lic. Role</th><th class="col-revizto">Proj. Role</th><th class="col-revizto">Invite</th>`;
-    if (hasF) thead += `<th class="col-forma" style="width:16px;" title="Forma">F</th><th class="col-forma">Company</th><th class="col-forma">Role</th><th class="col-forma">Modules</th>`;
-    thead += `<th style="width:70px;">Status</th></tr>`;
+    if (hasM) thead += `<th class="col-morta" style="width:50px;" title="Include Morta access for this user">Morta</th><th class="col-morta">Tag</th>`;
+    if (hasR) thead += `<th class="col-revizto" style="width:50px;" title="Include Revizto access">Revizto</th><th class="col-revizto">Lic. Role</th><th class="col-revizto">Proj. Role</th><th class="col-revizto">Invite</th>`;
+    if (hasF) thead += `<th class="col-forma" style="width:50px;" title="Include Forma access">Forma</th><th class="col-forma">Company</th><th class="col-forma">Role</th><th class="col-forma">Modules</th>`;
+    // Spacer column absorbs any horizontal slack so the platform-control
+    // dropdowns don't stretch when only one platform is requested. Without
+    // this, a Morta-only submission would have its TAG select blown out
+    // to half the row width because the table.width:100% has nowhere else
+    // to put the slack.
+    thead += `<th style="width:100%;"></th>`;
+    thead += `<th style="width:70px;text-align:right;">Status</th></tr>`;
 
     let tbody = '';
     (sub.users||[]).forEach((u, uIdx) => {
@@ -683,7 +693,7 @@ function renderExpandPanel(key, idx, panel) {
                     <label class="exp-toggle"><input type="checkbox" data-ak="${ak}" data-field="forma_model" ${a.forma_model?'checked':''}><span>Model</span></label>
                 </div>` : '—'}</td>`;
         }
-        tbody += `<td><span class="card-badge ${rejected?'danger':'success'}" id="badge-${ak}">${rejected?'Rejected':'Approved'}</span></td></tr>`;
+        tbody += `<td></td><td style="text-align:right;"><span class="card-badge ${rejected?'danger':'success'}" id="badge-${ak}">${rejected?'Rejected':'Approved'}</span></td></tr>`;
     });
 
     panel.innerHTML = `
