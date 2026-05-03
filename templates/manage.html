@@ -50,10 +50,17 @@
     /* ── Pending-submission user rows table — matches #previewTable
          (the inline Invite Users editing surface) for visual consistency:
          minimal uppercase muted headers (no cream fill), tight row padding,
-         borderless cell selects until focus, compact 13px checkboxes. */
+         borderless cell selects until focus, compact 13px checkboxes,
+         sticky-left freeze for ☑ + Email columns matching Invite Users
+         identical 28px + 180px offsets. */
     .exp-table {
-        width: 100%;
-        border-collapse: collapse;
+        /* width:auto + min-width:100% lets the table size to its content
+           when wide, triggering the wrapper's overflow-x:auto scroll
+           inside the card. Same pattern as #previewTable. */
+        width: auto;
+        min-width: 100%;
+        border-collapse: separate;   /* required for position:sticky on td */
+        border-spacing: 0;
         font-size: var(--fs-xs);
     }
     .exp-table th {
@@ -86,6 +93,32 @@
     .col-morta  {background:rgba(74,158,255,0.10);}
     .col-revizto{background:rgba(220,80,80,0.09);}
     .col-forma  {background:rgba(245,158,11,0.11);}
+    /* ── Sticky-left freeze: ☑ checkbox + Email columns ──
+       Identical offsets to #previewTable in the Invite Users card.
+       28px for the ☑ column, then Email pinned at 28px with min-width
+       180px and a 1px shadow line on its right edge to mark the freeze
+       boundary. Headers in those columns get z-index:3 so the row
+       below scrolls under them, not over. */
+    .exp-table th:nth-child(1),
+    .exp-table td:nth-child(1) {
+        position: sticky;
+        left: 0;
+        z-index: 2;
+        background: white;
+        min-width: 28px;
+        width: 28px;
+    }
+    .exp-table th:nth-child(2),
+    .exp-table td:nth-child(2) {
+        position: sticky;
+        left: 28px;
+        z-index: 2;
+        background: white;
+        min-width: 180px;
+        box-shadow: 1px 0 0 var(--border-cream);
+    }
+    .exp-table thead th:nth-child(1),
+    .exp-table thead th:nth-child(2) { z-index: 3; }
 
     /* Inline selects: same borderless-until-hover/focus pattern as
        .cell-input on the Invite Users table. Renamed visually but keeps
@@ -127,12 +160,14 @@
     }
     .exp-modules { display: flex; gap: 8px; flex-wrap: wrap; }
 
-    /* Expand footer — keep the cream tint to set it apart from the
-       table rows above (matches expand-panel anatomy for actions). */
+    /* Expand footer — buttons right-aligned in a tight group, matching
+       the Invite Users card's footer pattern (Cancel + Review). Same
+       background tint sets the action zone apart from the table rows. */
     .expand-footer {
         display: flex;
         align-items: center;
-        justify-content: space-between;
+        justify-content: flex-end;
+        gap: 6px;
         padding: 10px 16px;
         background: var(--cream);
         border-top: 1px solid var(--border-cream);
@@ -704,8 +739,8 @@ function renderExpandPanel(key, idx, panel) {
             </table>
         </div>
         <div class="expand-footer">
-            <button class="btn btn-secondary" style="padding:5px 12px;font-size:var(--fs-xs);" onclick="discardSub('${key}',${idx})">Discard</button>
-            <button class="btn btn-primary" style="padding:5px 12px;font-size:var(--fs-xs);" onclick="processSub('${key}',${idx})" id="processBtn-${key}-${idx}">⚡ Process Approved</button>
+            <button class="btn btn-secondary" style="padding:4px 10px;font-size:var(--fs-xs);" onclick="discardSub('${key}',${idx})">Discard</button>
+            <button class="btn btn-primary"   style="padding:4px 12px;font-size:var(--fs-xs);" onclick="processSub('${key}',${idx})" id="processBtn-${key}-${idx}">Approve</button>
         </div>`;
 
     // Bind select-all
@@ -748,11 +783,11 @@ function toggleRowApproval(ak, approved) {
 
 async function processSub(key, idx) {
     const btn = document.getElementById(`processBtn-${key}-${idx}`);
-    btn.textContent = '⏳ Processing…'; btn.disabled = true;
+    btn.textContent = 'Processing…'; btn.disabled = true;
 
     const cacheKey = `${key}/${idx}`;
     const sub      = _subData[cacheKey];
-    if (!sub) { btn.textContent='⚡ Process Approved'; btn.disabled=false; return; }
+    if (!sub) { btn.textContent='Approve'; btn.disabled=false; return; }
 
     const usersPayload = (sub.users||[]).map((u, uIdx) => {
         const ak = `${key}/${idx}/${uIdx}`;
@@ -791,9 +826,9 @@ async function processSub(key, idx) {
             alert(`✓ Done — ${data.success} invited · ${data.errors} errors · ${data.rejected} skipped`);
         } else {
             alert('Error: ' + (data.detail||'Processing failed.'));
-            btn.textContent='⚡ Process Approved'; btn.disabled=false;
+            btn.textContent='Approve'; btn.disabled=false;
         }
-    } catch { alert('Network error.'); btn.textContent='⚡ Process Approved'; btn.disabled=false; }
+    } catch { alert('Network error.'); btn.textContent='Approve'; btn.disabled=false; }
 }
 
 async function discardSub(key, idx) {
