@@ -52,3 +52,10 @@ morta_members*.csv
 morta_members*.json
 morta_tags*.csv
 morta_tags*.json
+
+forma_Project-Files*.csv
+forma_Project-Files*.json
+forma_hub_users*.csv
+forma_account_projects*.csv
+forma_account_projects*.json
+user_cache.json
