@@ -1,6 +1,5 @@
 import requests
 import json
-import csv
 import os
 import time
 import gzip
@@ -369,26 +368,22 @@ if __name__ == "__main__":
         print("[Forma] No properties downloaded — aborting before file write.")
         exit(1)
 
-    # ── Streaming write ────────────────────────────────────────────────
-    # We make two passes over the ndjson temp file instead of loading it
-    # into a Python list. The previous single-pass approach worked for
-    # small models but blew past the B1 tier's 1.75 GB RAM ceiling on the
-    # Wynn properties dump (~915 MB decompressed). Memory used here is
-    # bounded by the fieldname set plus one in-flight row.
-    #
-    # Pass 1: stream JSON to disk and accumulate the union of fieldnames
-    #         needed for the CSV header.
-    # Pass 2: stream CSV using the header from pass 1.
+    # ── Streaming write — JSON only ────────────────────────────────────
+    # Earlier versions also produced a flat CSV alongside the JSON. With
+    # 917k+ rows × 2300+ columns that CSV grows to ~10 GB and the
+    # second pass over the temp file pushed total runtime past the
+    # 10-minute extraction timeout. The CSV is only read by humans
+    # opening it in Excel — which itself can't handle that volume — so
+    # it's been dropped at the L3 stage. Downstream processing (L4
+    # Model Health Report, future custom-report builder) reads the
+    # JSON directly, streaming line-by-line.
     json_path = os.path.join(EXPORTS_DIR, "forma_model_properties.json")
-    csv_path  = os.path.join(EXPORTS_DIR, "forma_model_properties.csv")
 
-    print("Pass 1/2 — writing JSON, collecting fieldnames…", flush=True)
-    fieldnames_seen = []      # preserve insertion order (matches original behaviour)
-    fieldnames_set  = set()
-    row_count       = 0
-    bad_lines       = 0
-    progress_step   = 5000    # one dot per N rows
-    next_dot        = progress_step
+    print("Writing JSON…", flush=True)
+    row_count     = 0
+    bad_lines     = 0
+    progress_step = 5000      # one dot per N rows
+    next_dot      = progress_step
 
     try:
         with open(json_path, "w", encoding="utf-8") as jf:
@@ -401,12 +396,6 @@ if __name__ == "__main__":
                     bad_lines += 1
                     continue
                 row = _build_row(obj, fields)
-                # Track fieldname order without storing rows
-                for k in row.keys():
-                    if k not in fieldnames_set:
-                        fieldnames_set.add(k)
-                        fieldnames_seen.append(k)
-                # Stream JSON
                 if not first:
                     jf.write(",\n    ")
                 else:
@@ -422,37 +411,10 @@ if __name__ == "__main__":
         print(f"Saved {json_path}")
     except Exception as e:
         print(f"[Forma] JSON write failed: {e}")
-        try: os.unlink(properties_tmp)
-        except Exception: pass
-        exit(1)
-
-    if row_count == 0:
-        print("[Forma] No rows written — skipping CSV.")
-        try: os.unlink(properties_tmp)
-        except Exception: pass
-        exit(0)
-
-    print(f"Pass 2/2 — writing CSV ({len(fieldnames_seen)} columns)…", flush=True)
-    next_dot = progress_step
-    written  = 0
-    try:
-        with open(csv_path, "w", newline="", encoding="utf-8") as cf:
-            writer = csv.DictWriter(cf, fieldnames=fieldnames_seen, extrasaction="ignore")
-            writer.writeheader()
-            for line in _read_gzipped_ndjson_file(properties_tmp):
-                try:
-                    obj = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                writer.writerow(_build_row(obj, fields))
-                written += 1
-                if written >= next_dot:
-                    print(".", end="", flush=True)
-                    next_dot += progress_step
-        print(f" {written} rows.")
-        print(f"Saved {csv_path}")
-    except Exception as e:
-        print(f"[Forma] CSV write failed: {e}")
+        exit_code = 1
+    else:
+        exit_code = 0
     finally:
         try: os.unlink(properties_tmp)
         except Exception: pass
+    exit(exit_code)

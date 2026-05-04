@@ -1,8 +1,20 @@
 """
 Proccesed_Model_Properties.py
 Reads forma_model_properties.json from EXPORTS_DIR and produces:
-  1. forma_model_elements.json/csv  — physical building elements only
-  2. forma_model_report.json/csv    — model health summary + quality flags
+  forma_model_report.json/csv  — model health summary + quality flags
+
+Note: prior versions also produced a flat forma_model_elements.json/csv
+listing every physical building element. For models with hundreds of
+thousands of elements that file ran into multiple GB and couldn't be
+opened by Excel anyway. It's been removed in favour of the upcoming
+custom-report builder (where admins define their own schedules — pick
+fields, filter, group — exactly like a Revit schedule).
+
+Memory: this script no longer calls json.load() on the source file.
+For a Wynn-scale model the L3 JSON is ~10 GB; loading that into a
+Python list would crash the worker. Instead we stream-read objects
+one at a time using json.JSONDecoder.raw_decode and only retain the
+small report-shaped accumulators (counts, sets of link names).
 """
 
 import json
@@ -95,24 +107,96 @@ def is_real_workset(ws):
     return True
 
 
+# ── Streaming JSON reader ───────────────────────────────────────────────────
+# The L3 source file is a JSON array containing one object per element.
+# For Wynn-scale models that array has ~917k entries totalling ~10 GB on
+# disk. json.load() would materialise the whole thing as a Python list and
+# instantly OOM the worker. Instead we walk the file with raw_decode(),
+# yielding one parsed dict at a time — the parser only ever holds the bytes
+# of a single object plus a small lookahead buffer.
+#
+# Why a hand-rolled approach: ijson would be cleaner but adds a dependency
+# we'd need to install on Azure. raw_decode() ships with the stdlib and
+# handles all valid JSON shapes (nested objects, escaped strings, etc.)
+# correctly — we just have to feed it enough buffer to make progress.
+
+def iter_json_array(path, buf_size=1024 * 1024):
+    """Yield one parsed object at a time from a JSON file containing an array.
+
+    Works on any well-formed JSON array — does not require any specific
+    formatting (newlines, indentation, etc.). Uses json.JSONDecoder to do
+    the heavy lifting; we just manage the streaming buffer.
+    """
+    decoder = json.JSONDecoder()
+    with open(path, "r", encoding="utf-8") as f:
+        buf = ""
+        # Skip whitespace + leading '['
+        opened = False
+        while not opened:
+            chunk = f.read(buf_size)
+            if not chunk:
+                return  # empty file
+            buf += chunk
+            stripped = buf.lstrip()
+            if not stripped:
+                buf = ""
+                continue
+            if stripped[0] != "[":
+                raise ValueError("Source file is not a JSON array")
+            buf = stripped[1:]
+            opened = True
+
+        # Walk the buffer, decoding one object at a time. After each
+        # successful decode, skip the trailing comma (or whitespace before
+        # the closing ']').
+        while True:
+            buf = buf.lstrip()
+            if not buf:
+                chunk = f.read(buf_size)
+                if not chunk:
+                    return
+                buf += chunk
+                continue
+            if buf[0] == "]":
+                return  # end of array
+            if buf[0] == ",":
+                buf = buf[1:]
+                continue
+            try:
+                obj, idx = decoder.raw_decode(buf)
+                buf = buf[idx:]
+                yield obj
+            except json.JSONDecodeError:
+                # Need more data to complete the current object. Read more
+                # from the file; if EOF and we still can't parse, give up.
+                chunk = f.read(buf_size)
+                if not chunk:
+                    raise
+                buf += chunk
+
+
 if __name__ == "__main__":
     if not os.path.exists(RAW_FILE):
         print(f"[Forma] Source file not found: {RAW_FILE}")
         print("[Forma] Run Forma_GET_Model_Properties.py first to generate it.")
         exit(1)
 
-    print(f"Loading {RAW_FILE}...")
-    with open(RAW_FILE, "r", encoding="utf-8") as f:
-        raw_data = json.load(f)
-    print(f"  {len(raw_data):,} total objects loaded\n")
+    print(f"Reading {RAW_FILE} (streaming)…", flush=True)
+    file_size_mb = os.path.getsize(RAW_FILE) / (1024 * 1024)
+    print(f"  Size: {file_size_mb:,.1f} MB")
 
-    elements         = []
-    suspicious       = []
+    # Accumulators — these stay small regardless of source file size.
+    # We build the report from aggregated counts and a few sets of link
+    # names; we never retain the full element list.
+    total_objects    = 0
+    elements_count   = 0
+    suspicious       = []           # bounded: only flagged elements
     category_count   = defaultdict(int)
     level_count      = defaultdict(int)
     workset_count    = defaultdict(int)
     no_level_count   = defaultdict(int)
     demolished_count = defaultdict(int)
+    filtered_cat_count = defaultdict(int)   # ELEMENT_CATEGORIES only
     project_info     = {}
 
     cad_dwg   = set()
@@ -123,7 +207,15 @@ if __name__ == "__main__":
     pdf_files = set()
     img_files = set()
 
-    for obj in raw_data:
+    progress_step = 50000
+    next_dot      = progress_step
+
+    for obj in iter_json_array(RAW_FILE):
+        total_objects += 1
+        if total_objects >= next_dot:
+            print(".", end="", flush=True)
+            next_dot += progress_step
+
         category  = obj.get("Category", "None")
         cat_lower = category.lower()
         category_count[category] += 1
@@ -139,6 +231,7 @@ if __name__ == "__main__":
             workset_count[workset] += 1
 
         if category in ("Revit Document", "Revit Project Information"):
+            # Project info is a small dict — keeping the whole object is fine
             project_info = obj
 
         if category.startswith("Revit "):
@@ -155,7 +248,8 @@ if __name__ == "__main__":
                 rvt_links.add(file_name)
 
         if category in ELEMENT_CATEGORIES:
-            elements.append(obj)
+            elements_count += 1
+            filtered_cat_count[category] += 1
 
             if is_suspicious(obj):
                 suspicious.append({
@@ -172,31 +266,15 @@ if __name__ == "__main__":
             if phase and phase != "None":
                 demolished_count[category.replace("Revit ", "")] += 1
 
-    filtered_cat_count = defaultdict(int)
-    for obj in elements:
-        filtered_cat_count[obj.get("Category", "None")] += 1
+    print(f" {total_objects:,} objects scanned.")
+    print(f"Physical elements: {elements_count:,}")
+    print(f"Suspicious flags:  {len(suspicious):,}\n")
 
     total_views     = category_count.get("Revit View", 0) + category_count.get("Revit Views", 0)
     views_on_sheets = category_count.get("Revit Viewports", 0)
     real_worksets   = [ws for ws in workset_count if is_real_workset(ws)]
 
-    print(f"Physical elements: {len(elements):,}")
-    print(f"Suspicious flags:  {len(suspicious):,}\n")
-
-    elements_json = os.path.join(EXPORTS_DIR, "forma_model_elements.json")
-    with open(elements_json, "w", encoding="utf-8") as f:
-        json.dump(elements, f, indent=4)
-    print(f"Saved {elements_json}")
-
-    if elements:
-        all_keys = list(dict.fromkeys(k for e in elements for k in e.keys()))
-        elements_csv = os.path.join(EXPORTS_DIR, "forma_model_elements.csv")
-        with open(elements_csv, "w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=all_keys, extrasaction="ignore")
-            writer.writeheader()
-            writer.writerows(elements)
-        print(f"Saved {elements_csv}")
-
+    # ── Build report ───────────────────────────────────────────────────────
     report = []
 
     for metric, key in [
@@ -210,7 +288,7 @@ if __name__ == "__main__":
         report.append({"Section": "Project Info", "Metric": metric, "Value": project_info.get(key, "N/A")})
 
     for metric, value in [
-        ("Total Elements",           f"{len(elements):,}"),
+        ("Total Elements",           f"{elements_count:,}"),
         ("Levels",                   category_count.get("Revit Level", 0)),
         ("Grids",                    category_count.get("Revit Grids", 0)),
         ("Sheets",                   category_count.get("Revit Sheet", 0)),
@@ -292,7 +370,7 @@ if __name__ == "__main__":
     print(f"  Organization Desc:            {project_info.get('Organization Description', 'N/A')}")
     if project_info.get('Building Name'):
         print(f"  Building Name:                {project_info.get('Building Name')}")
-    print(f"  Total Elements:               {len(elements):,}")
+    print(f"  Total Elements:               {elements_count:,}")
     print(f"  Levels:                       {category_count.get('Revit Level', 0)}")
     print(f"  Sheets:                       {category_count.get('Revit Sheet', 0)}")
     print(f"  Total Views:                  {total_views}")
