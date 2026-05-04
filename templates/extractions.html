@@ -98,9 +98,15 @@
     </div>
     <div class="ext-model-bar" id="revizto-model-bar" style="display:none;">
         <span class="ctx-bar-label">Active Model</span>
-        <select id="reviztoModelSelect" onchange="saveReviztoModel()" class="model-select">
-            <option value="">— run Scenes &amp; Models first —</option>
-        </select>
+        <div class="searchable-select" id="reviztoModelSearchable">
+            <input type="text" class="ss-input" id="reviztoModelInput"
+                   placeholder="— select a model —" autocomplete="off"
+                   data-selected-id="" data-selected-name="">
+            <button type="button" class="ss-clear" id="reviztoModelClear" title="Clear" tabindex="-1">×</button>
+            <div class="ss-panel" id="reviztoModelPanel"></div>
+        </div>
+        <!-- legacy hidden select kept so saveReviztoModel can still read scene/model JSON -->
+        <select id="reviztoModelSelect" style="display:none;" onchange="saveReviztoModel()"></select>
     </div>
     <div class="ext-grid">
         <div class="extractor-card disabled" data-script="Revizto_GET_Object_Tree_With_Properties" data-level="3" data-platform="revizto">
@@ -201,9 +207,15 @@
     <div class="ext-model-bar" id="forma-model-bar" style="display:none;">
         <span class="ctx-bar-label">Active Model</span>
         <div style="display:flex; align-items:center; gap:8px; flex:1;">
-            <select id="formaModelSelect" onchange="saveModelToConfig()" class="model-select">
-                <option value="">— fetch models first —</option>
-            </select>
+            <div class="searchable-select" id="formaModelSearchable" style="flex:1;">
+                <input type="text" class="ss-input" id="formaModelInput"
+                       placeholder="— fetch models first —" autocomplete="off"
+                       data-selected-id="" data-selected-name="" disabled>
+                <button type="button" class="ss-clear" id="formaModelClear" title="Clear" tabindex="-1">×</button>
+                <div class="ss-panel" id="formaModelPanel"></div>
+            </div>
+            <!-- legacy hidden select kept so saveModelToConfig can still read id/name -->
+            <select id="formaModelSelect" style="display:none;" onchange="saveModelToConfig()"></select>
             <button class="btn btn-sm btn-secondary" onclick="fetchFormaModels(true)">
                 <svg id="fetchModelsIcon" xmlns="http://www.w3.org/2000/svg" width="11" height="11" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
@@ -249,6 +261,44 @@
 .ext-model-bar { background:white; border:1px solid var(--border-cream); border-radius:var(--radius-lg); padding:10px 16px; margin-bottom:12px; display:flex; align-items:center; gap:12px; }
 .ctx-bar-label { font-size:var(--fs-xs); text-transform:uppercase; letter-spacing:0.5px; color:var(--text-dark-muted); font-weight:600; white-space:nowrap; }
 .model-select { padding:5px 8px; border:1px solid var(--border-cream); border-radius:var(--radius); font-family:var(--font); font-size:var(--fs-xs); color:var(--text-dark); flex:1; min-width:200px; }
+
+/* ── Searchable model selector ─────────────────────────────────────────
+   Drop-in replacement for the native <select> on Forma + Revizto model
+   bars. The legacy <select> is kept hidden — the searchable component
+   syncs its value to it so existing save/event code keeps working. */
+.searchable-select { position:relative; flex:1; min-width:200px; }
+.ss-input {
+    width:100%; padding:5px 24px 5px 8px; border:1px solid var(--border-cream);
+    border-radius:var(--radius); font-family:var(--font); font-size:var(--fs-xs);
+    color:var(--text-dark); background:white; box-sizing:border-box;
+    transition:border-color .12s, box-shadow .12s;
+}
+.ss-input:focus { outline:none; border-color:var(--navy); box-shadow:0 0 0 2px rgba(11,37,69,0.08); }
+.ss-input:disabled { background:var(--cream-mid); color:var(--text-dark-muted); cursor:not-allowed; }
+.ss-clear {
+    position:absolute; top:50%; right:6px; transform:translateY(-50%);
+    background:none; border:none; cursor:pointer; padding:0 6px; line-height:1;
+    color:var(--text-dark-muted); font-size:14px; display:none;
+}
+.ss-clear:hover { color:var(--navy); }
+.searchable-select.has-value .ss-clear { display:block; }
+.ss-panel {
+    display:none; position:absolute; top:calc(100% + 4px); left:0; right:0;
+    z-index:30; background:white; border:1px solid var(--border-cream);
+    border-radius:var(--radius); box-shadow:0 6px 18px rgba(0,0,0,0.08);
+    max-height:280px; overflow-y:auto;
+}
+.searchable-select.open .ss-panel { display:block; }
+.ss-option {
+    padding:6px 10px; font-size:var(--fs-xs); color:var(--text-dark);
+    cursor:pointer; border-bottom:1px solid var(--border-cream);
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.ss-option:last-child { border-bottom:none; }
+.ss-option:hover, .ss-option.active { background:var(--cream-mid); color:var(--navy); }
+.ss-option.selected { background:rgba(11,37,69,0.06); font-weight:600; }
+.ss-empty { padding:10px; font-size:var(--fs-xs); color:var(--text-dark-muted); font-style:italic; text-align:center; }
+.ss-count { padding:5px 10px; font-size:9px; color:var(--text-dark-muted); text-transform:uppercase; letter-spacing:0.5px; border-bottom:1px solid var(--border-cream); background:var(--cream-mid); position:sticky; top:0; }
 .ext-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(260px, 1fr)); gap:12px; margin-bottom:4px; }
 .extractor-card { background:white; border-radius:var(--radius-lg); border:1px solid var(--border-cream); padding:14px 16px; box-shadow:var(--shadow); display:flex; flex-direction:column; gap:8px; transition:box-shadow var(--transition), opacity var(--transition); }
 .extractor-card:hover { box-shadow:var(--shadow-lg); }
@@ -445,16 +495,230 @@ async function loadActiveContext() {
     } catch(e) { console.error('Failed to load context', e); }
 }
 
+// ── Searchable model selector controller ──────────────────────────────────
+// Generic component: input + dropdown panel. Caller passes a list of
+// {id, name} objects via setItems(). Sorting + filtering happens here.
+// Selecting an option fires the onSelect callback with {id, name}.
+// The legacy hidden <select> is updated too so existing save logic
+// (which reads from .value / .options[selectedIndex]) keeps working.
+function makeSearchableSelect(opts) {
+    const root         = document.getElementById(opts.rootId);
+    const input        = document.getElementById(opts.inputId);
+    const panel        = document.getElementById(opts.panelId);
+    const clearBtn     = document.getElementById(opts.clearBtnId);
+    const legacySelect = document.getElementById(opts.legacySelectId);
+    const onSelect     = opts.onSelect || function(){};
+
+    let items = [];          // [{id, name, raw}]
+    let activeIdx = -1;      // keyboard highlight index
+
+    function sortItems(arr) {
+        return [...arr].sort((a, b) =>
+            a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+        );
+    }
+
+    function filterItems(query) {
+        const q = (query || '').trim().toLowerCase();
+        if (!q) return items;
+        const startsWith = [];
+        const contains   = [];
+        items.forEach(it => {
+            const n = it.name.toLowerCase();
+            if (n.startsWith(q)) startsWith.push(it);
+            else if (n.includes(q)) contains.push(it);
+        });
+        return [...startsWith, ...contains];
+    }
+
+    function escapeHtml(s) {
+        return String(s).replace(/[&<>"']/g, c => ({
+            '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+        }[c]));
+    }
+
+    function renderPanel(query) {
+        const filtered = filterItems(query);
+        activeIdx = -1;
+        if (filtered.length === 0) {
+            panel.innerHTML = `<div class="ss-empty">No matches</div>`;
+            return;
+        }
+        const selectedId = input.dataset.selectedId || '';
+        const head = `<div class="ss-count">${filtered.length} of ${items.length}</div>`;
+        const rows = filtered.map(it => `
+            <div class="ss-option ${it.id === selectedId ? 'selected' : ''}"
+                 data-id="${escapeHtml(it.id)}"
+                 data-name="${escapeHtml(it.name)}">${escapeHtml(it.name)}</div>
+        `).join('');
+        panel.innerHTML = head + rows;
+    }
+
+    function setSelected(id, name, fireCallback = true) {
+        input.dataset.selectedId = id || '';
+        input.dataset.selectedName = name || '';
+        input.value = name || '';
+        root.classList.toggle('has-value', !!id);
+        // Sync the hidden legacy <select> so existing code (saveModelToConfig,
+        // saveReviztoModel) keeps reading from it without changes.
+        if (legacySelect) {
+            legacySelect.innerHTML = '';
+            if (id) {
+                const opt = document.createElement('option');
+                opt.value = id;
+                opt.textContent = name;
+                opt.dataset.name = name;
+                opt.selected = true;
+                legacySelect.appendChild(opt);
+            }
+        }
+        if (fireCallback) onSelect({ id, name });
+    }
+
+    function open() {
+        renderPanel(input.value);
+        root.classList.add('open');
+    }
+    function close() { root.classList.remove('open'); }
+
+    // Input typing → re-filter the panel
+    input.addEventListener('input', () => {
+        // If the user is editing the field, the previous selection is no
+        // longer valid until they pick again. Clear it so downstream
+        // listeners (save endpoint, dependency-gating) don't think a
+        // stale model is still selected.
+        if (input.dataset.selectedId) {
+            input.dataset.selectedId = '';
+            input.dataset.selectedName = '';
+            root.classList.remove('has-value');
+            if (legacySelect) legacySelect.innerHTML = '';
+            onSelect({ id: '', name: '' });
+        }
+        renderPanel(input.value);
+        if (!root.classList.contains('open')) root.classList.add('open');
+    });
+
+    input.addEventListener('focus', () => {
+        if (items.length > 0) open();
+    });
+
+    // Click on a panel option
+    panel.addEventListener('mousedown', (ev) => {
+        const opt = ev.target.closest('.ss-option');
+        if (!opt) return;
+        ev.preventDefault();   // stop blur firing before we set the value
+        setSelected(opt.dataset.id, opt.dataset.name, true);
+        close();
+    });
+
+    // Keyboard nav
+    input.addEventListener('keydown', (ev) => {
+        const opts = panel.querySelectorAll('.ss-option');
+        if (ev.key === 'ArrowDown') {
+            ev.preventDefault();
+            if (!root.classList.contains('open')) open();
+            activeIdx = Math.min(activeIdx + 1, opts.length - 1);
+        } else if (ev.key === 'ArrowUp') {
+            ev.preventDefault();
+            activeIdx = Math.max(activeIdx - 1, 0);
+        } else if (ev.key === 'Enter') {
+            ev.preventDefault();
+            if (activeIdx >= 0 && opts[activeIdx]) {
+                setSelected(opts[activeIdx].dataset.id, opts[activeIdx].dataset.name, true);
+                close();
+            }
+        } else if (ev.key === 'Escape') {
+            close();
+        } else {
+            return;
+        }
+        opts.forEach((o, i) => o.classList.toggle('active', i === activeIdx));
+        if (activeIdx >= 0 && opts[activeIdx]) {
+            opts[activeIdx].scrollIntoView({ block: 'nearest' });
+        }
+    });
+
+    // Outside click closes the panel
+    document.addEventListener('mousedown', (ev) => {
+        if (!root.contains(ev.target)) close();
+    });
+
+    // Clear button
+    if (clearBtn) {
+        clearBtn.addEventListener('click', (ev) => {
+            ev.preventDefault();
+            setSelected('', '', true);
+            input.focus();
+            renderPanel('');
+            open();
+        });
+    }
+
+    return {
+        setItems(rawItems) {
+            items = sortItems((rawItems || []).map(r => ({ id: r.id, name: r.name, raw: r })));
+            // Refresh panel if it's currently open
+            if (root.classList.contains('open')) renderPanel(input.value);
+        },
+        setEnabled(enabled) {
+            input.disabled = !enabled;
+            input.placeholder = enabled ? '— select or type to search —' : '— fetch models first —';
+        },
+        select(id) {
+            const item = items.find(it => it.id === id);
+            if (item) setSelected(item.id, item.name, false);  // no callback (caller handles)
+            else setSelected('', '', false);
+        },
+        getSelected() {
+            return {
+                id: input.dataset.selectedId || '',
+                name: input.dataset.selectedName || '',
+            };
+        },
+        clear() { setSelected('', '', false); },
+    };
+}
+
+// Instances created on first use
+let _reviztoSS = null;
+let _formaSS = null;
+function getReviztoSS() {
+    if (!_reviztoSS) {
+        _reviztoSS = makeSearchableSelect({
+            rootId:         'reviztoModelSearchable',
+            inputId:        'reviztoModelInput',
+            panelId:        'reviztoModelPanel',
+            clearBtnId:     'reviztoModelClear',
+            legacySelectId: 'reviztoModelSelect',
+            onSelect:       () => saveReviztoModel(),
+        });
+    }
+    return _reviztoSS;
+}
+function getFormaSS() {
+    if (!_formaSS) {
+        _formaSS = makeSearchableSelect({
+            rootId:         'formaModelSearchable',
+            inputId:        'formaModelInput',
+            panelId:        'formaModelPanel',
+            clearBtnId:     'formaModelClear',
+            legacySelectId: 'formaModelSelect',
+            onSelect:       () => saveModelToConfig(),
+        });
+    }
+    return _formaSS;
+}
+
 // ── Revizto model selector — populated from scenes_models.csv after L2 run ──
 function populateReviztoModels(models) {
-    const sel = document.getElementById('reviztoModelSelect');
-    sel.innerHTML = '<option value="">— select a model —</option>';
-    models.forEach(m => {
-        const opt = document.createElement('option');
-        opt.value       = JSON.stringify({ sceneId: m.sceneReviztoId, modelId: m.modelReviztoId });
-        opt.textContent = m.modelName;
-        sel.appendChild(opt);
-    });
+    // Adapt the input rows to the {id, name} shape the searchable component
+    // expects. We encode the scene+model IDs as a JSON id string so that
+    // saveReviztoModel can decode them via JSON.parse(legacySelect.value).
+    const items = (models || []).map(m => ({
+        id:   JSON.stringify({ sceneId: m.sceneReviztoId, modelId: m.modelReviztoId }),
+        name: m.modelName,
+    }));
+    getReviztoSS().setItems(items);
     document.getElementById('revizto-model-bar').style.display = 'flex';
 }
 
@@ -479,8 +743,16 @@ function saveReviztoModel() {
 async function fetchFormaModels(force = false) {
     const icon = document.getElementById('fetchModelsIcon');
     icon.style.animation = 'spin 0.8s linear infinite';
-    const sel = document.getElementById('formaModelSelect');
-    sel.innerHTML = '<option value="">Fetching...</option>';
+    const ss    = getFormaSS();
+    const input = document.getElementById('formaModelInput');
+
+    // Disable input while fetching so the user can't type into a
+    // half-loaded list. Restored in finally.
+    ss.setEnabled(false);
+    input.placeholder = 'Fetching…';
+    ss.setItems([]);
+    ss.clear();
+
     try {
         const res  = await fetch('/api/forma/models', {
             method: 'POST',
@@ -488,23 +760,26 @@ async function fetchFormaModels(force = false) {
             body: JSON.stringify({ project_id: activeCtx.forma_project_id, force_refresh: force })
         });
         const data = await res.json();
-        if (data.error) { sel.innerHTML = `<option value="">${data.error}</option>`; return; }
-        sel.innerHTML = '<option value="">— select a model —</option>';
-        (data.models || []).forEach(m => {
-            const opt = document.createElement('option');
-            opt.value = m.id;
-            opt.textContent = m.name;
-            opt.dataset.name = m.name;
-            sel.appendChild(opt);
-        });
-        if (!data.models?.length) { sel.innerHTML = '<option value="">No models found</option>'; return; }
-        const cached = data.models.find(m => m.id === activeCtx.forma_model_item_id);
-        if (cached) sel.value = cached.id;
+        if (data.error) {
+            input.placeholder = data.error;
+            return;
+        }
+        const models = data.models || [];
+        if (!models.length) {
+            input.placeholder = 'No models found';
+            return;
+        }
+        ss.setEnabled(true);
+        ss.setItems(models.map(m => ({ id: m.id, name: m.name })));
+        // Restore previously selected model if it's still in the list
+        const cached = models.find(m => m.id === activeCtx.forma_model_item_id);
+        if (cached) ss.select(cached.id);
+        // Toggle L3 cards based on selection
         document.querySelectorAll('#tab-forma .extractor-card[data-level="3"]').forEach(c => {
-            c.classList.toggle('disabled', !sel.value);
+            c.classList.toggle('disabled', !ss.getSelected().id);
         });
     } catch(e) {
-        sel.innerHTML = '<option value="">Failed to fetch</option>';
+        input.placeholder = 'Failed to fetch';
         console.error(e);
     } finally {
         icon.style.animation = '';
