@@ -1172,6 +1172,28 @@ async def api_forma_models(request: Request, user: str = Depends(require_user)):
     if not top_folders:
         return JSONResponse({"models": [], "error": "No folders found in project."})
 
+    # Restrict the walk to folders whose name contains 'shared' (case-insensitive).
+    # This skips OO-EIR, 01-WIP, 03-PUBLISHED, etc. and stays inside any
+    # SHARED-prefixed top folders ('02 - SHARED', '04 - SHARED RESOURCES', ...).
+    # Doing this here (before the recursive walk) means we never even fetch
+    # the contents of irrelevant top folders, which is most of the cost.
+    shared_folders = [
+        f for f in top_folders
+        if "shared" in (f.get("attributes", {}).get("displayName", "") or "").lower()
+    ]
+    if not shared_folders:
+        return JSONResponse({
+            "models": [],
+            "error": "No SHARED top folder found in this project.",
+        })
+    skipped = [f.get("attributes", {}).get("displayName", "") for f in top_folders
+               if f not in shared_folders]
+    print(f"[Forma] Filtering to SHARED folders only. "
+          f"Walking {len(shared_folders)}: "
+          f"{[f.get('attributes', {}).get('displayName') for f in shared_folders]}. "
+          f"Skipping: {skipped}")
+    top_folders = shared_folders
+
     print(f"[Forma] Walking {len(top_folders)} top folder(s)...")
 
     MODEL_EXTS = {".rvt", ".ifc", ".nwc", ".nwd"}
