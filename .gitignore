@@ -19,6 +19,10 @@ morta_Admin.json
 morta_admin.json
 forma_models_cache.json
 forma_hub_users.json
+revizto_*.csv
+revizto_*.json
+forma_*.csv
+morta_*.csv
 
 # ── Per-user temp & exports ────────────────────────────────────────────────
 temp/
@@ -39,3 +43,7 @@ venv/
 # ── VS Code ───────────────────────────────────────────────────────────────
 .vscode/
 *.code-workspace
+revizto_project_roles*.json
+revizto_project_roles*.csv
+revizto_user_licenses*.json
+revizto_user_licenses*.csv
