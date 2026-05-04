@@ -27,6 +27,32 @@
 
 {% block head %}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<style>
+    /* ── Activity log overrides (scoped to home.html) ──────────────────
+       - Cap height at ~10 rows with internal scroll
+       - Widen the date column so the timestamp fits on one line
+       Base styles live in style.css; these only apply on this page. */
+    .cc-log {
+        max-height: 360px;             /* ~10 rows of 36px */
+        overflow-y: auto;
+        overflow-x: hidden;
+        padding-right: 4px;            /* breathing room for the scrollbar */
+    }
+    .cc-log-row {
+        grid-template-columns: 145px 56px 70px 1fr auto;
+    }
+    .cc-log-time {
+        white-space: nowrap;           /* one-line full timestamp */
+    }
+    /* Subtle scrollbar styling to match the terminal card */
+    .cc-log::-webkit-scrollbar { width: 6px; }
+    .cc-log::-webkit-scrollbar-track { background: transparent; }
+    .cc-log::-webkit-scrollbar-thumb {
+        background: rgba(255,255,255,0.08);
+        border-radius: 3px;
+    }
+    .cc-log::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.15); }
+</style>
 {% endblock %}
 
 {% block content %}
@@ -180,7 +206,6 @@
         </div>
         <div class="cc-log-footer">
             <span id="cc-activity-footer-count">awaiting first event</span>
-            <a href="/manage">view full log →</a>
         </div>
     </div>
 
@@ -714,7 +739,7 @@
 
     async function fetchActivity() {
         try {
-            const r = await fetch('/api/invite/log?limit=50', { credentials: 'same-origin' });
+            const r = await fetch('/api/invite/log?limit=100', { credentials: 'same-origin' });
             if (!r.ok) throw new Error(r.statusText);
             const data = await r.json();
             _activityCache = data.entries || [];
