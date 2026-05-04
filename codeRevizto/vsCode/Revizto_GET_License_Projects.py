@@ -42,22 +42,54 @@ def _root_dir() -> str:
     return os.path.abspath(os.path.join(this_dir, "..", ".."))
 
 
+def _safe_email(email: str) -> str:
+    """Mirror of the cockpit's _safe_email — convert email to filename-safe
+    segment. lowercase, @ -> _at_, . -> _ . Must match exactly so we read
+    the same files the cockpit writes.
+    """
+    return email.lower().replace("@", "_at_").replace(".", "_")
+
+
 def _read_region_token(region: str) -> str:
-    """Pull the access_token out of the region's token file. We deliberately
-    skip the refresh-or-reauth flow that Revizto_MasterScript.get_headers
-    runs — that flow is wired to ONE region at a time via TOKENS_FILE in
-    Revizto_Config. Re-implementing the dual-region refresh here would
-    duplicate logic; instead we trust whatever's currently saved and let
-    the API tell us via 401 if it's stale."""
-    path = os.path.join(_root_dir(), f"revizto_tokens_{region}.json")
-    if not os.path.exists(path):
-        return ""
-    try:
-        with open(path, "r") as f:
-            data = json.load(f)
-        return data.get("access_token", "") or ""
-    except (json.JSONDecodeError, OSError):
-        return ""
+    """Pull the access_token out of the region's token file.
+
+    The cockpit's runner writes per-admin token files (one per region per
+    logged-in admin) and exposes the running admin's email via the
+    COCKPIT_USER env var. For standalone / local-dev runs (no env var set),
+    we fall back to the legacy shared filename pattern.
+
+    Tried in order:
+      1. revizto_tokens_{region}_{safe(COCKPIT_USER)}.json   (cockpit runtime)
+      2. revizto_tokens_{region}.json                        (local dev)
+
+    We deliberately skip the refresh-or-reauth flow that
+    Revizto_MasterScript.get_headers runs — that flow is wired to ONE
+    region at a time via Revizto_Config.TOKENS_FILE. Re-implementing the
+    dual-region refresh here would duplicate logic; instead we trust
+    whatever's currently saved and let the API return 401 if it's stale.
+    """
+    root = _root_dir()
+    candidates = []
+
+    cockpit_user = os.environ.get("COCKPIT_USER", "").strip()
+    if cockpit_user:
+        candidates.append(os.path.join(
+            root, f"revizto_tokens_{region}_{_safe_email(cockpit_user)}.json"
+        ))
+    candidates.append(os.path.join(root, f"revizto_tokens_{region}.json"))
+
+    for path in candidates:
+        if not os.path.exists(path):
+            continue
+        try:
+            with open(path, "r") as f:
+                data = json.load(f)
+            tok = data.get("access_token", "") or ""
+            if tok:
+                return tok
+        except (json.JSONDecodeError, OSError):
+            continue
+    return ""
 
 
 def _list_licenses_for_region(region: str, token: str) -> list[dict]:
