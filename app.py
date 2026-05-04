@@ -3558,6 +3558,58 @@ def prepare_forma_3l_token(user: str, user_temp: Path) -> Path | None:
     return token_path
 
 
+def prepare_revizto_tokens(user: str, user_temp: Path) -> Path | None:
+    """Best-effort: stage the admin's per-region Revizto access tokens to
+    disk in the user's temp dir, so subprocess scripts that need to query
+    multiple Revizto regions in one run can find them without going
+    through Revizto_MasterScript (which is single-region by design).
+
+    Mirrors the Forma 3-legged pattern (prepare_forma_3l_token):
+
+      1. For each known region (dubai, ireland), call
+         revizto_get_token_for_region() — which reads from blob, refreshes
+         via refresh_token if needed, and falls back to access_code re-auth.
+         This is exactly the auth flow the cockpit's own Revizto API calls
+         use, so the token returned here is fresh and valid.
+      2. If a token is obtained, write it to
+         <user_temp>/_revizto_tokens_<region>.json with shape
+         {"access_token": "..."} — same shape multi-region scripts expect.
+      3. Skip regions where token acquisition fails (no access_code, expired
+         refresh, etc.) — the script will see the file missing and skip
+         that region with a clear log line.
+      4. Return the user_temp path if we wrote at least one file, else None.
+
+    The script picks up the directory via the COCKPIT_REVIZTO_TOKENS_DIR
+    env var. Single-region Revizto scripts (the older ones that go through
+    Revizto_MasterScript) are NOT affected — they continue to use whatever
+    auth flow they always used.
+    """
+    config = load_config(user)
+    wrote_any = False
+
+    for region in ("dubai", "ireland"):
+        try:
+            token = revizto_get_token_for_region(config, region, email=user)
+        except Exception as e:
+            print(f"[revizto-tokens] {region}: token fetch raised {type(e).__name__}: {e}")
+            continue
+        if not token:
+            # No access_code, refresh failed, or this region isn't configured
+            # for this admin. Move on quietly — the script will skip this
+            # region and report it via its own log line.
+            continue
+        token_path = user_temp / f"_revizto_tokens_{region}.json"
+        try:
+            with open(token_path, "w") as f:
+                json.dump({"access_token": token}, f)
+            wrote_any = True
+        except OSError as e:
+            print(f"[revizto-tokens] Failed to write {token_path.name}: {e}")
+            continue
+
+    return user_temp if wrote_any else None
+
+
 @app.get("/api/l4/status")
 async def api_l4_status(script: str, user: str = Depends(require_user)):
     """Tell the UI whether an L4 script is ready to run for the user's
@@ -3642,6 +3694,17 @@ async def api_extract(request: Request, user: str = Depends(require_user)):
     forma_3l_path = prepare_forma_3l_token(user, user_temp)
     if forma_3l_path:
         script_env["COCKPIT_FORMA_3L_TOKEN_FILE"] = str(forma_3l_path)
+
+    # Stage Revizto access tokens (per region) to disk for any script that
+    # needs to query multiple regions in one run. The cockpit's normal
+    # token storage is in blob (USE_BLOB), which subprocess scripts can't
+    # reach. prepare_revizto_tokens reads from blob, refreshes if needed,
+    # writes to user_temp, and returns the dir. Multi-region scripts pick
+    # up the dir via COCKPIT_REVIZTO_TOKENS_DIR. Single-region scripts
+    # (older ones using Revizto_MasterScript) are unaffected.
+    revizto_tokens_dir = prepare_revizto_tokens(user, user_temp)
+    if revizto_tokens_dir:
+        script_env["COCKPIT_REVIZTO_TOKENS_DIR"] = str(revizto_tokens_dir)
 
     # Snapshot existing files' mtimes BEFORE the run so we can identify
     # files that were actually created/modified by THIS extraction.
@@ -3802,6 +3865,10 @@ async def api_extract_stream(request: Request, user: str = Depends(require_user)
     forma_3l_path = prepare_forma_3l_token(user, user_temp)
     if forma_3l_path:
         script_env["COCKPIT_FORMA_3L_TOKEN_FILE"] = str(forma_3l_path)
+    # Same notes for Revizto multi-region token staging — see /api/extract.
+    revizto_tokens_dir = prepare_revizto_tokens(user, user_temp)
+    if revizto_tokens_dir:
+        script_env["COCKPIT_REVIZTO_TOKENS_DIR"] = str(revizto_tokens_dir)
 
     # Snapshot existing files' mtimes for the "files produced by this run"
     # filter (same logic as /api/extract).

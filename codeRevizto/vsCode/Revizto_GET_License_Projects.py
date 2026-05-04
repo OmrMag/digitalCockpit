@@ -51,31 +51,46 @@ def _safe_email(email: str) -> str:
 
 
 def _read_region_token(region: str) -> str:
-    """Pull the access_token out of the region's token file.
+    """Pull the access_token for a Revizto region.
 
-    The cockpit's runner writes per-admin token files (one per region per
-    logged-in admin) and exposes the running admin's email via the
-    COCKPIT_USER env var. For standalone / local-dev runs (no env var set),
-    we fall back to the legacy shared filename pattern.
+    Tries multiple locations in order, because the script needs to work
+    in three different runtime contexts:
 
-    Tried in order:
-      1. revizto_tokens_{region}_{safe(COCKPIT_USER)}.json   (cockpit runtime)
-      2. revizto_tokens_{region}.json                        (local dev)
+      1. Cockpit subprocess (Azure / blob storage): the cockpit's
+         prepare_revizto_tokens() helper has staged a per-region token
+         to <user_temp>/_revizto_tokens_<region>.json and exposed the
+         dir via COCKPIT_REVIZTO_TOKENS_DIR. Tokens come from blob,
+         refreshed via the cockpit's auth flow. THIS IS THE PRIMARY
+         PRODUCTION PATH.
 
-    We deliberately skip the refresh-or-reauth flow that
-    Revizto_MasterScript.get_headers runs — that flow is wired to ONE
-    region at a time via Revizto_Config.TOKENS_FILE. Re-implementing the
-    dual-region refresh here would duplicate logic; instead we trust
-    whatever's currently saved and let the API return 401 if it's stale.
+      2. Cockpit subprocess (legacy / no blob): per-admin token files
+         on local disk at <root>/revizto_tokens_<region>_<safe_email>.json.
+         COCKPIT_USER env var supplies the admin email. Used when the
+         cockpit is running without blob storage configured.
+
+      3. Local-dev / standalone run: legacy shared filename
+         <root>/revizto_tokens_<region>.json (no email suffix).
+
+    All three are consulted in order. The first one that yields a non-
+    empty access_token wins. If none works, returns empty string and the
+    caller skips the region with a clear log line.
     """
-    root = _root_dir()
     candidates = []
 
+    # 1. Cockpit-staged per-region token in user_temp (Azure / blob path)
+    staged_dir = os.environ.get("COCKPIT_REVIZTO_TOKENS_DIR", "").strip()
+    if staged_dir:
+        candidates.append(os.path.join(staged_dir, f"_revizto_tokens_{region}.json"))
+
+    # 2. Cockpit per-admin file on disk (no-blob fallback)
+    root = _root_dir()
     cockpit_user = os.environ.get("COCKPIT_USER", "").strip()
     if cockpit_user:
         candidates.append(os.path.join(
             root, f"revizto_tokens_{region}_{_safe_email(cockpit_user)}.json"
         ))
+
+    # 3. Local-dev / standalone shared file
     candidates.append(os.path.join(root, f"revizto_tokens_{region}.json"))
 
     for path in candidates:
