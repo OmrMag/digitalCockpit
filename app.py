@@ -1172,31 +1172,58 @@ async def api_forma_models(request: Request, user: str = Depends(require_user)):
     if not top_folders:
         return JSONResponse({"models": [], "error": "No folders found in project."})
 
-    # Restrict the walk to folders whose name contains 'shared' (case-insensitive).
-    # This skips OO-EIR, 01-WIP, 03-PUBLISHED, etc. and stays inside any
-    # SHARED-prefixed top folders ('02 - SHARED', '04 - SHARED RESOURCES', ...).
-    # Doing this here (before the recursive walk) means we never even fetch
-    # the contents of irrelevant top folders, which is most of the cost.
-    shared_folders = [
-        f for f in top_folders
-        if "shared" in (f.get("attributes", {}).get("displayName", "") or "").lower()
-    ]
+    MODEL_EXTS = {".rvt", ".ifc", ".nwc", ".nwd"}
+
+    def _name(folder):
+        return (folder.get("attributes", {}).get("displayName", "") or "")
+
+    def _has_shared_in_name(folder):
+        return "shared" in _name(folder).lower()
+
+    # ── Resolve the SHARED entry point ────────────────────────────────
+    # ACC's API returns whatever the project's "topFolders" are, which can
+    # be either the SHARED folders directly OR a wrapper folder ("Project
+    # Files") with the SHARED folders nested inside as children. Try the
+    # top level first; if nothing matches, descend one level into each
+    # wrapper and look at its children for SHARED-named folders.
+    shared_folders = [f for f in top_folders if _has_shared_in_name(f)]
+
+    if not shared_folders:
+        # Fallback: probe each top folder for SHARED-named immediate
+        # children. This is the path your Wynn project takes — Forma
+        # returns "Project Files" only at the top level.
+        print(f"[Forma] No SHARED at top level; descending into "
+              f"{[_name(f) for f in top_folders]} to look for SHARED children…")
+        for wrapper in top_folders:
+            wid    = wrapper.get("id")
+            wname  = _name(wrapper)
+            try:
+                r = http_requests.get(
+                    f"{base_url}/data/v1/projects/b.{project_id}/folders/{wid}/contents",
+                    headers=headers,
+                    params={"page[number]": 0, "page[limit]": 200},
+                    timeout=20,
+                )
+            except Exception as e:
+                print(f"[Forma] Timeout/error probing wrapper {wname}: {e}")
+                continue
+            if r.status_code != 200:
+                print(f"[Forma] Wrapper {wname} returned {r.status_code}")
+                continue
+            for child in (r.json().get("data") or []):
+                if child.get("type") != "folders":
+                    continue
+                if _has_shared_in_name(child):
+                    print(f"[Forma]   → matched child '{_name(child)}' under '{wname}'")
+                    shared_folders.append(child)
+
     if not shared_folders:
         return JSONResponse({
             "models": [],
-            "error": "No SHARED top folder found in this project.",
+            "error": "No SHARED folder found in this project (checked top level + one level down).",
         })
-    skipped = [f.get("attributes", {}).get("displayName", "") for f in top_folders
-               if f not in shared_folders]
-    print(f"[Forma] Filtering to SHARED folders only. "
-          f"Walking {len(shared_folders)}: "
-          f"{[f.get('attributes', {}).get('displayName') for f in shared_folders]}. "
-          f"Skipping: {skipped}")
-    top_folders = shared_folders
 
-    print(f"[Forma] Walking {len(top_folders)} top folder(s)...")
-
-    MODEL_EXTS = {".rvt", ".ifc", ".nwc", ".nwd"}
+    print(f"[Forma] SHARED entry points: {[_name(f) for f in shared_folders]}")
 
     def walk_all():
         found_models    = []
@@ -1241,7 +1268,7 @@ async def api_forma_models(request: Request, user: str = Depends(require_user)):
                     break
                 page += 1
 
-        for folder in top_folders:
+        for folder in shared_folders:
             fname = folder.get("attributes", {}).get("displayName", folder["id"])
             walk_folder(folder["id"], fname)
 

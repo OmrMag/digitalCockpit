@@ -4,12 +4,34 @@ import csv
 import os
 import time
 import gzip
+import tempfile
 
 from Forma_MasterScript import get_3legged_token as _get_3legged_token, get_token as get_2legged_token
 from Forma_Config import ACCOUNT_ID, PROJECT_ID, MODEL_ITEM_ID, MODEL_NAME, EXPORTS_DIR
 
 BASE_URL  = "https://developer.api.autodesk.com"
 INDEX_URL = f"{BASE_URL}/construction/index/v2"
+
+# ── Download tuning ─────────────────────────────────────────────────────────
+# CONNECT_TIMEOUT: how long to wait for the TCP/TLS handshake before giving up.
+# READ_TIMEOUT:    inactivity timeout — how long we'll wait between bytes
+#                  before assuming the connection is dead. The S3 download was
+#                  hanging silently for ~6 minutes before the cockpit's outer
+#                  layer killed it; with a per-chunk read timeout we detect
+#                  staleness ourselves and can retry cleanly.
+# CHUNK_SIZE:      bytes streamed per iteration. 1 MB strikes a balance
+#                  between memory footprint and syscall/loop overhead for
+#                  100MB+ properties files.
+# PROGRESS_EVERY:  print a dot every N MB so the cockpit terminal shows that
+#                  the download is alive without flooding the log.
+CONNECT_TIMEOUT = 30
+READ_TIMEOUT    = 60
+CHUNK_SIZE      = 1024 * 1024          # 1 MB
+PROGRESS_EVERY  = 5 * 1024 * 1024      # dot per 5 MB
+
+# Retry policy (conservative — 3 attempts, longer waits)
+RETRY_ATTEMPTS  = 3
+RETRY_BACKOFF   = [5, 15, 30]          # seconds before attempt 2, 3, 4
 
 
 def get_token():
@@ -25,7 +47,7 @@ def get_top_folders(project_id):
     token = get_token()
     url = f"{BASE_URL}/project/v1/hubs/b.{ACCOUNT_ID}/projects/b.{project_id}/topFolders"
     headers = {"Authorization": f"Bearer {token}"}
-    response = requests.get(url, headers=headers)
+    response = requests.get(url, headers=headers, timeout=(CONNECT_TIMEOUT, READ_TIMEOUT))
     if response.status_code == 200:
         return response.json().get("data", [])
     print(f"[Forma] Error getting top folders: {response.status_code} {response.text}")
@@ -40,7 +62,8 @@ def get_folder_contents(project_id, folder_id):
     page = 0
     while True:
         params = {"page[number]": page, "page[limit]": 200}
-        response = requests.get(url, headers=headers, params=params)
+        response = requests.get(url, headers=headers, params=params,
+                                timeout=(CONNECT_TIMEOUT, READ_TIMEOUT))
         if response.status_code == 200:
             data = response.json()
             batch = data.get("data", [])
@@ -78,7 +101,7 @@ def get_version_urn(project_id, item_id):
     token = get_token()
     url = f"{BASE_URL}/data/v1/projects/b.{project_id}/items/{item_id}"
     headers = {"Authorization": f"Bearer {token}"}
-    response = requests.get(url, headers=headers)
+    response = requests.get(url, headers=headers, timeout=(CONNECT_TIMEOUT, READ_TIMEOUT))
     if response.status_code == 200:
         return (response.json()
                         .get("data", {})
@@ -98,7 +121,8 @@ def get_index_id(project_id, version_urn):
         "Content-Type": "application/json",
     }
     body = {"versions": [{"versionUrn": version_urn}]}
-    response = requests.post(url, headers=headers, json=body)
+    response = requests.post(url, headers=headers, json=body,
+                             timeout=(CONNECT_TIMEOUT, READ_TIMEOUT))
     if response.status_code == 200:
         indexes = response.json().get("indexes", [])
         if indexes:
@@ -114,7 +138,8 @@ def poll_index(project_id, index_id):
 
     print("  Waiting for index to be ready", end="", flush=True)
     while True:
-        response = requests.get(url, headers=headers)
+        response = requests.get(url, headers=headers,
+                                timeout=(CONNECT_TIMEOUT, READ_TIMEOUT))
         if response.status_code == 200:
             data  = response.json()
             state = data.get("state")
@@ -128,42 +153,136 @@ def poll_index(project_id, index_id):
         time.sleep(5)
 
 
-def decompress_response(response):
-    try:
-        return gzip.decompress(response.content).decode("utf-8")
-    except:
-        return response.content.decode("utf-8")
+# ── Streaming downloader ────────────────────────────────────────────────────
+# The previous implementation used `requests.get(...).content` which loads
+# the full response into memory before returning. For a model with 3000+
+# fields the properties.ldjson.gz is large enough to either OOM the B1
+# Azure tier or stall long enough for an upstream proxy to drop the
+# connection. The mid-download "network error" you saw was almost certainly
+# a connection idle-timeout fired by Azure's outbound NAT / S3.
+#
+# This streamed version:
+#   - downloads to a temp file in CHUNK_SIZE pieces (constant memory)
+#   - per-chunk read_timeout means stalls fail fast, not after 6 minutes
+#   - retries the whole download up to RETRY_ATTEMPTS times with backoff
+#   - prints a dot per PROGRESS_EVERY bytes so it's obvious it's progressing
+#   - decompresses by line from the temp file using gzip.open() — keeps
+#     memory low even when the parsed list of objects ends up large
+
+def _stream_to_tempfile(url, headers, label):
+    """Stream `url` to a temp .gz file with retries; return the path.
+
+    Caller is responsible for deleting the temp file after parsing."""
+    last_err = None
+    for attempt in range(1, RETRY_ATTEMPTS + 1):
+        try:
+            with requests.get(url, headers=headers, stream=True, allow_redirects=True,
+                              timeout=(CONNECT_TIMEOUT, READ_TIMEOUT)) as response:
+                if response.status_code != 200:
+                    print(f"[Forma] Error downloading {label}: HTTP {response.status_code}")
+                    if 500 <= response.status_code < 600:
+                        # Server error → retry. Other codes (4xx) are unlikely
+                        # to fix themselves; bail out immediately.
+                        last_err = f"HTTP {response.status_code}"
+                        continue
+                    return None
+
+                total_bytes = int(response.headers.get("Content-Length", 0) or 0)
+                if total_bytes:
+                    print(f"  Size: {total_bytes / (1024*1024):.1f} MB", flush=True)
+                else:
+                    print(f"  Size: unknown (no Content-Length)", flush=True)
+
+                fd, tmp_path = tempfile.mkstemp(prefix="forma_", suffix=".gz")
+                bytes_written = 0
+                next_dot      = PROGRESS_EVERY
+                print("  Downloading", end="", flush=True)
+                try:
+                    with os.fdopen(fd, "wb") as out:
+                        for chunk in response.iter_content(chunk_size=CHUNK_SIZE):
+                            if not chunk:
+                                continue
+                            out.write(chunk)
+                            bytes_written += len(chunk)
+                            while bytes_written >= next_dot:
+                                print(".", end="", flush=True)
+                                next_dot += PROGRESS_EVERY
+                    print(f" done ({bytes_written / (1024*1024):.1f} MB)")
+                    return tmp_path
+                except Exception as e:
+                    # Partial download — clean up the temp file so we don't
+                    # leak it on the worker, then fall through to retry.
+                    try: os.unlink(tmp_path)
+                    except Exception: pass
+                    raise
+        except (requests.exceptions.RequestException,
+                requests.exceptions.ChunkedEncodingError,
+                requests.exceptions.ConnectionError,
+                requests.exceptions.ReadTimeout) as e:
+            last_err = f"{type(e).__name__}: {e}"
+            print(f"\n  ✗ Attempt {attempt}/{RETRY_ATTEMPTS} failed: {last_err}", flush=True)
+
+        if attempt < RETRY_ATTEMPTS:
+            wait = RETRY_BACKOFF[min(attempt - 1, len(RETRY_BACKOFF) - 1)]
+            print(f"  Retrying in {wait}s...", flush=True)
+            time.sleep(wait)
+
+    print(f"[Forma] All {RETRY_ATTEMPTS} download attempts failed for {label}. Last error: {last_err}")
+    return None
+
+
+def _read_gzipped_ndjson_file(path):
+    """Yield decoded lines from a .gz file or a plain text file."""
+    # Try gzipped first; if magic bytes don't match, fall back to plain text.
+    with open(path, "rb") as probe:
+        magic = probe.read(2)
+    is_gz = (magic == b"\x1f\x8b")
+    opener = (lambda p: gzip.open(p, "rt", encoding="utf-8")) if is_gz else \
+             (lambda p: open(p, "r", encoding="utf-8"))
+    with opener(path) as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                yield line
 
 
 def download_fields(fields_url, token):
     is_s3 = "s3.amazonaws.com" in fields_url
     headers = {} if is_s3 else {"Authorization": f"Bearer {token}"}
-    response = requests.get(fields_url, headers=headers, allow_redirects=True)
-    if response.status_code == 200:
-        content = decompress_response(response)
-        fields = {}
-        for line in content.strip().splitlines():
-            if line:
+    tmp_path = _stream_to_tempfile(fields_url, headers, "fields")
+    if not tmp_path:
+        return {}
+    fields = {}
+    try:
+        for line in _read_gzipped_ndjson_file(tmp_path):
+            try:
                 field = json.loads(line)
                 fields[field["key"]] = field.get("name", field["key"])
-        return fields
-    print(f"[Forma] Error downloading fields: {response.status_code}")
-    return {}
+            except (json.JSONDecodeError, KeyError):
+                continue
+    finally:
+        try: os.unlink(tmp_path)
+        except Exception: pass
+    return fields
 
 
 def download_properties(properties_url, token):
     is_s3 = "s3.amazonaws.com" in properties_url
     headers = {} if is_s3 else {"Authorization": f"Bearer {token}"}
-    response = requests.get(properties_url, headers=headers, allow_redirects=True)
-    if response.status_code == 200:
-        content = decompress_response(response)
-        objects = []
-        for line in content.strip().splitlines():
-            if line:
+    tmp_path = _stream_to_tempfile(properties_url, headers, "properties")
+    if not tmp_path:
+        return []
+    objects = []
+    try:
+        for line in _read_gzipped_ndjson_file(tmp_path):
+            try:
                 objects.append(json.loads(line))
-        return objects
-    print(f"[Forma] Error downloading properties: {response.status_code} {response.text}")
-    return []
+            except json.JSONDecodeError:
+                continue
+    finally:
+        try: os.unlink(tmp_path)
+        except Exception: pass
+    return objects
 
 
 if __name__ == "__main__":
@@ -219,10 +338,14 @@ if __name__ == "__main__":
     fields = download_fields(fields_url, token)
     print(f"  {len(fields)} fields found")
 
-    print(f"Properties URL: {properties_url}")
+    print(f"\nProperties URL: {properties_url}")
     print("Downloading properties...")
     objects = download_properties(properties_url, token)
     print(f"  {len(objects)} objects found\n")
+
+    if not objects:
+        print("[Forma] No properties downloaded — aborting before file write.")
+        exit(1)
 
     all_rows = []
     for obj in objects:
