@@ -59,3 +59,6 @@ forma_hub_users*.csv
 forma_account_projects*.csv
 forma_account_projects*.json
 user_cache.json
+
+SESSION_REFERENCE.md
+*.code-workspace
