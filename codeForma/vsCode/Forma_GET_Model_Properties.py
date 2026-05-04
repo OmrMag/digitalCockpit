@@ -266,23 +266,47 @@ def download_fields(fields_url, token):
     return fields
 
 
-def download_properties(properties_url, token):
+def download_properties_to_file(properties_url, token):
+    """Download the properties ndjson to a local temp file and return its path.
+
+    Returns None on failure. Caller is responsible for deleting the file.
+
+    Note: we deliberately do NOT parse into a list here. For models with
+    thousands of fields the decompressed ndjson can be several hundred MB,
+    and turning that into a Python list of dicts blows past the B1 tier's
+    1.75 GB RAM. Callers should iterate the file with
+    _read_gzipped_ndjson_file() instead.
+    """
     is_s3 = "s3.amazonaws.com" in properties_url
     headers = {} if is_s3 else {"Authorization": f"Bearer {token}"}
-    tmp_path = _stream_to_tempfile(properties_url, headers, "properties")
+    return _stream_to_tempfile(properties_url, headers, "properties")
+
+
+def _build_row(obj, fields):
+    """Convert one parsed properties object into a flat row dict."""
+    row = {
+        "lmvId":      obj.get("lmvId"),
+        "externalId": obj.get("externalId"),
+    }
+    for key, value in (obj.get("props") or {}).items():
+        row[fields.get(key, key)] = value
+    return row
+
+
+# Backward-compat shim — kept so any other caller of download_properties
+# continues working. Internally it now reads from disk and parses lazily.
+def download_properties(properties_url, token):
+    """Compat wrapper. Prefer download_properties_to_file + streaming reads
+    for large models — this materialises the entire list in RAM."""
+    tmp_path = download_properties_to_file(properties_url, token)
     if not tmp_path:
         return []
-    objects = []
     try:
-        for line in _read_gzipped_ndjson_file(tmp_path):
-            try:
-                objects.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
+        return [json.loads(line) for line in _read_gzipped_ndjson_file(tmp_path)
+                if line]
     finally:
         try: os.unlink(tmp_path)
         except Exception: pass
-    return objects
 
 
 if __name__ == "__main__":
@@ -340,40 +364,95 @@ if __name__ == "__main__":
 
     print(f"\nProperties URL: {properties_url}")
     print("Downloading properties...")
-    objects = download_properties(properties_url, token)
-    print(f"  {len(objects)} objects found\n")
-
-    if not objects:
+    properties_tmp = download_properties_to_file(properties_url, token)
+    if not properties_tmp:
         print("[Forma] No properties downloaded — aborting before file write.")
         exit(1)
 
-    all_rows = []
-    for obj in objects:
-        row = {
-            "lmvId":      obj.get("lmvId"),
-            "externalId": obj.get("externalId"),
-        }
-        props = obj.get("props", {})
-        for key, value in props.items():
-            field_name = fields.get(key, key)
-            row[field_name] = value
-        all_rows.append(row)
-
+    # ── Streaming write ────────────────────────────────────────────────
+    # We make two passes over the ndjson temp file instead of loading it
+    # into a Python list. The previous single-pass approach worked for
+    # small models but blew past the B1 tier's 1.75 GB RAM ceiling on the
+    # Wynn properties dump (~915 MB decompressed). Memory used here is
+    # bounded by the fieldname set plus one in-flight row.
+    #
+    # Pass 1: stream JSON to disk and accumulate the union of fieldnames
+    #         needed for the CSV header.
+    # Pass 2: stream CSV using the header from pass 1.
     json_path = os.path.join(EXPORTS_DIR, "forma_model_properties.json")
-    with open(json_path, "w") as f:
-        json.dump(all_rows, f, indent=4)
-    print(f"Saved {json_path}")
+    csv_path  = os.path.join(EXPORTS_DIR, "forma_model_properties.csv")
 
-    if all_rows:
-        all_keys = []
-        for row in all_rows:
-            for key in row.keys():
-                if key not in all_keys:
-                    all_keys.append(key)
+    print("Pass 1/2 — writing JSON, collecting fieldnames…", flush=True)
+    fieldnames_seen = []      # preserve insertion order (matches original behaviour)
+    fieldnames_set  = set()
+    row_count       = 0
+    bad_lines       = 0
+    progress_step   = 5000    # one dot per N rows
+    next_dot        = progress_step
 
-        csv_path = os.path.join(EXPORTS_DIR, "forma_model_properties.csv")
-        with open(csv_path, "w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=all_keys, extrasaction="ignore")
+    try:
+        with open(json_path, "w", encoding="utf-8") as jf:
+            jf.write("[")
+            first = True
+            for line in _read_gzipped_ndjson_file(properties_tmp):
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    bad_lines += 1
+                    continue
+                row = _build_row(obj, fields)
+                # Track fieldname order without storing rows
+                for k in row.keys():
+                    if k not in fieldnames_set:
+                        fieldnames_set.add(k)
+                        fieldnames_seen.append(k)
+                # Stream JSON
+                if not first:
+                    jf.write(",\n    ")
+                else:
+                    jf.write("\n    ")
+                    first = False
+                json.dump(row, jf)
+                row_count += 1
+                if row_count >= next_dot:
+                    print(".", end="", flush=True)
+                    next_dot += progress_step
+            jf.write("\n]\n")
+        print(f" {row_count} rows. ({bad_lines} bad lines skipped)" if bad_lines else f" {row_count} rows.")
+        print(f"Saved {json_path}")
+    except Exception as e:
+        print(f"[Forma] JSON write failed: {e}")
+        try: os.unlink(properties_tmp)
+        except Exception: pass
+        exit(1)
+
+    if row_count == 0:
+        print("[Forma] No rows written — skipping CSV.")
+        try: os.unlink(properties_tmp)
+        except Exception: pass
+        exit(0)
+
+    print(f"Pass 2/2 — writing CSV ({len(fieldnames_seen)} columns)…", flush=True)
+    next_dot = progress_step
+    written  = 0
+    try:
+        with open(csv_path, "w", newline="", encoding="utf-8") as cf:
+            writer = csv.DictWriter(cf, fieldnames=fieldnames_seen, extrasaction="ignore")
             writer.writeheader()
-            writer.writerows(all_rows)
+            for line in _read_gzipped_ndjson_file(properties_tmp):
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                writer.writerow(_build_row(obj, fields))
+                written += 1
+                if written >= next_dot:
+                    print(".", end="", flush=True)
+                    next_dot += progress_step
+        print(f" {written} rows.")
         print(f"Saved {csv_path}")
+    except Exception as e:
+        print(f"[Forma] CSV write failed: {e}")
+    finally:
+        try: os.unlink(properties_tmp)
+        except Exception: pass
