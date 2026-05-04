@@ -47,3 +47,8 @@ revizto_project_roles*.json
 revizto_project_roles*.csv
 revizto_user_licenses*.json
 revizto_user_licenses*.csv
+
+morta_members*.csv
+morta_members*.json
+morta_tags*.csv
+morta_tags*.json
