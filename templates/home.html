@@ -579,16 +579,69 @@
 
     function classifyEntry(entry) {
         // Determines which tab(s) an entry belongs to.
-        // Currently invite_log only contains invite events, but the
-        // structure is ready for syncs and alerts when we add them.
+        // Backend writes a `type` field for non-invite events. Legacy
+        // entries (no `type`) are invites, identified by mode=single|bulk.
+        const t = entry.type;
+        if (t === 'extraction')      return 'syncs';
+        if (t === 'metadata_sync')   return 'syncs';
+        if (t === 'package_bake')    return 'syncs';
+        if (t === 'registry_edit')   return 'alerts';
+        if (t === 'portal_decision') return 'invites';
+        // Legacy invite entries have no type — fall back to mode check
         if (entry.mode === 'single' || entry.mode === 'bulk') return 'invites';
         if (entry.kind === 'sync') return 'syncs';
         if (entry.kind === 'alert' || entry.kind === 'error') return 'alerts';
         return 'other';
     }
 
+    function entryLabel(entry) {
+        // Short uppercase label rendered in the kind cell.
+        // Invites keep their existing classifyEntry label ('INVITES');
+        // other types get a more specific tag.
+        const t = entry.type;
+        if (t === 'extraction')      return 'EXTRACT';
+        if (t === 'metadata_sync')   return 'SYNC';
+        if (t === 'package_bake')    return 'BAKE';
+        if (t === 'registry_edit')   return 'REGISTRY';
+        if (t === 'portal_decision') return 'PORTAL';
+        return classifyEntry(entry).toUpperCase();
+    }
+
+    function entryMessage(entry) {
+        // The middle "msg" cell — varies by event type.
+        const t = entry.type;
+        if (t === 'extraction')      return `${entry.script || 'extraction'} · ${entry.file_count || 0} file(s)`;
+        if (t === 'metadata_sync')   return entry.scope === 'batch'
+                                          ? `batch sync · ${entry.project_count || 0} project(s)`
+                                          : `single sync`;
+        if (t === 'package_bake')    return `${entry.label || entry.script || 'package'}`;
+        if (t === 'registry_edit')   return `${entry.action || 'edit'} · ${entry.project_name || ''}`;
+        if (t === 'portal_decision') return `processed ${entry.user_count || 0} · ✓${entry.success || 0} ✗${entry.errors || 0}`;
+        // Default (invite): show invitee email
+        return entry.email || '';
+    }
+
     function entryStatus(entry) {
-        // Roll up the three platform statuses into one pill state.
+        // Roll up status into one pill state.
+        // For new typed events, use the explicit `status` field or
+        // success/error counts. For legacy invite events, roll up the
+        // three platform statuses.
+        const t = entry.type;
+        if (t === 'extraction') {
+            return entry.status === 'success' ? 'success' : 'error';
+        }
+        if (t === 'metadata_sync' || t === 'package_bake' || t === 'registry_edit') {
+            return 'success';
+        }
+        if (t === 'portal_decision') {
+            const s = entry.success || 0;
+            const e = entry.errors || 0;
+            if (e === 0 && s > 0) return 'success';
+            if (s > 0 && e > 0) return 'partial';
+            if (e > 0) return 'error';
+            return 'pending';
+        }
+        // Legacy invite roll-up across the three platform statuses
         const statuses = ['morta_status', 'revizto_status', 'forma_status']
             .map(k => entry[k])
             .filter(s => s && s !== 'skipped');
@@ -626,16 +679,27 @@
         log.innerHTML = filtered.map(e => {
             const kind = classifyEntry(e);
             const status = entryStatus(e);
-            const platforms = ['morta', 'revizto', 'forma']
-                .filter(p => e[p + '_status'] && e[p + '_status'] !== 'skipped');
-            const platTag = platforms.length === 1 ? platforms[0] : 'all';
-            const platLabel = platforms.length === 1 ? platforms[0] : 'cross';
+            // Platform tag: derive from typed event's `platform` field, or
+            // roll up the legacy invite per-platform statuses.
+            let platTag, platLabel;
+            if (e.type && e.platform) {
+                platTag = e.platform;
+                platLabel = e.platform;
+            } else if (e.type) {
+                platTag = 'all';
+                platLabel = 'cross';
+            } else {
+                const platforms = ['morta', 'revizto', 'forma']
+                    .filter(p => e[p + '_status'] && e[p + '_status'] !== 'skipped');
+                platTag = platforms.length === 1 ? platforms[0] : 'all';
+                platLabel = platforms.length === 1 ? platforms[0] : 'cross';
+            }
             return `
                 <div class="cc-log-row cc-log-row--${status}">
                     <span class="cc-log-time">${escapeHtml(e.date || '')}</span>
-                    <span class="cc-log-kind cc-log-kind--${kind}">${kind.toUpperCase()}</span>
+                    <span class="cc-log-kind cc-log-kind--${kind}">${escapeHtml(entryLabel(e))}</span>
                     <span class="cc-log-plat cc-log-plat--${platTag}">[${platLabel}]</span>
-                    <span class="cc-log-msg">${escapeHtml(e.email || '')}</span>
+                    <span class="cc-log-msg">${escapeHtml(entryMessage(e))}</span>
                     <span class="cc-log-delta">${escapeHtml(e.project_key || '')}</span>
                 </div>`;
         }).join('');

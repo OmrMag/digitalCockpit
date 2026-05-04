@@ -657,6 +657,35 @@ def append_invite_log(entries):
     log.extend(entries)
     save_invite_log(log)
 
+
+def append_activity(event_type: str,
+                    project_key: str = None,
+                    actor: str = None,
+                    **fields):
+    """Append a non-invite event to the shared activity log.
+
+    The log file is still invite_log.json (kept for backward-compat) but
+    entries now carry a `type` field so the feed can render different
+    event kinds. Existing invite entries have no `type` field — readers
+    treat that as type='invite'.
+
+    event_type: one of 'extraction', 'registry_edit', 'metadata_sync',
+                'package_bake', 'portal_decision'. (Invite events
+                continue to be written by the existing invite-log code
+                path with no `type` field, so they're implicitly typed.)
+    project_key: registry key the event is scoped to (None = global)
+    actor:       email of the admin who triggered the event
+    **fields:    event-specific extra data (status, counts, detail, etc.)
+    """
+    entry = {
+        "type":        event_type,
+        "date":        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "project_key": project_key,
+        "actor":       actor,
+    }
+    entry.update(fields)
+    append_invite_log([entry])
+
 # ---------------------------------------------------------------------------
 # Per-user temp directory  (extraction outputs, session-scoped, 24h TTL)
 # ---------------------------------------------------------------------------
@@ -2441,6 +2470,10 @@ async def api_pending_process(project_key: str, sub_idx: int, request: Request, 
         data[project_key]["submissions"][sub_idx]["users"] = users
     _save_portal_requests(data)
 
+    append_activity("portal_decision", project_key=project_key, actor=user,
+                    sub_idx=sub_idx, success=success, errors=errors, rejected=rejected,
+                    user_count=len(users))
+
     return JSONResponse({"success": success, "errors": errors, "rejected": rejected})
 
 
@@ -2500,6 +2533,8 @@ async def api_registry_create(request: Request, user: str = Depends(require_owne
         "admins": [a.strip().lower() for a in body.get("admins", "").split(",") if a.strip()],
     }
     save_registry(registry)
+    append_activity("registry_edit", project_key=key, actor=user,
+                    action="create", project_name=registry[key]["name"])
     return JSONResponse({"status": "ok", "key": key})
 
 @app.put("/api/registry/project/{key}")
@@ -2519,14 +2554,19 @@ async def api_registry_update(key: str, request: Request, user: str = Depends(re
         "admins": [a.strip().lower() for a in body.get("admins", "").split(",") if a.strip()],
     })
     save_registry(registry)
+    append_activity("registry_edit", project_key=key, actor=user,
+                    action="update", project_name=registry[key]["name"])
     return JSONResponse({"status": "ok"})
 
 @app.delete("/api/registry/project/{key}")
 async def api_registry_delete(key: str, user: str = Depends(require_owner)):
     registry = load_registry()
     if key in registry:
+        deleted_name = registry[key].get("name", key)
         del registry[key]
         save_registry(registry)
+        append_activity("registry_edit", project_key=key, actor=user,
+                        action="delete", project_name=deleted_name)
     return JSONResponse({"status": "ok"})
 
 
@@ -2542,6 +2582,9 @@ async def api_registry_sync(key: str, request: Request, user: str = Depends(requ
 
     results = _sync_project_metadata(user, key, registry)
     save_registry(registry)
+    append_activity("metadata_sync", project_key=key, actor=user,
+                    scope="single", project_name=registry[key].get("name", key),
+                    synced=results)
     return JSONResponse({"status": "ok", "synced": results})
 
 
@@ -2590,6 +2633,8 @@ async def api_registry_sync_mine(request: Request, user: str = Depends(require_u
             }
 
     save_registry(registry)
+    append_activity("metadata_sync", project_key=None, actor=user,
+                    scope="batch", project_count=len(keys))
     return JSONResponse({
         "status":      "ok",
         "project_count": len(keys),
@@ -3757,6 +3802,21 @@ async def api_extract(request: Request, user: str = Depends(require_user)):
             except Exception as e:
                 print(f"[l4] Failed to stamp L3 run for {script_name}: {e}")
 
+        # Log the extraction event to the activity feed
+        try:
+            cfg_ctx = (load_config(user).get("active_context") or {})
+            append_activity(
+                "extraction",
+                project_key=cfg_ctx.get("active_project_key"),
+                actor=user,
+                script=script_name,
+                platform=platform_key,
+                status="success" if ok else "error",
+                file_count=len(files),
+            )
+        except Exception:
+            pass  # never block the response on logging
+
         return JSONResponse({
             "status":  "success" if ok else "error",
             "message": "Extraction complete." if ok else f"Script exited with code {result.returncode}.",
@@ -3997,6 +4057,21 @@ async def api_extract_stream(request: Request, user: str = Depends(require_user)
                     _stamp_l3_run(user, script_name, [f["filename"] for f in files])
                 except Exception as e:
                     print(f"[l4] Failed to stamp L3 run for {script_name}: {e}")
+
+            # Log the extraction event to the activity feed
+            try:
+                cfg_ctx = (load_config(user).get("active_context") or {})
+                append_activity(
+                    "extraction",
+                    project_key=cfg_ctx.get("active_project_key"),
+                    actor=user,
+                    script=script_name,
+                    platform=platform_key,
+                    status="success" if ok else "error",
+                    file_count=len(files),
+                )
+            except Exception:
+                pass  # never block the stream on logging
 
             done_payload = json.dumps({
                 "status":  "success" if ok else "error",
@@ -4445,6 +4520,10 @@ async def api_bake(request: Request, user: str = Depends(require_user)):
     index = load_packages_index()
     index[pkg_id] = pkg_entry
     save_packages_index(index)
+
+    append_activity("package_bake", project_key=project_key or None, actor=user,
+                    pkg_id=pkg_id, platform=platform, script=script, label=label,
+                    file_count=len(file_meta))
 
     return JSONResponse({"status": "ok", "pkg_id": pkg_id, "expires_at": expires_at})
 
@@ -5494,12 +5573,19 @@ async def api_exports_read(filename: str, user: str = Depends(require_user)):
 async def api_invite_log(
     project_key: str = None,
     limit: int = 50,
+    type: str = None,
     user: str = Depends(require_user)
 ):
-    """Return invite log entries scoped to the user's registry projects.
+    """Return activity log entries scoped to the user's registry projects.
 
     project_key: if provided, filter to that specific project only.
     limit: max entries to return (most recent first), default 50.
+    type:  filter by event type. Supported values:
+           - 'invite'  → invite events only (entries with no `type` field
+                         are treated as invites for backward-compat)
+           - 'extraction', 'registry_edit', 'metadata_sync',
+             'package_bake', 'portal_decision' → match exactly
+           - None (default) → all event types
     """
     log           = load_invite_log()
     user_projects = get_user_projects(user)
@@ -5512,6 +5598,13 @@ async def api_invite_log(
     # If a specific project is selected, filter to that project only
     if project_key:
         log = [e for e in log if e.get("project_key") == project_key]
+
+    # Filter by event type (invites are entries without an explicit type)
+    if type:
+        if type == "invite":
+            log = [e for e in log if not e.get("type")]
+        else:
+            log = [e for e in log if e.get("type") == type]
 
     # Most recent first, capped at limit
     log = log[-limit:][::-1]

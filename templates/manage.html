@@ -1519,7 +1519,7 @@ async function loadInviteLog(projectKey) {
     body.innerHTML = `<div style="padding:16px;text-align:center;color:var(--text-dark-muted);font-size:var(--fs-xs);">Loading...</div>`;
 
     try {
-        const res  = await fetch(`/api/invite/log?project_key=${encodeURIComponent(projectKey)}`);
+        const res  = await fetch(`/api/invite/log?project_key=${encodeURIComponent(projectKey)}&type=invite`);
         const data = await res.json();
         const entries = data.entries || [];
 
