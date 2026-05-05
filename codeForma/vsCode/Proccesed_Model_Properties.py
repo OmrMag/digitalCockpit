@@ -401,13 +401,18 @@ if __name__ == "__main__":
             report.append({"Section": "Project Info", "Metric": m, "Value": "N/A"})
 
     if project_base_point:
-        report.append({"Section": "Project Info", "Metric": "Angle to True North",
-                       "Value": project_base_point.get("Angle to True North", "N/A")})
+        report.append({"Section": "Project Info", "Metric": "Project Base Point E/W",
+                       "Value": project_base_point.get("E/W", "N/A")})
+        report.append({"Section": "Project Info", "Metric": "Project Base Point N/S",
+                       "Value": project_base_point.get("N/S", "N/A")})
         report.append({"Section": "Project Info", "Metric": "Project Base Point Elevation",
                        "Value": project_base_point.get("Elev", "N/A")})
+        report.append({"Section": "Project Info", "Metric": "Angle to True North",
+                       "Value": project_base_point.get("Angle to True North", "N/A")})
     else:
-        report.append({"Section": "Project Info", "Metric": "Angle to True North",       "Value": "N/A"})
-        report.append({"Section": "Project Info", "Metric": "Project Base Point Elevation","Value": "N/A"})
+        for m in ("Project Base Point E/W", "Project Base Point N/S",
+                  "Project Base Point Elevation", "Angle to True North"):
+            report.append({"Section": "Project Info", "Metric": m, "Value": "N/A"})
 
     for metric, value in [
         ("Total Element Count (raw)", f"{raw_counts.get('total_objects', 0):,}"),
@@ -535,6 +540,9 @@ if __name__ == "__main__":
         print(f"  Survey Point N/S:             {survey_point.get('N/S', 'N/A')}")
         print(f"  Survey Point Elev:            {survey_point.get('Elev', 'N/A')}")
     if project_base_point:
+        print(f"  Project Base Point E/W:       {project_base_point.get('E/W', 'N/A')}")
+        print(f"  Project Base Point N/S:       {project_base_point.get('N/S', 'N/A')}")
+        print(f"  Project Base Point Elev:      {project_base_point.get('Elev', 'N/A')}")
         print(f"  Angle to True North:          {project_base_point.get('Angle to True North', 'N/A')}")
     print(f"  Total Element Count (raw):    {raw_counts.get('total_objects', 0):,}")
     print(f"  Total Elements:               {elements_count:,}")
