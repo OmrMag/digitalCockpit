@@ -3,7 +3,7 @@
 {% block title %}Scheduler — Digital Construction Cockpit{% endblock %}
 
 {% block page_title %}Scheduler{% endblock %}
-{% block page_subtitle %}Automate script execution on a schedule{% endblock %}
+{% block page_subtitle %}Build shards, group them into compilers, run on schedule{% endblock %}
 
 {% block content %}
 <style>
@@ -11,22 +11,55 @@
 .sched-card-header{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid var(--border-cream)}
 .sched-card-title{font-size:var(--fs-xs);font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--text-dark-muted)}
 .sched-card-body{padding:20px}
-#view-empty{display:flex;align-items:center;justify-content:space-between;gap:16px}
+
+.tab-strip{display:flex;gap:2px;border-bottom:1px solid var(--border-cream);margin-bottom:18px}
+.tab-btn{padding:9px 18px;background:transparent;border:none;border-bottom:2px solid transparent;color:var(--text-dark-muted);font-size:var(--fs-sm);font-weight:600;cursor:pointer;font-family:var(--font);transition:all .12s;position:relative;top:1px}
+.tab-btn:hover{color:var(--navy)}
+.tab-btn.active{color:var(--accent);border-bottom-color:var(--accent)}
+.tab-btn .tab-count{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;margin-left:6px;border-radius:9px;background:rgba(0,0,0,.06);font-size:10px;font-weight:700;color:var(--text-dark-muted)}
+.tab-btn.active .tab-count{background:rgba(74,158,255,.12);color:var(--accent)}
+
+.pane{display:none}
+.pane.active{display:block}
+
+.empty-state{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:36px 20px;text-align:center;gap:10px}
 .empty-text{font-size:var(--fs-sm);color:var(--text-dark-muted)}
-#view-list{display:none}
-.auto-row{display:flex;align-items:center;gap:12px;padding:11px 14px;border:1px solid var(--border-cream);border-radius:var(--radius);margin-bottom:8px;cursor:pointer;transition:border-color .13s}
+
+.auto-row{display:flex;align-items:center;gap:12px;padding:11px 14px;border:1px solid var(--border-cream);border-radius:var(--radius);margin-bottom:8px;transition:border-color .13s}
 .auto-row:last-child{margin-bottom:0}
 .auto-row:hover{border-color:var(--accent)}
 .auto-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;background:var(--success)}
 .auto-dot.paused{background:var(--cream-dark)}
-.auto-row-name{flex:1;font-size:var(--fs-sm);font-weight:600;color:var(--navy);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
-.auto-row-meta{font-size:var(--fs-xs);color:var(--text-dark-muted);flex-shrink:0}
+.auto-dot.disabled{background:var(--error)}
+.auto-row-name{font-size:var(--fs-sm);font-weight:600;color:var(--navy);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.auto-row-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.auto-row-meta{font-size:var(--fs-xs);color:var(--text-dark-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .auto-row-actions{display:flex;gap:4px;flex-shrink:0}
 .icon-btn{width:28px;height:28px;border-radius:var(--radius);border:1px solid var(--border-cream);background:transparent;color:var(--text-dark-muted);display:flex;align-items:center;justify-content:center;cursor:pointer;transition:all .12s}
 .icon-btn svg{width:13px;height:13px}
 .icon-btn:hover{border-color:var(--accent);color:var(--accent)}
 .icon-btn.del:hover{border-color:var(--error);color:var(--error)}
-#view-builder{display:none}
+.icon-btn:disabled{opacity:.4;cursor:not-allowed}
+.icon-btn:disabled:hover{border-color:var(--border-cream);color:var(--text-dark-muted)}
+
+.compiler-card{border:1px solid var(--border-cream);border-radius:var(--radius);padding:13px 16px;margin-bottom:10px;transition:border-color .13s}
+.compiler-card:last-child{margin-bottom:0}
+.compiler-card:hover{border-color:var(--accent)}
+.compiler-head{display:flex;align-items:center;gap:12px}
+.compiler-shards{margin-top:11px;padding-top:11px;border-top:1px dashed var(--border-cream)}
+.compiler-shards-title{font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--text-dark-muted);margin-bottom:8px}
+.cs-item{display:flex;align-items:center;gap:10px;padding:7px 11px;background:rgba(248,250,252,.7);border-radius:var(--radius);margin-bottom:5px;font-size:var(--fs-xs)}
+.cs-item:last-child{margin-bottom:0}
+.cs-item .auto-dot{width:6px;height:6px}
+.cs-item-name{flex:1;font-weight:600;color:var(--navy);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.cs-item-meta{color:var(--text-dark-muted);flex-shrink:0}
+.cs-item .icon-btn{width:22px;height:22px}
+.cs-item .icon-btn svg{width:11px;height:11px}
+.cs-empty{font-size:var(--fs-xs);color:var(--text-dark-muted);font-style:italic;padding:7px 11px}
+.btn-add-shard{display:inline-flex;align-items:center;gap:5px;margin-top:7px;padding:5px 11px;border-radius:var(--radius);border:1px dashed var(--border-cream);background:transparent;color:var(--text-dark-muted);font-size:var(--fs-xs);font-weight:600;cursor:pointer;font-family:var(--font);transition:all .12s}
+.btn-add-shard:hover{color:var(--accent);border-color:var(--accent)}
+.btn-add-shard svg{width:11px;height:11px}
+
 .builder-back{display:inline-flex;align-items:center;gap:7px;background:none;border:none;color:var(--text-dark-muted);font-size:var(--fs-sm);font-weight:600;cursor:pointer;padding:0;margin-bottom:18px;font-family:var(--font);transition:color .12s}
 .builder-back:hover{color:var(--navy)}
 .builder-back svg{width:14px;height:14px}
@@ -34,14 +67,6 @@
 .builder-name-input{flex:1;background:transparent;border:none;border-bottom:1.5px solid var(--border-cream);border-radius:0;padding:3px 2px;font-size:var(--fs-md);font-weight:700;color:var(--navy);outline:none;font-family:var(--font);transition:border-color .12s}
 .builder-name-input::placeholder{color:var(--text-dark-muted);font-weight:400}
 .builder-name-input:focus{border-color:var(--accent)}
-.step-track{display:flex;align-items:center;margin-bottom:20px}
-.step-node{display:flex;flex-direction:column;align-items:center;gap:4px;flex-shrink:0}
-.step-circle{width:26px;height:26px;border-radius:50%;border:1.5px solid var(--border-cream);background:#fff;display:flex;align-items:center;justify-content:center;font-size:var(--fs-xs);font-weight:700;color:var(--text-dark-muted);transition:all .2s}
-.step-circle.active{border-color:var(--accent);background:rgba(74,158,255,.08);color:var(--accent)}
-.step-circle.done{border-color:var(--success);background:rgba(52,211,153,.09);color:#16a34a}
-.step-label{font-size:9px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--text-dark-muted);white-space:nowrap}
-.step-line{flex:1;height:1px;background:var(--border-cream);margin:0 6px;margin-bottom:18px;transition:background .3s}
-.step-line.done{background:rgba(52,211,153,.45)}
 .b-block{border:1px solid var(--border-cream);border-radius:var(--radius);overflow:hidden}
 .b-block-head{display:flex;align-items:center;gap:8px;padding:9px 14px;background:rgba(0,0,0,.018);border-bottom:1px solid var(--border-cream)}
 .b-num{width:20px;height:20px;border-radius:50%;background:rgba(74,158,255,.08);border:1px solid rgba(74,158,255,.2);display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;color:var(--accent);flex-shrink:0}
@@ -49,11 +74,14 @@
 .b-body{padding:13px 14px}
 .b-connector{display:flex;justify-content:center;height:16px}
 .b-connector::before{content:'';width:1px;height:100%;background:var(--border-cream)}
-.f{margin-bottom:11px}.f:last-child{margin-bottom:0}.f.two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+
+.f{margin-bottom:11px}.f:last-child{margin-bottom:0}
+.f.two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .f-label{display:block;font-size:var(--fs-xs);font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--text-dark-muted);margin-bottom:5px}
 .f-select,.f-input{width:100%;background:rgba(248,250,252,1);border:1px solid var(--border-cream);border-radius:var(--radius);padding:7px 10px;font-size:var(--fs-sm);color:var(--navy);outline:none;font-family:var(--font);transition:border-color .12s;appearance:none;-webkit-appearance:none;box-sizing:border-box}
 .f-select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%2364748b' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 9px center;padding-right:26px;cursor:pointer}
 .f-select:focus,.f-input:focus{border-color:var(--accent)}
+.f-help{font-size:11px;color:var(--text-dark-muted);margin-top:4px;line-height:1.4}
 .chip-row{display:flex;gap:5px;flex-wrap:wrap}
 .chip{padding:4px 10px;border-radius:20px;border:1px solid var(--border-cream);background:rgba(248,250,252,1);font-size:var(--fs-xs);font-weight:600;color:var(--text-dark-muted);cursor:pointer;user-select:none;transition:all .11s}
 .chip:hover{border-color:var(--accent);color:var(--accent)}
@@ -62,136 +90,1023 @@
 .fmt-opt{flex:1;border:1px solid var(--border-cream);border-radius:var(--radius);padding:8px 10px;background:rgba(248,250,252,1);cursor:pointer;display:flex;align-items:center;gap:6px;font-size:var(--fs-sm);font-weight:600;color:var(--text-dark-muted);transition:all .11s}
 .fmt-opt:hover{border-color:var(--accent)}
 .fmt-opt.on{border-color:var(--accent);background:rgba(74,158,255,.06);color:var(--accent)}
-.fmt-opt svg{width:14px;height:14px;flex-shrink:0}
-.dest-row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-.dest-card{border:1px solid var(--border-cream);border-radius:7px;padding:11px 12px;background:rgba(248,250,252,1);cursor:pointer;transition:all .11s;display:flex;align-items:center;gap:10px}
+.dest-row{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.dest-card{border:1px solid var(--border-cream);border-radius:7px;padding:11px 12px;background:rgba(248,250,252,1);cursor:pointer;transition:all .11s;display:flex;align-items:center;gap:10px;position:relative}
 .dest-card:hover{border-color:var(--accent)}
 .dest-card.on{border-color:var(--accent);background:rgba(74,158,255,.06)}
+.dest-card.disabled{opacity:.5;cursor:not-allowed}
+.dest-card.disabled:hover{border-color:var(--border-cream)}
 .dest-card svg{width:18px;height:18px;flex-shrink:0;color:var(--text-dark-muted)}
 .dest-card.on svg{color:var(--accent)}
 .dest-card-label{font-size:var(--fs-sm);font-weight:600;color:var(--text-dark-muted)}
 .dest-card.on .dest-card-label{color:var(--accent)}
 .dest-card-sub{font-size:var(--fs-xs);color:var(--text-dark-muted);margin-top:1px}
+.coming-soon-pill{position:absolute;top:5px;right:7px;font-size:8px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--text-dark-muted);background:rgba(0,0,0,.04);padding:2px 6px;border-radius:9px}
 .cond{display:none}.cond.show{display:block}
-.radio-row{display:flex;gap:7px}
-.radio-opt{flex:1;border:1px solid var(--border-cream);border-radius:var(--radius);padding:7px 10px;background:rgba(248,250,252,1);cursor:pointer;display:flex;align-items:center;gap:7px;font-size:var(--fs-xs);font-weight:600;color:var(--text-dark-muted);transition:all .11s}
-.radio-opt:hover{border-color:var(--accent)}
-.radio-opt.on{border-color:var(--accent);background:rgba(74,158,255,.06);color:var(--accent)}
-.radio-dot{width:13px;height:13px;border-radius:50%;border:1.5px solid currentColor;display:flex;align-items:center;justify-content:center;flex-shrink:0}
-.radio-opt.on .radio-dot::after{content:'';width:5px;height:5px;border-radius:50%;background:var(--accent)}
-.day-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-top:5px}
+
+.day-grid,.month-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-top:5px}
 .day-cell,.month-cell{height:27px;border-radius:5px;border:1px solid var(--border-cream);background:rgba(248,250,252,1);font-size:9px;font-weight:700;color:var(--text-dark-muted);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .1s}
 .day-cell:hover,.month-cell:hover{border-color:var(--accent)}
 .day-cell.on,.month-cell.on{background:rgba(74,158,255,.08);border-color:var(--accent);color:var(--accent)}
-.month-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-top:5px}
+
 .builder-footer{display:flex;justify-content:flex-end;gap:8px;margin-top:18px;padding-top:16px;border-top:1px solid var(--border-cream)}
 .btn-ghost{padding:7px 16px;border-radius:7px;border:1px solid var(--border-cream);background:transparent;color:var(--text-dark-muted);font-size:var(--fs-sm);font-weight:600;cursor:pointer;font-family:var(--font);transition:all .11s}
 .btn-ghost:hover{color:var(--navy);border-color:#94a3b8}
 .btn-save{padding:7px 18px;border-radius:7px;border:none;background:var(--accent);color:#fff;font-size:var(--fs-sm);font-weight:700;cursor:pointer;font-family:var(--font);display:flex;align-items:center;gap:6px;transition:opacity .11s}
 .btn-save:hover{opacity:.88}
+.btn-save:disabled{opacity:.5;cursor:not-allowed}
 .btn-save svg{width:14px;height:14px}
+.btn-new-hdr{display:none;align-items:center;gap:5px;padding:5px 12px;border-radius:var(--radius);border:1px solid var(--accent);background:transparent;color:var(--accent);font-size:var(--fs-xs);font-weight:700;cursor:pointer;font-family:var(--font);transition:all .11s}
+.btn-new-hdr.on{display:inline-flex}
+.btn-new-hdr:hover{background:rgba(74,158,255,.07)}
+.btn-new-hdr svg{width:11px;height:11px}
 .btn-new-sm{display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:7px;border:1px solid var(--accent);background:transparent;color:var(--accent);font-size:var(--fs-sm);font-weight:700;cursor:pointer;font-family:var(--font);transition:all .11s;white-space:nowrap}
 .btn-new-sm:hover{background:rgba(74,158,255,.07)}
 .btn-new-sm svg{width:12px;height:12px}
-.btn-new-hdr{display:none;align-items:center;gap:5px;padding:5px 12px;border-radius:var(--radius);border:1px solid var(--accent);background:transparent;color:var(--accent);font-size:var(--fs-xs);font-weight:700;cursor:pointer;font-family:var(--font);transition:all .11s}
-.btn-new-hdr:hover{background:rgba(74,158,255,.07)}
-.btn-new-hdr svg{width:11px;height:11px}
-#s-toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%) translateY(50px);background:var(--navy);color:var(--success);border-radius:var(--radius);padding:9px 18px;font-size:var(--fs-sm);font-weight:600;opacity:0;transition:all .25s ease;z-index:999;pointer-events:none;white-space:nowrap}
+
+.run-status{font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;padding:2px 7px;border-radius:9px;flex-shrink:0}
+.run-status.success{background:rgba(34,197,94,.1);color:#16a34a}
+.run-status.failed{background:rgba(239,68,68,.1);color:#dc2626}
+.run-status.partial{background:rgba(234,179,8,.13);color:#a16207}
+.run-status.running{background:rgba(74,158,255,.1);color:var(--accent)}
+
+.disabled-pill{display:inline-flex;align-items:center;font-size:9px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;padding:2px 7px;border-radius:9px;background:rgba(239,68,68,.1);color:#dc2626;margin-left:6px}
+
+.modal-backdrop{display:none;position:fixed;inset:0;background:rgba(15,30,55,.45);z-index:998;backdrop-filter:blur(2px)}
+.modal-backdrop.show{display:flex;align-items:center;justify-content:center}
+.modal-panel{background:#fff;border-radius:var(--radius-lg);width:min(540px,92vw);max-height:80vh;overflow:hidden;display:flex;flex-direction:column}
+.modal-head{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid var(--border-cream)}
+.modal-title{font-size:var(--fs-md);font-weight:700;color:var(--navy)}
+.modal-close{background:none;border:none;cursor:pointer;color:var(--text-dark-muted);padding:4px}
+.modal-close svg{width:16px;height:16px}
+.modal-body{padding:14px 20px;overflow-y:auto;flex:1}
+.modal-foot{padding:12px 20px;border-top:1px solid var(--border-cream);display:flex;justify-content:flex-end;gap:8px}
+.picker-item{display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid var(--border-cream);border-radius:var(--radius);margin-bottom:6px;cursor:pointer;transition:all .12s}
+.picker-item:hover{border-color:var(--accent)}
+.picker-item.selected{border-color:var(--accent);background:rgba(74,158,255,.05)}
+.picker-checkbox{width:16px;height:16px;border-radius:4px;border:1.5px solid var(--border-cream);display:flex;align-items:center;justify-content:center;flex-shrink:0;background:#fff}
+.picker-item.selected .picker-checkbox{border-color:var(--accent);background:var(--accent)}
+.picker-checkbox svg{width:11px;height:11px;color:#fff;display:none}
+.picker-item.selected .picker-checkbox svg{display:block}
+.picker-name{flex:1;font-size:var(--fs-sm);font-weight:600;color:var(--navy)}
+.picker-meta{font-size:var(--fs-xs);color:var(--text-dark-muted)}
+
+#s-toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%) translateY(50px);background:var(--navy);color:var(--success);border-radius:var(--radius);padding:9px 18px;font-size:var(--fs-sm);font-weight:600;opacity:0;transition:all .25s ease;z-index:9999;pointer-events:none;white-space:nowrap;max-width:90vw;text-align:center}
 #s-toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+#s-toast.error{color:#ff8a80}
 </style>
 
 <div class="sched-card">
   <div class="sched-card-header">
-    <span class="sched-card-title">Automations</span>
-    <button class="btn-new-hdr" id="btn-new-hdr" onclick="sOpen(null)"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/></svg>New</button>
+    <span class="sched-card-title">Scheduler</span>
+    <button class="btn-new-hdr on" id="btn-new-hdr"></button>
   </div>
   <div class="sched-card-body">
-    <div id="view-empty"><span class="empty-text">No automations yet.</span><button class="btn-new-sm" onclick="sOpen(null)"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/></svg>Create automation</button></div>
-    <div id="view-list"><div id="s-list-items"></div></div>
-    <div id="view-builder">
-      <div class="builder-top"><button class="builder-back" onclick="sBack()"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18"/></svg>Back</button><input class="builder-name-input" id="s-name" type="text" placeholder="Automation name…" maxlength="60"/></div>
-      <div class="step-track"><div class="step-node"><div class="step-circle active" id="sc1">1</div><div class="step-label">Source</div></div><div class="step-line" id="sl1"></div><div class="step-node"><div class="step-circle" id="sc2">2</div><div class="step-label">Schedule</div></div><div class="step-line" id="sl2"></div><div class="step-node"><div class="step-circle" id="sc3">3</div><div class="step-label">Output</div></div><div class="step-line" id="sl3"></div><div class="step-node"><div class="step-circle" id="sc4">4</div><div class="step-label">Destination</div></div></div>
-      <div class="b-block"><div class="b-block-head"><div class="b-num">1</div><span class="b-title">Data source</span></div><div class="b-body"><div class="f"><label class="f-label">Platform</label><select class="f-select" id="s-platform" onchange="sPlatChange()"><option value="">— select platform —</option><option value="forma">Autodesk Forma / ACC</option><option value="revizto">Revizto</option><option value="morta">Morta</option></select></div><div id="src-forma" class="cond"><div class="f two"><div><label class="f-label">Script</label><select class="f-select"><option>Model properties</option><option>Issues export</option><option>RFI export</option><option>Project members</option></select></div><div><label class="f-label">Project</label><select class="f-select" id="s-forma-proj"><option value="">Loading…</option></select></div></div></div><div id="src-revizto" class="cond"><div class="f two"><div><label class="f-label">Script</label><select class="f-select"><option>Issues export</option><option>License members</option><option>Projects list</option></select></div><div><label class="f-label">Project (optional)</label><select class="f-select" id="s-rev-proj"><option value="">All / license-level</option></select></div></div></div><div id="src-morta" class="cond"><div class="f"><label class="f-label">Script</label><select class="f-select"><option>Hub members export</option><option>Member tags export</option></select></div></div></div></div>
+    <div id="view-list">
+      <div class="tab-strip">
+        <button class="tab-btn active" data-tab="shards" onclick="switchTab('shards')">Shards <span class="tab-count" id="cnt-shards">0</span></button>
+        <button class="tab-btn" data-tab="compilers" onclick="switchTab('compilers')">Compilers <span class="tab-count" id="cnt-compilers">0</span></button>
+        <button class="tab-btn" data-tab="runs" onclick="switchTab('runs')">Recent runs <span class="tab-count" id="cnt-runs">0</span></button>
+      </div>
+
+      <!-- Shards pane -->
+      <div class="pane active" id="pane-shards">
+        <div id="shards-empty" class="empty-state">
+          <span class="empty-text">No shards yet. Create one to define a runnable extraction.</span>
+          <button class="btn-new-sm" onclick="openShardBuilder(null)"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/></svg>New shard</button>
+        </div>
+        <div id="shards-list"></div>
+      </div>
+
+      <!-- Compilers pane -->
+      <div class="pane" id="pane-compilers">
+        <div id="compilers-empty" class="empty-state">
+          <span class="empty-text">No compilers yet. Group shards under a compiler to schedule them.</span>
+          <button class="btn-new-sm" onclick="openCompilerBuilder(null)"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/></svg>New compiler</button>
+        </div>
+        <div id="compilers-list"></div>
+      </div>
+
+      <!-- Runs pane -->
+      <div class="pane" id="pane-runs">
+        <div id="runs-empty" class="empty-state">
+          <span class="empty-text">No runs yet. Runs appear here once "Run now" is wired up (coming next).</span>
+        </div>
+        <div id="runs-list"></div>
+      </div>
+    </div>
+
+    <!-- Shard builder (in-place) -->
+    <div id="view-shard-builder" style="display:none">
+      <div class="builder-top">
+        <button class="builder-back" onclick="backToList()"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18"/></svg>Back</button>
+        <input class="builder-name-input" id="sb-name" type="text" placeholder="Shard name…" maxlength="100"/>
+      </div>
+
+      <div class="b-block">
+        <div class="b-block-head"><div class="b-num">1</div><span class="b-title">Source</span></div>
+        <div class="b-body">
+          <div class="f"><label class="f-label">Platform</label>
+            <select class="f-select" id="sb-platform" onchange="sbPlatChange()">
+              <option value="">— select platform —</option>
+              <option value="forma">Autodesk Forma / ACC</option>
+              <option value="revizto">Revizto</option>
+              <option value="morta">Morta</option>
+            </select>
+          </div>
+          <div class="f cond" id="sb-script-row">
+            <label class="f-label">Script</label>
+            <select class="f-select" id="sb-script" onchange="sbScriptChange()">
+              <option value="">— select script —</option>
+            </select>
+            <div class="f-help" id="sb-script-help"></div>
+          </div>
+          <div class="f cond" id="sb-project-row">
+            <label class="f-label" id="sb-project-label">Project</label>
+            <select class="f-select" id="sb-project" onchange="sbProjectChange()">
+              <option value="">Loading…</option>
+            </select>
+          </div>
+          <div class="f cond" id="sb-model-row">
+            <label class="f-label">Model</label>
+            <select class="f-select" id="sb-model">
+              <option value="">— select project first —</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
       <div class="b-connector"></div>
-      <div class="b-block"><div class="b-block-head"><div class="b-num">2</div><span class="b-title">Schedule</span></div><div class="b-body"><div class="f"><label class="f-label">Frequency</label><select class="f-select" id="s-freq" onchange="sFreqChange()"><option value="daily">Every day</option><option value="weekdays">Weekdays only (Mon–Fri)</option><option value="weekend">Weekends only (Sat–Sun)</option><option value="weekly">Specific days of the week</option><option value="monthly">Specific days of the month</option></select></div><div id="freq-weekly" class="cond f"><label class="f-label">Days of week</label><div class="day-grid"><div class="day-cell" onclick="this.classList.toggle('on')">MON</div><div class="day-cell" onclick="this.classList.toggle('on')">TUE</div><div class="day-cell" onclick="this.classList.toggle('on')">WED</div><div class="day-cell" onclick="this.classList.toggle('on')">THU</div><div class="day-cell" onclick="this.classList.toggle('on')">FRI</div><div class="day-cell" onclick="this.classList.toggle('on')">SAT</div><div class="day-cell" onclick="this.classList.toggle('on')">SUN</div></div></div><div id="freq-monthly" class="cond f"><label class="f-label">Days of month</label><div class="month-grid" id="s-month-grid"></div></div><div class="f two"><div><label class="f-label">Time</label><input class="f-input" type="time" id="s-time" value="06:00"/></div><div><label class="f-label">Timezone</label><select class="f-select" id="s-tz"><option value="UTC">UTC</option><option value="Europe/London">London</option><option value="Europe/Dublin">Dublin</option><option value="Europe/Paris">Paris (CET)</option><option value="Asia/Dubai" selected>Dubai (GST)</option><option value="America/New_York">New York (ET)</option><option value="America/Los_Angeles">LA (PT)</option><option value="Australia/Sydney">Sydney (AEST)</option></select></div></div></div></div>
+
+      <div class="b-block">
+        <div class="b-block-head"><div class="b-num">2</div><span class="b-title">Output</span></div>
+        <div class="b-body">
+          <div class="f"><label class="f-label">Format</label>
+            <div class="fmt-row">
+              <div class="fmt-opt on" data-fmt="json" onclick="sbSetFmt('json')">JSON</div>
+              <div class="fmt-opt" data-fmt="csv" onclick="sbSetFmt('csv')">CSV</div>
+              <div class="fmt-opt" data-fmt="xlsx" onclick="sbSetFmt('xlsx')">XLSX</div>
+            </div>
+          </div>
+          <div class="f"><label class="f-label">File prefix (optional)</label>
+            <input class="f-input" type="text" id="sb-prefix" placeholder="e.g. wynn_l4_" maxlength="40"/>
+          </div>
+          <div class="f"><label class="f-label">Naming options</label>
+            <div class="chip-row">
+              <div class="chip on" data-naming="append_date" onclick="this.classList.toggle('on')">append date</div>
+              <div class="chip" data-naming="append_time" onclick="this.classList.toggle('on')">append time</div>
+              <div class="chip" data-naming="include_project_name" onclick="this.classList.toggle('on')">include project name</div>
+              <div class="chip" data-naming="overwrite_latest" onclick="this.classList.toggle('on')">overwrite latest</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div class="b-connector"></div>
-      <div class="b-block"><div class="b-block-head"><div class="b-num">3</div><span class="b-title">Output format</span></div><div class="b-body"><div class="f"><label class="f-label">Format</label><div class="fmt-row"><div class="fmt-opt on" id="fmt-csv" onclick="sFmt('csv')"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M3.375 19.5h17.25m-17.25 0a1.125 1.125 0 01-1.125-1.125M3.375 19.5h1.5C5.496 19.5 6 18.996 6 18.375m-3.75.125v-.375a1.125 1.125 0 011.125-1.125h14.25a1.125 1.125 0 011.125 1.125v.375M6 18.375V7.875m0 0A1.875 1.875 0 017.875 6h8.25A1.875 1.875 0 0118 7.875v10.5"/></svg>CSV</div><div class="fmt-opt" id="fmt-json" onclick="sFmt('json')"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M14.25 9.75L16.5 12l-2.25 2.25m-4.5 0L7.5 12l2.25-2.25M6 20.25h12A2.25 2.25 0 0020.25 18V6A2.25 2.25 0 0018 3.75H6A2.25 2.25 0 003.75 6v12A2.25 2.25 0 006 20.25z"/></svg>JSON</div><div class="fmt-opt" id="fmt-xlsx" onclick="sFmt('xlsx')"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h3.75M9 15h3.75M9 18h3.75m3 .75H18a2.25 2.25 0 002.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192a48.424 48.424 0 00-1.123-.08m-5.801 0c-.065.21-.1.433-.1.664 0 .414.336.75.75.75h4.5a.75.75 0 00.75-.75 2.25 2.25 0 00-.1-.664m-5.8 0A2.251 2.251 0 0113.5 2.25H15c1.012 0 1.867.668 2.15 1.586m-5.8 0c-.376.023-.75.05-1.124.08C9.095 4.01 8.25 4.973 8.25 6.108V8.25m0 0H4.875c-.621 0-1.125.504-1.125 1.125v11.25c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125V9.375c0-.621-.504-1.125-1.125-1.125H8.25z"/></svg>XLSX</div></div></div><div class="f"><label class="f-label">File prefix (optional)</label><input class="f-input" type="text" id="s-prefix" placeholder="e.g. forma_export_" maxlength="40"/></div><div class="f"><label class="f-label">File naming</label><div class="chip-row"><div class="chip on" onclick="this.classList.toggle('on')">append date</div><div class="chip" onclick="this.classList.toggle('on')">append time</div><div class="chip" onclick="this.classList.toggle('on')">include project name</div><div class="chip on" onclick="this.classList.toggle('on')">overwrite latest</div></div></div></div></div>
+
+      <div class="b-block">
+        <div class="b-block-head"><div class="b-num">3</div><span class="b-title">Destination</span></div>
+        <div class="b-body">
+          <div class="f">
+            <div class="dest-row">
+              <div class="dest-card on" id="dest-blob" onclick="sbSetDest('blob')">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 15a4.5 4.5 0 004.5 4.5H18a3.75 3.75 0 001.332-7.257 3 3 0 00-3.758-3.848 5.25 5.25 0 00-10.233 2.33A4.502 4.502 0 002.25 15z"/></svg>
+                <div><div class="dest-card-label">Cloud storage</div><div class="dest-card-sub">Download via cockpit</div></div>
+              </div>
+              <div class="dest-card disabled" title="Coming in Stage 3">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3"/></svg>
+                <div><div class="dest-card-label">Local drive</div><div class="dest-card-sub">Save to a folder path</div></div>
+                <span class="coming-soon-pill">soon</span>
+              </div>
+              <div class="dest-card disabled" title="Coming in Stage 3">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M3.375 19.5h17.25m-17.25 0a1.125 1.125 0 01-1.125-1.125M3.375 19.5h1.5C5.496 19.5 6 18.996 6 18.375m-3.75.125v-.375a1.125 1.125 0 011.125-1.125h14.25a1.125 1.125 0 011.125 1.125v.375M6 18.375V7.875"/></svg>
+                <div><div class="dest-card-label">Morta table</div><div class="dest-card-sub">Push rows into Morta</div></div>
+                <span class="coming-soon-pill">soon</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="builder-footer">
+        <button class="btn-ghost" onclick="backToList()">Cancel</button>
+        <button class="btn-save" id="sb-save-btn" onclick="saveShard()"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"/></svg>Save shard</button>
+      </div>
+    </div>
+
+    <!-- Compiler builder (in-place) -->
+    <div id="view-compiler-builder" style="display:none">
+      <div class="builder-top">
+        <button class="builder-back" onclick="backToList()"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18"/></svg>Back</button>
+        <input class="builder-name-input" id="cb-name" type="text" placeholder="Compiler name…" maxlength="100"/>
+      </div>
+
+      <div class="b-block">
+        <div class="b-block-head"><div class="b-num">1</div><span class="b-title">Schedule</span></div>
+        <div class="b-body">
+          <div class="f"><label class="f-label">Frequency</label>
+            <select class="f-select" id="cb-freq" onchange="cbFreqChange()">
+              <option value="daily">Every day</option>
+              <option value="weekdays">Weekdays only (Mon–Fri)</option>
+              <option value="weekend">Weekends only (Sat–Sun)</option>
+              <option value="weekly">Specific days of the week</option>
+              <option value="monthly">Specific days of the month</option>
+            </select>
+          </div>
+          <div id="cb-weekly-row" class="cond f">
+            <label class="f-label">Days of week</label>
+            <div class="day-grid">
+              <div class="day-cell" data-day="mon" onclick="this.classList.toggle('on')">MON</div>
+              <div class="day-cell" data-day="tue" onclick="this.classList.toggle('on')">TUE</div>
+              <div class="day-cell" data-day="wed" onclick="this.classList.toggle('on')">WED</div>
+              <div class="day-cell" data-day="thu" onclick="this.classList.toggle('on')">THU</div>
+              <div class="day-cell" data-day="fri" onclick="this.classList.toggle('on')">FRI</div>
+              <div class="day-cell" data-day="sat" onclick="this.classList.toggle('on')">SAT</div>
+              <div class="day-cell" data-day="sun" onclick="this.classList.toggle('on')">SUN</div>
+            </div>
+          </div>
+          <div id="cb-monthly-row" class="cond f">
+            <label class="f-label">Days of month</label>
+            <div class="month-grid" id="cb-month-grid"></div>
+          </div>
+          <div class="f two">
+            <div><label class="f-label">Time</label><input class="f-input" type="time" id="cb-time" value="06:00"/></div>
+            <div><label class="f-label">Timezone</label>
+              <select class="f-select" id="cb-tz">
+                <option value="UTC">UTC</option>
+                <option value="Europe/London">London</option>
+                <option value="Europe/Dublin">Dublin</option>
+                <option value="Europe/Paris">Paris (CET)</option>
+                <option value="Asia/Dubai" selected>Dubai (GST)</option>
+                <option value="America/New_York">New York (ET)</option>
+                <option value="America/Los_Angeles">LA (PT)</option>
+                <option value="Australia/Sydney">Sydney (AEST)</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div class="b-connector"></div>
-      <div class="b-block"><div class="b-block-head"><div class="b-num">4</div><span class="b-title">Destination</span></div><div class="b-body"><div class="f"><div class="dest-row"><div class="dest-card on" id="dest-local" onclick="sDest('local')"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3"/></svg><div><div class="dest-card-label">Local drive</div><div class="dest-card-sub">Save to a folder path</div></div></div><div class="dest-card" id="dest-morta" onclick="sDest('morta')"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M3.375 19.5h17.25m-17.25 0a1.125 1.125 0 01-1.125-1.125M3.375 19.5h1.5C5.496 19.5 6 18.996 6 18.375m-3.75.125v-.375a1.125 1.125 0 011.125-1.125h14.25a1.125 1.125 0 011.125 1.125v.375M6 18.375V7.875m0 0A1.875 1.875 0 017.875 6h8.25A1.875 1.875 0 0118 7.875v10.5"/></svg><div><div class="dest-card-label">Morta table</div><div class="dest-card-sub">Push rows into Morta</div></div></div></div></div><div id="cfg-local" class="cond show"><div class="f"><label class="f-label">Output folder path</label><input class="f-input" type="text" id="s-localpath" placeholder="e.g. C:\Projects\Exports"/></div><div class="f"><label class="f-label">Also send to</label><div class="chip-row"><div class="chip" id="chk-also-morta" onclick="sToggleCond(this,'cfg-also-morta')">also push to Morta</div><div class="chip" id="chk-email" onclick="sToggleCond(this,'cfg-email')">email notification</div></div></div><div id="cfg-also-morta" class="cond" style="margin-top:10px"><label class="f-label">Morta table</label><div class="radio-row" style="margin-bottom:8px"><div class="radio-opt on" id="lm-ex" onclick="sMortaMode('lm','ex')"><div class="radio-dot"></div>Existing table</div><div class="radio-opt" id="lm-nw" onclick="sMortaMode('lm','nw')"><div class="radio-dot"></div>Create new</div></div><div id="lm-ex-cfg" class="cond show"><select class="f-select" id="s-lm-table"><option value="">— select table / view —</option></select></div><div id="lm-nw-cfg" class="cond"><input class="f-input" type="text" placeholder="New table name…"/></div></div><div id="cfg-email" class="cond" style="margin-top:10px"><label class="f-label">Notify email</label><input class="f-input" type="email" placeholder="you@company.com"/></div></div><div id="cfg-morta" class="cond"><div class="f"><label class="f-label">Table destination</label><div class="radio-row" style="margin-bottom:8px"><div class="radio-opt on" id="m-ex" onclick="sMortaMode('m','ex')"><div class="radio-dot"></div>Existing table / view</div><div class="radio-opt" id="m-nw" onclick="sMortaMode('m','nw')"><div class="radio-dot"></div>Create new table</div></div><div id="m-ex-cfg" class="cond show"><select class="f-select" id="s-m-table"><option value="">— select table / view —</option></select></div><div id="m-nw-cfg" class="cond"><input class="f-input" type="text" placeholder="New table name…"/></div></div><div class="f"><label class="f-label">On conflict</label><select class="f-select" id="s-conflict" onchange="document.getElementById('cfg-upsert').classList.toggle('show',this.value==='upsert')"><option value="append">Append new rows</option><option value="replace">Replace all rows</option><option value="upsert">Upsert (match by key column)</option></select></div><div id="cfg-upsert" class="cond" style="margin-top:8px"><label class="f-label">Key column</label><input class="f-input" type="text" placeholder="e.g. element_id"/></div></div></div></div>
-      <div class="builder-footer"><button class="btn-ghost" onclick="sBack()">Cancel</button><button class="btn-save" onclick="sSave()"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"/></svg>Save automation</button></div>
+
+      <div class="b-block">
+        <div class="b-block-head"><div class="b-num">2</div><span class="b-title">Shards in this compiler</span></div>
+        <div class="b-body">
+          <div id="cb-shards-list"></div>
+          <button class="btn-add-shard" onclick="openShardPicker()"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/></svg>Add shard</button>
+          <div class="f-help" style="margin-top:8px">Only unattached shards (not in another compiler) can be added.</div>
+        </div>
+      </div>
+
+      <div class="builder-footer">
+        <button class="btn-ghost" onclick="backToList()">Cancel</button>
+        <button class="btn-save" id="cb-save-btn" onclick="saveCompiler()"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"/></svg>Save compiler</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- Shard picker modal -->
+<div class="modal-backdrop" id="modal-backdrop">
+  <div class="modal-panel">
+    <div class="modal-head">
+      <span class="modal-title">Add shards to compiler</span>
+      <button class="modal-close" onclick="closeShardPicker()"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg></button>
+    </div>
+    <div class="modal-body" id="picker-body"></div>
+    <div class="modal-foot">
+      <button class="btn-ghost" onclick="closeShardPicker()">Cancel</button>
+      <button class="btn-save" onclick="confirmShardPicker()"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"/></svg>Add selected</button>
     </div>
   </div>
 </div>
+
 <div id="s-toast"></div>
 
 <script>
 (function(){
-  const SK='dcc_autos_v3';
-  let autos=JSON.parse(localStorage.getItem(SK)||'[]');
-  let editId=null,curFmt='csv',curDest='local';
+  // ── State ─────────────────────────────────────────────────
+  let scriptCatalog = {};      // { script_id: { platform, display_name, required_context, description } }
+  let allShards = [];
+  let allCompilers = [];
+  let allRuns = [];
+  let projectsData = null;     // from /api/projects
+  let modelsCacheByProject = {}; // { project_id: [ {item_id, name}, ... ] }
 
-  (function(){const g=document.getElementById('s-month-grid');for(let d=1;d<=31;d++){const el=document.createElement('div');el.className='month-cell';el.textContent=d;el.dataset.day=d;el.onclick=function(){this.classList.toggle('on')};g.appendChild(el)}})();
+  let currentTab = 'shards';
 
-  // Use smartFetch for caching — same key as manage.html so the cache is shared
-  if (typeof smartFetch === 'function') {
-  smartFetch('/api/projects', 'projects', {
-    onCached: (data) => populateDropdowns(data),
-    onFresh:  (data) => populateDropdowns(data),
-  });
-} else {
-  fetch('/api/projects')
-    .then(r => r.ok ? r.json() : null)
-    .then(data => { if (data) populateDropdowns(data); })
-    .catch(() => {});
-}
+  // Shard builder state
+  let editingShardId = null;
+  let sbCurFmt = 'json';
+  let sbCurDest = 'blob';
 
-  function populateDropdowns(data){
-    if(!data)return;
-    const fp=document.getElementById('s-forma-proj');
-    fp.innerHTML='<option value="">— select project —</option>';
-    (data.forma||[]).forEach(p=>{fp.add(new Option(p.name+(p.platform?' ('+p.platform+')':''),p.id))});
-    const rp=document.getElementById('s-rev-proj');
-    rp.innerHTML='<option value="">All / license-level</option>';
-    (data.revizto||[]).forEach(p=>{rp.add(new Option(p.title,p.uuid))});
-    ['s-lm-table','s-m-table'].forEach(id=>{const el=document.getElementById(id);el.innerHTML='<option value="">— select table / view —</option>';['Hub Members','Issues Log','Project Tracker'].forEach(n=>el.add(new Option(n,n)))});
+  // Compiler builder state
+  let editingCompilerId = null;
+  let cbSelectedShardIds = [];
+
+  // Picker state
+  let pickerSelected = new Set();
+
+  // ── Toast helpers ─────────────────────────────────────────
+  function toast(msg, isError, dur){
+    const t = document.getElementById('s-toast');
+    t.textContent = msg;
+    t.className = isError ? 'show error' : 'show';
+    setTimeout(()=>t.classList.remove('show'), dur||2800);
+  }
+  function escHtml(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+  // ── HTTP helpers ──────────────────────────────────────────
+  async function api(path, opts){
+    const res = await fetch(path, Object.assign({headers:{'Content-Type':'application/json'}}, opts||{}));
+    let body = null;
+    try { body = await res.json(); } catch(e){}
+    if (!res.ok) {
+      const errMsg = (body && body.error) || ('HTTP '+res.status);
+      throw new Error(errMsg);
+    }
+    return body;
   }
 
-  function showView(v){document.getElementById('view-empty').style.display=v==='empty'?'flex':'none';document.getElementById('view-list').style.display=v==='list'?'block':'none';document.getElementById('view-builder').style.display=v==='builder'?'block':'none';document.getElementById('btn-new-hdr').style.display=v==='list'?'inline-flex':'none'}
-  function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
-  function save(){localStorage.setItem(SK,JSON.stringify(autos))}
-  function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,6)}
-  function toast(m,d=2600){const t=document.getElementById('s-toast');t.textContent=m;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),d)}
+  // ── Initial load ──────────────────────────────────────────
+  async function init(){
+    // Build the month grid for monthly schedules
+    const g = document.getElementById('cb-month-grid');
+    for(let d=1; d<=31; d++){
+      const el = document.createElement('div');
+      el.className = 'month-cell';
+      el.textContent = d;
+      el.dataset.day = d;
+      el.onclick = function(){ this.classList.toggle('on'); };
+      g.appendChild(el);
+    }
 
-  function render(){
-    if(!autos.length){showView('empty');return}
-    const c=document.getElementById('s-list-items');c.innerHTML='';
-    autos.forEach(a=>{const row=document.createElement('div');row.className='auto-row';
-      row.innerHTML='<div class="auto-dot'+(a.active?'':' paused')+'"></div><div class="auto-row-name">'+esc(a.name||'Untitled')+'</div><div class="auto-row-meta">'+esc(a.platform||'—')+' · '+esc(a.schedLabel||'—')+' · '+esc(a.time||'06:00')+' '+esc(a.tz||'UTC')+'</div><div class="auto-row-actions"><button class="icon-btn" title="'+(a.active?'Pause':'Resume')+'" onclick="event.stopPropagation();sToggle(\''+a.id+'\')">'+(a.active?'<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 5.25v13.5m-7.5-13.5v13.5"/></svg>':'<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z"/></svg>')+'</button><button class="icon-btn" title="Edit" onclick="event.stopPropagation();sOpen(\''+a.id+'\')"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z"/></svg></button><button class="icon-btn del" title="Delete" onclick="event.stopPropagation();sDel(\''+a.id+'\')"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"/></svg></button></div>';
-      c.appendChild(row)});
-    showView('list');
+    setHeaderButton();
+    await Promise.all([loadCatalog(), loadShards(), loadCompilers(), loadRuns(), loadProjects()]);
+    renderAll();
   }
 
-  window.sOpen=function(id){editId=id;reset();if(id){const a=autos.find(x=>x.id===id);if(a)fill(a)}showView('builder');updateSteps()};
-  window.sBack=function(){render()};
-  window.sToggle=function(id){const a=autos.find(x=>x.id===id);if(a){a.active=!a.active;save();render()}};
-  window.sDel=function(id){if(!confirm('Delete this automation?'))return;autos=autos.filter(x=>x.id!==id);save();render();toast('Deleted.')};
-  window.sPlatChange=function(){const v=document.getElementById('s-platform').value;['forma','revizto','morta'].forEach(p=>document.getElementById('src-'+p).classList.toggle('show',v===p));updateSteps()};
-  window.sFreqChange=function(){const v=document.getElementById('s-freq').value;document.getElementById('freq-weekly').classList.toggle('show',v==='weekly');document.getElementById('freq-monthly').classList.toggle('show',v==='monthly')};
-  window.sFmt=function(f){curFmt=f;['csv','json','xlsx'].forEach(x=>document.getElementById('fmt-'+x).classList.toggle('on',x===f))};
-  window.sDest=function(d){curDest=d;['local','morta'].forEach(x=>{document.getElementById('dest-'+x).classList.toggle('on',x===d);document.getElementById('cfg-'+x).classList.toggle('show',x===d)})};
-  window.sToggleCond=function(el,cfgId){el.classList.toggle('on');document.getElementById(cfgId).classList.toggle('show',el.classList.contains('on'))};
-  window.sMortaMode=function(prefix,mode){['ex','nw'].forEach(m=>{document.getElementById(prefix+'-'+m).classList.toggle('on',m===mode);document.getElementById(prefix+'-'+m+'-cfg').classList.toggle('show',m===mode)})};
+  async function loadCatalog(){
+    try {
+      const data = await api('/api/scheduler/scripts');
+      scriptCatalog = data.scripts || {};
+    } catch(e){ toast('Could not load script catalog: '+e.message, true); }
+  }
+  async function loadShards(){
+    try {
+      const data = await api('/api/scheduler/shards');
+      allShards = data.shards || [];
+    } catch(e){ toast('Could not load shards: '+e.message, true); }
+  }
+  async function loadCompilers(){
+    try {
+      const data = await api('/api/scheduler/compilers');
+      allCompilers = data.compilers || [];
+    } catch(e){ toast('Could not load compilers: '+e.message, true); }
+  }
+  async function loadRuns(){
+    try {
+      const data = await api('/api/scheduler/runs?limit=50');
+      allRuns = data.runs || [];
+    } catch(e){ /* runs endpoint should always exist; silent */ }
+  }
+  async function loadProjects(){
+    if (typeof smartFetch === 'function') {
+      smartFetch('/api/projects', 'projects', {
+        onCached: (d)=>{ projectsData = d; if (editingShardId !== null) populateProjects(); },
+        onFresh:  (d)=>{ projectsData = d; if (editingShardId !== null) populateProjects(); }
+      });
+    } else {
+      try {
+        const r = await fetch('/api/projects');
+        if (r.ok) projectsData = await r.json();
+      } catch(e){}
+    }
+  }
 
-  function updateSteps(){const src=!!document.getElementById('s-platform').value;[{id:'sc1',cls:src?'done':'active'},{id:'sc2',cls:src?'active':''},{id:'sc3',cls:''},{id:'sc4',cls:''}].forEach(s=>{document.getElementById(s.id).className='step-circle'+(s.cls?' '+s.cls:'')});document.getElementById('sl1').classList.toggle('done',src);document.getElementById('sl2').classList.remove('done');document.getElementById('sl3').classList.remove('done')}
-  function schedLabel(){const f=document.getElementById('s-freq').value;if(f==='daily')return'Every day';if(f==='weekdays')return'Weekdays';if(f==='weekend')return'Weekends';if(f==='weekly'){const d=[...document.querySelectorAll('#freq-weekly .day-cell.on')].map(e=>e.textContent);return d.length?d.join(', '):'Weekly'}if(f==='monthly'){const d=[...document.querySelectorAll('#s-month-grid .month-cell.on')].map(e=>e.textContent);return d.length?'Days '+d.join(','):'Monthly'}return f}
+  // ── View switching ────────────────────────────────────────
+  function setHeaderButton(){
+    const btn = document.getElementById('btn-new-hdr');
+    if (currentTab === 'shards') {
+      btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/></svg>New shard';
+      btn.onclick = ()=>openShardBuilder(null);
+      btn.classList.add('on');
+    } else if (currentTab === 'compilers') {
+      btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/></svg>New compiler';
+      btn.onclick = ()=>openCompilerBuilder(null);
+      btn.classList.add('on');
+    } else {
+      btn.classList.remove('on');
+    }
+  }
+  window.switchTab = function(t){
+    currentTab = t;
+    document.querySelectorAll('.tab-btn').forEach(b=>b.classList.toggle('active', b.dataset.tab===t));
+    document.querySelectorAll('.pane').forEach(p=>p.classList.remove('active'));
+    document.getElementById('pane-'+t).classList.add('active');
+    setHeaderButton();
+  };
 
-  function reset(){document.getElementById('s-name').value='';document.getElementById('s-platform').value='';['forma','revizto','morta'].forEach(p=>document.getElementById('src-'+p).classList.remove('show'));document.getElementById('s-freq').value='daily';document.getElementById('freq-weekly').classList.remove('show');document.getElementById('freq-monthly').classList.remove('show');document.querySelectorAll('.day-cell.on,.month-cell.on').forEach(e=>e.classList.remove('on'));document.getElementById('s-time').value='06:00';document.getElementById('s-tz').value='Asia/Dubai';sFmt('csv');document.getElementById('s-prefix').value='';sDest('local');document.getElementById('s-localpath').value='';['cfg-also-morta','cfg-email'].forEach(id=>document.getElementById(id).classList.remove('show'));['chk-also-morta','chk-email'].forEach(id=>document.getElementById(id).classList.remove('on'));document.getElementById('cfg-upsert').classList.remove('show');curFmt='csv';curDest='local'}
+  function showListView(){
+    document.getElementById('view-list').style.display = 'block';
+    document.getElementById('view-shard-builder').style.display = 'none';
+    document.getElementById('view-compiler-builder').style.display = 'none';
+    setHeaderButton();
+  }
+  function showShardBuilder(){
+    document.getElementById('view-list').style.display = 'none';
+    document.getElementById('view-shard-builder').style.display = 'block';
+    document.getElementById('view-compiler-builder').style.display = 'none';
+    document.getElementById('btn-new-hdr').classList.remove('on');
+  }
+  function showCompilerBuilder(){
+    document.getElementById('view-list').style.display = 'none';
+    document.getElementById('view-shard-builder').style.display = 'none';
+    document.getElementById('view-compiler-builder').style.display = 'block';
+    document.getElementById('btn-new-hdr').classList.remove('on');
+  }
+  window.backToList = function(){ showListView(); renderAll(); };
 
-  function fill(a){document.getElementById('s-name').value=a.name||'';if(a.platform){document.getElementById('s-platform').value=a.platform;sPlatChange()}if(a.freq){document.getElementById('s-freq').value=a.freq;sFreqChange()}if(a.time)document.getElementById('s-time').value=a.time;if(a.tz)document.getElementById('s-tz').value=a.tz;sFmt(a.fmt||'csv');sDest(a.dest||'local');if(a.localPath)document.getElementById('s-localpath').value=a.localPath}
+  // ── Render ────────────────────────────────────────────────
+  function renderAll(){
+    document.getElementById('cnt-shards').textContent    = allShards.length;
+    document.getElementById('cnt-compilers').textContent = allCompilers.length;
+    document.getElementById('cnt-runs').textContent      = allRuns.length;
+    renderShards();
+    renderCompilers();
+    renderRuns();
+  }
 
-  window.sSave=function(){const name=document.getElementById('s-name').value.trim();const platform=document.getElementById('s-platform').value;if(!name){toast('Give this automation a name first.');return}if(!platform){toast('Select a data source.');return}const a={id:editId||uid(),name,platform,freq:document.getElementById('s-freq').value,time:document.getElementById('s-time').value,tz:document.getElementById('s-tz').value,fmt:curFmt,dest:curDest,localPath:document.getElementById('s-localpath').value.trim(),schedLabel:schedLabel(),active:true,createdAt:editId?(autos.find(x=>x.id===editId)||{}).createdAt||Date.now():Date.now()};if(editId){const i=autos.findIndex(x=>x.id===editId);if(i>-1)autos[i]=a}else autos.push(a);save();render();toast(editId?'Automation updated.':'Automation saved.');editId=null};
+  function compilerNameById(cid){
+    if (!cid) return null;
+    const c = allCompilers.find(x=>x.id===cid);
+    return c ? c.name : null;
+  }
 
-  render();
+  function shardSourceLine(s){
+    const cat = scriptCatalog[s.script] || {};
+    const ctx = s.context || {};
+    const parts = [cat.display_name || s.script];
+    if (ctx.model_name) parts.push(ctx.model_name);
+    else if (ctx.project_id) parts.push('project: '+ctx.project_id.slice(0,8));
+    else if (ctx.project_uuid) parts.push('project: '+ctx.project_uuid.slice(0,8));
+    return parts.join(' · ');
+  }
+
+  function renderShards(){
+    const list = document.getElementById('shards-list');
+    const empty = document.getElementById('shards-empty');
+    if (!allShards.length){
+      list.innerHTML = '';
+      empty.style.display = 'flex';
+      return;
+    }
+    empty.style.display = 'none';
+    list.innerHTML = allShards.map(renderShardRow).join('');
+  }
+  function renderShardRow(s){
+    const cat = scriptCatalog[s.script] || {};
+    const inComp = compilerNameById(s.in_compiler);
+    const dot = s.auto_disabled ? 'disabled' : (s.active ? '' : 'paused');
+    const compilerLine = inComp ? ('In compiler: ' + escHtml(inComp)) : 'Unattached';
+    const disabledPill = s.auto_disabled ? '<span class="disabled-pill">Auto-disabled</span>' : '';
+    return ''
+      + '<div class="auto-row">'
+      +   '<div class="auto-dot '+dot+'"></div>'
+      +   '<div class="auto-row-main">'
+      +     '<div class="auto-row-name">'+escHtml(s.name)+disabledPill+'</div>'
+      +     '<div class="auto-row-meta">'+escHtml((cat.platform||s.platform||'').toUpperCase())+' · '+escHtml(shardSourceLine(s))+' · '+escHtml(compilerLine)+'</div>'
+      +   '</div>'
+      +   '<div class="auto-row-actions">'
+      +     '<button class="icon-btn" title="Run now (coming soon)" disabled><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z"/></svg></button>'
+      +     '<button class="icon-btn" title="'+(s.active?'Pause':'Resume')+'" onclick="toggleShard(\''+s.id+'\')">'+(s.active?'<svg xmlns=\"http://www.w3.org/2000/svg\" fill=\"none\" viewBox=\"0 0 24 24\" stroke-width=\"2\" stroke=\"currentColor\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" d=\"M15.75 5.25v13.5m-7.5-13.5v13.5\"/></svg>':'<svg xmlns=\"http://www.w3.org/2000/svg\" fill=\"none\" viewBox=\"0 0 24 24\" stroke-width=\"2\" stroke=\"currentColor\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" d=\"M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z\"/></svg>')+'</button>'
+      +     '<button class="icon-btn" title="Edit" onclick="openShardBuilder(\''+s.id+'\')"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z"/></svg></button>'
+      +     '<button class="icon-btn del" title="Delete" onclick="deleteShard(\''+s.id+'\')"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166M5.79 5.79c.34-.059.68-.114 1.022-.165"/></svg></button>'
+      +   '</div>'
+      + '</div>';
+  }
+
+  function scheduleSummary(sched){
+    if (!sched) return '—';
+    const t = sched.time || '';
+    const tz = sched.tz || '';
+    const f = sched.frequency || '';
+    let label = f;
+    if (f === 'daily')    label = 'Every day';
+    else if (f === 'weekdays') label = 'Weekdays (Mon–Fri)';
+    else if (f === 'weekend')  label = 'Weekends (Sat–Sun)';
+    else if (f === 'weekly') {
+      const days = (sched.days_of_week || []).map(d=>d.slice(0,3).toUpperCase());
+      label = days.length ? days.join(', ') : 'Weekly';
+    } else if (f === 'monthly') {
+      const dom = sched.days_of_month || [];
+      label = dom.length ? 'Days '+dom.join(',') : 'Monthly';
+    }
+    return label + (t ? ' · '+t : '') + (tz ? ' '+tz : '');
+  }
+
+  function renderCompilers(){
+    const list = document.getElementById('compilers-list');
+    const empty = document.getElementById('compilers-empty');
+    if (!allCompilers.length){
+      list.innerHTML = '';
+      empty.style.display = 'flex';
+      return;
+    }
+    empty.style.display = 'none';
+    list.innerHTML = allCompilers.map(renderCompilerCard).join('');
+  }
+  function renderCompilerCard(c){
+    const dot = c.active ? '' : 'paused';
+    let shardsBlock;
+    if (!c.shard_ids || !c.shard_ids.length){
+      shardsBlock = '<div class="cs-empty">No shards in this compiler yet.</div>';
+    } else {
+      shardsBlock = c.shard_ids.map(sid=>{
+        const s = allShards.find(x=>x.id===sid);
+        if (!s) return '<div class="cs-empty">Shard '+escHtml(sid)+' not found.</div>';
+        const cat = scriptCatalog[s.script] || {};
+        const sdot = s.auto_disabled ? 'disabled' : (s.active ? '' : 'paused');
+        return ''
+          + '<div class="cs-item">'
+          +   '<div class="auto-dot '+sdot+'"></div>'
+          +   '<div class="cs-item-name">'+escHtml(s.name)+'</div>'
+          +   '<div class="cs-item-meta">'+escHtml((cat.display_name||s.script))+'</div>'
+          +   '<button class="icon-btn" title="'+(s.active?'Pause':'Resume')+'" onclick="toggleShard(\''+s.id+'\')">'+(s.active?'<svg xmlns=\"http://www.w3.org/2000/svg\" fill=\"none\" viewBox=\"0 0 24 24\" stroke-width=\"2\" stroke=\"currentColor\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" d=\"M15.75 5.25v13.5m-7.5-13.5v13.5\"/></svg>':'<svg xmlns=\"http://www.w3.org/2000/svg\" fill=\"none\" viewBox=\"0 0 24 24\" stroke-width=\"2\" stroke=\"currentColor\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" d=\"M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z\"/></svg>')+'</button>'
+          +   '<button class="icon-btn del" title="Remove from compiler" onclick="removeShardFromCompiler(\''+c.id+'\',\''+s.id+'\')"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg></button>'
+          + '</div>';
+      }).join('');
+    }
+    return ''
+      + '<div class="compiler-card">'
+      +   '<div class="compiler-head">'
+      +     '<div class="auto-dot '+dot+'"></div>'
+      +     '<div class="auto-row-main">'
+      +       '<div class="auto-row-name">'+escHtml(c.name)+'</div>'
+      +       '<div class="auto-row-meta">'+escHtml(scheduleSummary(c.schedule))+' · '+(c.shard_ids||[]).length+' shard(s)</div>'
+      +     '</div>'
+      +     '<div class="auto-row-actions">'
+      +       '<button class="icon-btn" title="Run now (coming soon)" disabled><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z"/></svg></button>'
+      +       '<button class="icon-btn" title="'+(c.active?'Pause':'Resume')+'" onclick="toggleCompiler(\''+c.id+'\')">'+(c.active?'<svg xmlns=\"http://www.w3.org/2000/svg\" fill=\"none\" viewBox=\"0 0 24 24\" stroke-width=\"2\" stroke=\"currentColor\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" d=\"M15.75 5.25v13.5m-7.5-13.5v13.5\"/></svg>':'<svg xmlns=\"http://www.w3.org/2000/svg\" fill=\"none\" viewBox=\"0 0 24 24\" stroke-width=\"2\" stroke=\"currentColor\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" d=\"M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z\"/></svg>')+'</button>'
+      +       '<button class="icon-btn" title="Edit" onclick="openCompilerBuilder(\''+c.id+'\')"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z"/></svg></button>'
+      +       '<button class="icon-btn del" title="Delete compiler" onclick="deleteCompiler(\''+c.id+'\')"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166M5.79 5.79c.34-.059.68-.114 1.022-.165"/></svg></button>'
+      +     '</div>'
+      +   '</div>'
+      +   '<div class="compiler-shards">'
+      +     '<div class="compiler-shards-title">Shards ('+(c.shard_ids||[]).length+')</div>'
+      +     shardsBlock
+      +   '</div>'
+      + '</div>';
+  }
+
+  function fmtTime(ms){
+    if (!ms) return '—';
+    const d = new Date(ms);
+    return d.toLocaleString();
+  }
+  function renderRuns(){
+    const list = document.getElementById('runs-list');
+    const empty = document.getElementById('runs-empty');
+    if (!allRuns.length){ list.innerHTML=''; empty.style.display='flex'; return; }
+    empty.style.display = 'none';
+    list.innerHTML = allRuns.map(r=>{
+      const status = r.status || 'unknown';
+      return ''
+        + '<div class="auto-row">'
+        +   '<div class="auto-row-main">'
+        +     '<div class="auto-row-name">'+escHtml(r.name||r.id)+'</div>'
+        +     '<div class="auto-row-meta">'+escHtml(r.trigger_type||'')+' · started '+escHtml(fmtTime(r.started_at))+' · by '+escHtml(r.triggered_by||'?')+'</div>'
+        +   '</div>'
+        +   '<span class="run-status '+status+'">'+escHtml(status)+'</span>'
+        + '</div>';
+    }).join('');
+  }
+
+  // ── Shard CRUD actions ────────────────────────────────────
+  window.toggleShard = async function(id){
+    try {
+      await api('/api/scheduler/shards/'+id+'/toggle', {method:'POST'});
+      await loadShards();
+      await loadCompilers();
+      renderAll();
+    } catch(e){ toast('Toggle failed: '+e.message, true); }
+  };
+  window.deleteShard = async function(id){
+    if (!confirm('Delete this shard? This cannot be undone.')) return;
+    try {
+      await api('/api/scheduler/shards/'+id, {method:'DELETE'});
+      await loadShards();
+      renderAll();
+      toast('Shard deleted.');
+    } catch(e){ toast(e.message, true); }
+  };
+  window.removeShardFromCompiler = async function(compilerId, shardId){
+    const comp = allCompilers.find(c=>c.id===compilerId);
+    if (!comp) return;
+    const newIds = (comp.shard_ids||[]).filter(x=>x!==shardId);
+    try {
+      await api('/api/scheduler/compilers/'+compilerId, {
+        method:'PUT',
+        body: JSON.stringify({shard_ids: newIds})
+      });
+      await loadCompilers();
+      await loadShards();
+      renderAll();
+    } catch(e){ toast(e.message, true); }
+  };
+
+  // ── Compiler CRUD actions ─────────────────────────────────
+  window.toggleCompiler = async function(id){
+    try {
+      await api('/api/scheduler/compilers/'+id+'/toggle', {method:'POST'});
+      await loadCompilers();
+      renderAll();
+    } catch(e){ toast(e.message, true); }
+  };
+  window.deleteCompiler = async function(id){
+    if (!confirm('Delete this compiler? Its shards become unattached but are NOT deleted.')) return;
+    try {
+      await api('/api/scheduler/compilers/'+id, {method:'DELETE'});
+      await loadCompilers();
+      await loadShards();
+      renderAll();
+      toast('Compiler deleted.');
+    } catch(e){ toast(e.message, true); }
+  };
+
+  // ── Shard builder ─────────────────────────────────────────
+  window.openShardBuilder = function(id){
+    editingShardId = id;
+    resetShardBuilder();
+    if (id) {
+      const s = allShards.find(x=>x.id===id);
+      if (s) fillShardBuilder(s);
+    }
+    showShardBuilder();
+  };
+  function resetShardBuilder(){
+    document.getElementById('sb-name').value = '';
+    document.getElementById('sb-platform').value = '';
+    document.getElementById('sb-script').innerHTML = '<option value="">— select script —</option>';
+    document.getElementById('sb-script-help').textContent = '';
+    document.getElementById('sb-project').innerHTML = '<option value="">Loading…</option>';
+    document.getElementById('sb-model').innerHTML = '<option value="">— select project first —</option>';
+    document.getElementById('sb-script-row').classList.remove('show');
+    document.getElementById('sb-project-row').classList.remove('show');
+    document.getElementById('sb-model-row').classList.remove('show');
+    document.getElementById('sb-prefix').value = '';
+    document.querySelectorAll('#view-shard-builder .chip').forEach(c=>{
+      const k = c.dataset.naming;
+      c.classList.toggle('on', k === 'append_date');
+    });
+    sbSetFmt('json');
+    sbSetDest('blob');
+  }
+  function fillShardBuilder(s){
+    document.getElementById('sb-name').value = s.name || '';
+    document.getElementById('sb-platform').value = s.platform || '';
+    sbPlatChange();
+    document.getElementById('sb-script').value = s.script || '';
+    sbScriptChange();
+    populateProjects();
+    setTimeout(()=>{
+      const ctx = s.context || {};
+      const projVal = ctx.project_id || ctx.project_uuid || '';
+      if (projVal) {
+        document.getElementById('sb-project').value = projVal;
+        sbProjectChange();
+      }
+      if (ctx.model_item_id) {
+        setTimeout(()=>{ document.getElementById('sb-model').value = ctx.model_item_id; }, 200);
+      }
+    }, 50);
+    sbSetFmt((s.output && s.output.format) || 'json');
+    document.getElementById('sb-prefix').value = (s.output && s.output.prefix) || '';
+    const naming = (s.output && s.output.naming) || [];
+    document.querySelectorAll('#view-shard-builder .chip').forEach(c=>{
+      c.classList.toggle('on', naming.includes(c.dataset.naming));
+    });
+    sbSetDest((s.destination && s.destination.type) || 'blob');
+  }
+  window.sbSetFmt = function(f){
+    sbCurFmt = f;
+    document.querySelectorAll('#view-shard-builder .fmt-opt').forEach(o=>o.classList.toggle('on', o.dataset.fmt===f));
+  };
+  window.sbSetDest = function(d){
+    if (d !== 'blob') return;
+    sbCurDest = 'blob';
+    document.querySelectorAll('#view-shard-builder .dest-card').forEach(c=>c.classList.remove('on'));
+    document.getElementById('dest-blob').classList.add('on');
+  };
+  window.sbPlatChange = function(){
+    const platform = document.getElementById('sb-platform').value;
+    const scriptSel = document.getElementById('sb-script');
+    scriptSel.innerHTML = '<option value="">— select script —</option>';
+    if (!platform) {
+      document.getElementById('sb-script-row').classList.remove('show');
+      document.getElementById('sb-project-row').classList.remove('show');
+      document.getElementById('sb-model-row').classList.remove('show');
+      return;
+    }
+    Object.keys(scriptCatalog).forEach(scriptId=>{
+      const meta = scriptCatalog[scriptId];
+      if (meta.platform !== platform) return;
+      const opt = document.createElement('option');
+      opt.value = scriptId;
+      opt.textContent = meta.display_name || scriptId;
+      scriptSel.appendChild(opt);
+    });
+    document.getElementById('sb-script-row').classList.add('show');
+    document.getElementById('sb-script-help').textContent = '';
+    document.getElementById('sb-project-row').classList.remove('show');
+    document.getElementById('sb-model-row').classList.remove('show');
+  };
+  window.sbScriptChange = function(){
+    const scriptId = document.getElementById('sb-script').value;
+    const meta = scriptCatalog[scriptId];
+    document.getElementById('sb-script-help').textContent = (meta && meta.description) || '';
+    if (!meta){
+      document.getElementById('sb-project-row').classList.remove('show');
+      document.getElementById('sb-model-row').classList.remove('show');
+      return;
+    }
+    const needsProj = (meta.required_context||[]).some(k=>k==='project_id'||k==='project_uuid');
+    const needsModel = (meta.required_context||[]).includes('model_item_id');
+    if (needsProj){
+      document.getElementById('sb-project-row').classList.add('show');
+      const lbl = document.getElementById('sb-project-label');
+      lbl.textContent = meta.platform === 'revizto' ? 'Project' : 'Project / Hub';
+      populateProjects();
+    } else {
+      document.getElementById('sb-project-row').classList.remove('show');
+    }
+    document.getElementById('sb-model-row').classList.toggle('show', needsModel);
+  };
+  function populateProjects(){
+    const platform = document.getElementById('sb-platform').value;
+    const sel = document.getElementById('sb-project');
+    sel.innerHTML = '<option value="">— select project —</option>';
+    if (!projectsData) { sel.innerHTML = '<option value="">Loading…</option>'; return; }
+    if (platform === 'forma' && projectsData.forma){
+      projectsData.forma.forEach(p=>{
+        const opt = document.createElement('option');
+        opt.value = p.id;
+        opt.textContent = p.name + (p.platform ? ' ('+p.platform+')' : '');
+        sel.appendChild(opt);
+      });
+    } else if (platform === 'revizto' && projectsData.revizto){
+      projectsData.revizto.forEach(p=>{
+        const opt = document.createElement('option');
+        opt.value = p.uuid;
+        opt.textContent = p.title;
+        sel.appendChild(opt);
+      });
+    }
+  }
+  window.sbProjectChange = async function(){
+    const platform = document.getElementById('sb-platform').value;
+    const projectId = document.getElementById('sb-project').value;
+    const modelSel = document.getElementById('sb-model');
+    modelSel.innerHTML = '<option value="">Loading…</option>';
+    if (platform !== 'forma' || !projectId) {
+      modelSel.innerHTML = '<option value="">— select project first —</option>';
+      return;
+    }
+    if (modelsCacheByProject[projectId]) {
+      fillModels(modelsCacheByProject[projectId]);
+      return;
+    }
+    try {
+      const res = await fetch('/api/forma/models?project_id='+encodeURIComponent(projectId));
+      if (!res.ok) throw new Error('HTTP '+res.status);
+      const data = await res.json();
+      const models = data.models || [];
+      modelsCacheByProject[projectId] = models;
+      fillModels(models);
+    } catch(e){
+      modelSel.innerHTML = '<option value="">— could not load models —</option>';
+    }
+  };
+  function fillModels(models){
+    const sel = document.getElementById('sb-model');
+    sel.innerHTML = '<option value="">— select model —</option>';
+    models.forEach(m=>{
+      const opt = document.createElement('option');
+      opt.value = m.item_id || m.id || m.urn;
+      opt.dataset.name = m.name || m.title || '';
+      opt.textContent = m.name || m.title || opt.value;
+      sel.appendChild(opt);
+    });
+  }
+  window.saveShard = async function(){
+    const name = document.getElementById('sb-name').value.trim();
+    const platform = document.getElementById('sb-platform').value;
+    const script = document.getElementById('sb-script').value;
+    if (!name) return toast('Give this shard a name first.', true);
+    if (!platform) return toast('Select a platform.', true);
+    if (!script) return toast('Select a script.', true);
+
+    const meta = scriptCatalog[script] || {};
+    const ctx = {};
+    const reqs = meta.required_context || [];
+    const projectVal = document.getElementById('sb-project').value;
+    if (reqs.includes('project_id')) {
+      if (!projectVal) return toast('Select a project.', true);
+      ctx.project_id = projectVal;
+    }
+    if (reqs.includes('project_uuid')) {
+      if (!projectVal) return toast('Select a project.', true);
+      ctx.project_uuid = projectVal;
+    }
+    if (reqs.includes('model_item_id')) {
+      const modelEl = document.getElementById('sb-model');
+      const modelVal = modelEl.value;
+      if (!modelVal) return toast('Select a model.', true);
+      ctx.model_item_id = modelVal;
+      const opt = modelEl.options[modelEl.selectedIndex];
+      ctx.model_name = (opt && opt.dataset.name) || modelEl.options[modelEl.selectedIndex].textContent;
+    }
+
+    const naming = [];
+    document.querySelectorAll('#view-shard-builder .chip.on').forEach(c=>naming.push(c.dataset.naming));
+
+    const payload = {
+      name: name,
+      platform: platform,
+      script: script,
+      context: ctx,
+      output: {
+        format: sbCurFmt,
+        prefix: document.getElementById('sb-prefix').value.trim(),
+        naming: naming
+      },
+      destination: { type: 'blob' }
+    };
+
+    const btn = document.getElementById('sb-save-btn');
+    btn.disabled = true;
+    try {
+      if (editingShardId) {
+        await api('/api/scheduler/shards/'+editingShardId, {method:'PUT', body: JSON.stringify(payload)});
+        toast('Shard updated.');
+      } else {
+        await api('/api/scheduler/shards', {method:'POST', body: JSON.stringify(payload)});
+        toast('Shard saved.');
+      }
+      await loadShards();
+      backToList();
+    } catch(e){
+      toast(e.message, true);
+    } finally {
+      btn.disabled = false;
+    }
+  };
+
+  // ── Compiler builder ──────────────────────────────────────
+  window.openCompilerBuilder = function(id){
+    editingCompilerId = id;
+    resetCompilerBuilder();
+    if (id) {
+      const c = allCompilers.find(x=>x.id===id);
+      if (c) fillCompilerBuilder(c);
+    }
+    renderCompilerBuilderShards();
+    showCompilerBuilder();
+  };
+  function resetCompilerBuilder(){
+    document.getElementById('cb-name').value = '';
+    document.getElementById('cb-freq').value = 'daily';
+    document.getElementById('cb-time').value = '06:00';
+    document.getElementById('cb-tz').value = 'Asia/Dubai';
+    document.querySelectorAll('#cb-weekly-row .day-cell.on').forEach(c=>c.classList.remove('on'));
+    document.querySelectorAll('#cb-month-grid .month-cell.on').forEach(c=>c.classList.remove('on'));
+    cbFreqChange();
+    cbSelectedShardIds = [];
+  }
+  function fillCompilerBuilder(c){
+    document.getElementById('cb-name').value = c.name || '';
+    const sched = c.schedule || {};
+    document.getElementById('cb-freq').value = sched.frequency || 'daily';
+    document.getElementById('cb-time').value = sched.time || '06:00';
+    document.getElementById('cb-tz').value = sched.tz || 'Asia/Dubai';
+    cbFreqChange();
+    (sched.days_of_week||[]).forEach(d=>{
+      const el = document.querySelector('#cb-weekly-row .day-cell[data-day="'+d+'"]');
+      if (el) el.classList.add('on');
+    });
+    (sched.days_of_month||[]).forEach(d=>{
+      const el = document.querySelector('#cb-month-grid .month-cell[data-day="'+d+'"]');
+      if (el) el.classList.add('on');
+    });
+    cbSelectedShardIds = (c.shard_ids||[]).slice();
+  }
+  window.cbFreqChange = function(){
+    const v = document.getElementById('cb-freq').value;
+    document.getElementById('cb-weekly-row').classList.toggle('show', v==='weekly');
+    document.getElementById('cb-monthly-row').classList.toggle('show', v==='monthly');
+  };
+  function renderCompilerBuilderShards(){
+    const list = document.getElementById('cb-shards-list');
+    if (!cbSelectedShardIds.length){
+      list.innerHTML = '<div class="cs-empty">No shards selected yet. Click "Add shard" below.</div>';
+      return;
+    }
+    list.innerHTML = cbSelectedShardIds.map(sid=>{
+      const s = allShards.find(x=>x.id===sid);
+      if (!s) return '<div class="cs-empty">Shard '+escHtml(sid)+' not found.</div>';
+      const cat = scriptCatalog[s.script] || {};
+      return ''
+        + '<div class="cs-item">'
+        +   '<div class="auto-dot '+(s.active?'':'paused')+'"></div>'
+        +   '<div class="cs-item-name">'+escHtml(s.name)+'</div>'
+        +   '<div class="cs-item-meta">'+escHtml(cat.display_name||s.script)+'</div>'
+        +   '<button class="icon-btn del" title="Remove" onclick="cbRemoveShard(\''+s.id+'\')"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg></button>'
+        + '</div>';
+    }).join('');
+  }
+  window.cbRemoveShard = function(sid){
+    cbSelectedShardIds = cbSelectedShardIds.filter(x=>x!==sid);
+    renderCompilerBuilderShards();
+  };
+  window.saveCompiler = async function(){
+    const name = document.getElementById('cb-name').value.trim();
+    if (!name) return toast('Give this compiler a name first.', true);
+    const freq = document.getElementById('cb-freq').value;
+    const time = document.getElementById('cb-time').value || '06:00';
+    const tz   = document.getElementById('cb-tz').value || 'Asia/Dubai';
+    const days_of_week = [...document.querySelectorAll('#cb-weekly-row .day-cell.on')].map(e=>e.dataset.day);
+    const days_of_month = [...document.querySelectorAll('#cb-month-grid .month-cell.on')].map(e=>parseInt(e.dataset.day,10));
+    const payload = {
+      name: name,
+      schedule: {
+        frequency: freq, time: time, tz: tz,
+        days_of_week: freq === 'weekly' ? days_of_week : [],
+        days_of_month: freq === 'monthly' ? days_of_month : []
+      },
+      shard_ids: cbSelectedShardIds.slice()
+    };
+
+    const btn = document.getElementById('cb-save-btn');
+    btn.disabled = true;
+    try {
+      if (editingCompilerId) {
+        await api('/api/scheduler/compilers/'+editingCompilerId, {method:'PUT', body: JSON.stringify(payload)});
+        toast('Compiler updated.');
+      } else {
+        await api('/api/scheduler/compilers', {method:'POST', body: JSON.stringify(payload)});
+        toast('Compiler saved.');
+      }
+      await loadCompilers();
+      await loadShards();
+      backToList();
+      switchTab('compilers');
+    } catch(e){
+      toast(e.message, true);
+    } finally {
+      btn.disabled = false;
+    }
+  };
+
+  // ── Shard picker (for Compiler builder) ───────────────────
+  window.openShardPicker = function(){
+    pickerSelected = new Set();
+    const body = document.getElementById('picker-body');
+    const available = allShards.filter(s=>{
+      // Available if: not in any compiler, OR already in this compiler we're editing
+      return !s.in_compiler || s.in_compiler === editingCompilerId;
+    }).filter(s=>!cbSelectedShardIds.includes(s.id));
+    if (!available.length){
+      body.innerHTML = '<div class="cs-empty" style="padding:20px;text-align:center">No unattached shards available. Create a new shard first, or remove a shard from another compiler.</div>';
+    } else {
+      body.innerHTML = available.map(s=>{
+        const cat = scriptCatalog[s.script] || {};
+        return ''
+          + '<div class="picker-item" data-sid="'+s.id+'" onclick="pickerToggle(this)">'
+          +   '<div class="picker-checkbox"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="3" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"/></svg></div>'
+          +   '<div class="picker-name">'+escHtml(s.name)+'</div>'
+          +   '<div class="picker-meta">'+escHtml(cat.display_name||s.script)+'</div>'
+          + '</div>';
+      }).join('');
+    }
+    document.getElementById('modal-backdrop').classList.add('show');
+  };
+  window.pickerToggle = function(el){
+    const sid = el.dataset.sid;
+    if (pickerSelected.has(sid)) { pickerSelected.delete(sid); el.classList.remove('selected'); }
+    else { pickerSelected.add(sid); el.classList.add('selected'); }
+  };
+  window.closeShardPicker = function(){
+    document.getElementById('modal-backdrop').classList.remove('show');
+  };
+  window.confirmShardPicker = function(){
+    pickerSelected.forEach(sid=>{ if (!cbSelectedShardIds.includes(sid)) cbSelectedShardIds.push(sid); });
+    closeShardPicker();
+    renderCompilerBuilderShards();
+  };
+
+  // ── Boot ──────────────────────────────────────────────────
+  init().catch(e=>toast('Init error: '+e.message, true));
 })();
 </script>
 {% endblock %}
