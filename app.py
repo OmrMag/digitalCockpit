@@ -19,6 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from itsdangerous import URLSafeSerializer
 import subprocess, sys
+import time
 import uuid
 
 # Lightweight readiness probe for /profile (Morta API + Revizto access).
@@ -657,34 +658,312 @@ def append_invite_log(entries):
     log.extend(entries)
     save_invite_log(log)
 
+# ---------------------------------------------------------------------------
+# Scheduler — Data Layer
+# ---------------------------------------------------------------------------
+# State for the Scheduler page: shards (atomic runnable units), compilers
+# (schedule wrappers that fire a list of shards), and run history. Stored
+# alongside the existing JSON files in cockpit-data so persistence and
+# locking semantics match what's already in place. The cache TTL applies
+# the same way — saves invalidate, reads coalesce.
+#
+# Layered design:
+#   - SCRIPT_CATALOG: hardcoded source-of-truth for what scripts can be
+#     scheduled, plus what context fields each one requires.
+#   - load_/save_/append_ helpers: same pattern as load_invite_log().
+#   - Validators: enforce schema invariants before persistence.
+#
+# What's NOT here (intentionally — added in later building blocks):
+#   - The actual cron firing engine (APScheduler boot)
+#   - Run-now execution that invokes scripts
+#   - Token refresh for headless runs
+#
+# This block is pure CRUD + validation. The endpoints below expose it.
 
-def append_activity(event_type: str,
-                    project_key: str = None,
-                    actor: str = None,
-                    **fields):
-    """Append a non-invite event to the shared activity log.
+# Hardcoded catalog of schedulable scripts. Adding a new script means:
+#   1. Add an entry here
+#   2. Make sure the script file actually exists in code{Forma,Revizto,Morta}/
+#   3. Make sure the runner (later block) knows how to invoke it
+SCRIPT_CATALOG = {
+    # Forma
+    "Forma_GET_Models": {
+        "platform":         "forma",
+        "display_name":     "Models list",
+        "required_context": ["project_id"],
+        "description":      "List all models in a project. Useful as input to other automations.",
+    },
+    "Forma_GET_Model_Properties": {
+        "platform":         "forma",
+        "display_name":     "Model properties (L3)",
+        "required_context": ["project_id", "model_item_id", "model_name"],
+        "description":      "Full element-level properties dump from a single model. Large output (~5GB on Wynn-scale models).",
+    },
+    "Proccesed_Model_Properties": {
+        "platform":         "forma",
+        "display_name":     "Model health report (L4)",
+        "required_context": ["project_id", "model_item_id", "model_name"],
+        "description":      "Summary report + aggregate breakdown built from L3 output. Requires L3 to have run first.",
+    },
+    # Revizto
+    "Revizto_GET_Project_Members": {
+        "platform":         "revizto",
+        "display_name":     "Project members",
+        "required_context": ["project_uuid"],
+        "description":      "Members + roles for a single Revizto project.",
+    },
+    "Revizto_GET_Project_Issues": {
+        "platform":         "revizto",
+        "display_name":     "Project issues",
+        "required_context": ["project_uuid"],
+        "description":      "All issues with current state (status, assignees, comments).",
+    },
+    "Revizto_GET_Clash_Tests": {
+        "platform":         "revizto",
+        "display_name":     "Clash tests",
+        "required_context": ["project_uuid"],
+        "description":      "Clash test definitions + last-run statistics.",
+    },
+    "Revizto_GET_License_Members": {
+        "platform":         "revizto",
+        "display_name":     "License members",
+        "required_context": [],
+        "description":      "All members across the license. License-level (no project required).",
+    },
+    # Morta
+    "Morta_GET_Hub_Members": {
+        "platform":         "morta",
+        "display_name":     "Hub members",
+        "required_context": [],
+        "description":      "All members of the Morta hub.",
+    },
+    "Morta_GET_Member_Tags": {
+        "platform":         "morta",
+        "display_name":     "Member tags",
+        "required_context": [],
+        "description":      "Tag assignments per member.",
+    },
+}
 
-    The log file is still invite_log.json (kept for backward-compat) but
-    entries now carry a `type` field so the feed can render different
-    event kinds. Existing invite entries have no `type` field — readers
-    treat that as type='invite'.
+# Output formats the scheduler accepts. CSV/XLSX support depends on the
+# script — most produce JSON natively; CSV/XLSX may require post-conversion
+# (the script runner will handle that in a later block).
+VALID_OUTPUT_FORMATS = {"csv", "json", "xlsx"}
 
-    event_type: one of 'extraction', 'registry_edit', 'metadata_sync',
-                'package_bake', 'portal_decision'. (Invite events
-                continue to be written by the existing invite-log code
-                path with no `type` field, so they're implicitly typed.)
-    project_key: registry key the event is scoped to (None = global)
-    actor:       email of the admin who triggered the event
-    **fields:    event-specific extra data (status, counts, detail, etc.)
+# Schedule frequencies the UI offers. The actual cron firing logic
+# interprets these in a later block; here we just validate the shape.
+VALID_FREQUENCIES = {"daily", "weekdays", "weekend", "weekly", "monthly"}
+
+# Destination types. "blob" is the only one supported this round; others
+# are listed so we reject unknown values explicitly rather than silently
+# accept and break later.
+VALID_DESTINATIONS = {"blob"}    # future: "egnyte", "sharepoint", "morta"
+
+AUTO_DISABLE_AFTER_FAILURES = 3
+RUN_LOG_MAX_ENTRIES         = 1000
+
+def _new_id(prefix: str) -> str:
+    """Generate a short-ish, sortable-ish unique ID. Format:
+    <prefix>_<base36 timestamp ms>_<4 base36 random chars>. Collisions
+    are essentially impossible for our scale; the timestamp prefix means
+    new IDs sort after old ones lexicographically too.
     """
-    entry = {
-        "type":        event_type,
-        "date":        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "project_key": project_key,
-        "actor":       actor,
-    }
-    entry.update(fields)
-    append_invite_log([entry])
+    import time, random, string
+    t = int(time.time() * 1000)
+    base36 = ""
+    while t > 0:
+        t, r = divmod(t, 36)
+        base36 = (string.digits + string.ascii_lowercase)[r] + base36
+    rand = "".join(random.choice(string.digits + string.ascii_lowercase) for _ in range(4))
+    return f"{prefix}_{base36}{rand}"
+
+# ── load/save: shards ─────────────────────────────────────────────────────
+
+def load_shards() -> list:
+    """Return the full list of shard records (cached)."""
+    cached = _cache_get("shards.json")
+    if cached is not None:
+        return cached
+    if USE_BLOB:
+        data = blob_read("shards.json")
+        if data is not None:
+            _cache_set("shards.json", data)
+            return data
+    # No legacy disk file — this is a new feature
+    _cache_set("shards.json", [])
+    return []
+
+def save_shards(shards: list) -> None:
+    """Persist shards. Also invalidates cache so next read sees the change."""
+    if USE_BLOB:
+        blob_write("shards.json", shards)
+    _cache_invalidate("shards.json")
+
+# ── load/save: compilers ──────────────────────────────────────────────────
+
+def load_compilers() -> list:
+    cached = _cache_get("compilers.json")
+    if cached is not None:
+        return cached
+    if USE_BLOB:
+        data = blob_read("compilers.json")
+        if data is not None:
+            _cache_set("compilers.json", data)
+            return data
+    _cache_set("compilers.json", [])
+    return []
+
+def save_compilers(compilers: list) -> None:
+    if USE_BLOB:
+        blob_write("compilers.json", compilers)
+    _cache_invalidate("compilers.json")
+
+# ── load/save: run log ────────────────────────────────────────────────────
+
+def load_runs() -> list:
+    cached = _cache_get("automation_runs.json")
+    if cached is not None:
+        return cached
+    if USE_BLOB:
+        data = blob_read("automation_runs.json")
+        if data is not None:
+            _cache_set("automation_runs.json", data)
+            return data
+    _cache_set("automation_runs.json", [])
+    return []
+
+def save_runs(runs: list) -> None:
+    if USE_BLOB:
+        blob_write("automation_runs.json", runs)
+    _cache_invalidate("automation_runs.json")
+
+def append_run(record: dict) -> None:
+    """Append a run record, trimming to RUN_LOG_MAX_ENTRIES."""
+    runs = load_runs()
+    runs.append(record)
+    if len(runs) > RUN_LOG_MAX_ENTRIES:
+        runs = runs[-RUN_LOG_MAX_ENTRIES:]
+    save_runs(runs)
+
+# ── Validators ────────────────────────────────────────────────────────────
+# Pure functions returning (ok, error_message). Each endpoint that mutates
+# state runs the matching validator first; on failure the request is
+# rejected with a 400 and a helpful message.
+
+def validate_shard(payload: dict, *, allow_partial: bool = False) -> tuple[bool, str]:
+    """Validate a shard create/update payload. allow_partial=True relaxes
+    the required-field check for PUT (where the existing record fills
+    in missing fields)."""
+    # Name
+    name = (payload.get("name") or "").strip()
+    if not name and not allow_partial:
+        return False, "Shard name is required."
+    if name and len(name) > 100:
+        return False, "Shard name must be 100 characters or fewer."
+
+    # Script (required even for partial updates if present)
+    script = payload.get("script")
+    if script is None and not allow_partial:
+        return False, "Shard script is required."
+    if script is not None:
+        if script not in SCRIPT_CATALOG:
+            return False, f"Unknown script {script!r}. Allowed: {sorted(SCRIPT_CATALOG.keys())}"
+
+    # Platform must match the catalog's view of the script
+    platform = payload.get("platform")
+    if script is not None and platform is not None:
+        expected = SCRIPT_CATALOG[script]["platform"]
+        if platform != expected:
+            return False, f"Platform {platform!r} doesn't match script {script!r} (expected {expected!r})."
+
+    # Context: required keys must be present + non-empty
+    if script is not None:
+        ctx = payload.get("context") or {}
+        if not isinstance(ctx, dict):
+            return False, "Context must be an object/dict."
+        for required_key in SCRIPT_CATALOG[script]["required_context"]:
+            v = ctx.get(required_key)
+            if v is None or (isinstance(v, str) and not v.strip()):
+                return False, f"Script {script} requires context.{required_key}."
+
+    # Output
+    out = payload.get("output") or {}
+    if out:
+        fmt = out.get("format")
+        if fmt is not None and fmt not in VALID_OUTPUT_FORMATS:
+            return False, f"Invalid output format {fmt!r}. Allowed: {sorted(VALID_OUTPUT_FORMATS)}"
+
+    # Destination
+    dest = payload.get("destination") or {}
+    if dest:
+        dtype = dest.get("type")
+        if dtype is not None and dtype not in VALID_DESTINATIONS:
+            return False, f"Destination type {dtype!r} not yet supported. Available now: {sorted(VALID_DESTINATIONS)}"
+
+    return True, ""
+
+
+def validate_compiler(payload: dict, *, allow_partial: bool = False) -> tuple[bool, str]:
+    """Validate a compiler create/update payload."""
+    name = (payload.get("name") or "").strip()
+    if not name and not allow_partial:
+        return False, "Compiler name is required."
+    if name and len(name) > 100:
+        return False, "Compiler name must be 100 characters or fewer."
+
+    sched = payload.get("schedule")
+    if sched is None and not allow_partial:
+        return False, "Compiler schedule is required."
+    if sched is not None:
+        if not isinstance(sched, dict):
+            return False, "Schedule must be an object/dict."
+        freq = sched.get("frequency")
+        if freq not in VALID_FREQUENCIES:
+            return False, f"Invalid frequency {freq!r}. Allowed: {sorted(VALID_FREQUENCIES)}"
+        # Time format HH:MM (24h)
+        t = sched.get("time", "")
+        if t:
+            import re
+            if not re.match(r"^[0-2]\d:[0-5]\d$", t):
+                return False, f"Time must be HH:MM (24-hour). Got {t!r}."
+
+    # shard_ids: optional (empty compilers are allowed); each ID must
+    # exist + must not already belong to another compiler.
+    shard_ids = payload.get("shard_ids")
+    if shard_ids is not None:
+        if not isinstance(shard_ids, list):
+            return False, "shard_ids must be a list."
+        if len(set(shard_ids)) != len(shard_ids):
+            return False, "shard_ids contains duplicates."
+
+    return True, ""
+
+# ── Sync helper: keep shards' in_compiler field consistent ────────────────
+# The reverse pointer (shard.in_compiler -> compiler.id) is a denormalised
+# view of which shards belong to which compiler. We keep it in sync after
+# any compiler write so the UI doesn't have to scan all compilers to
+# answer "where is this shard?".
+
+def _sync_shard_compiler_links() -> None:
+    """Recompute every shard's in_compiler field by scanning all compilers.
+    Called after compiler create/update/delete to keep the denormalised
+    view consistent. O(shards * compilers) but both lists are small."""
+    shards = load_shards()
+    compilers = load_compilers()
+    # Build authoritative shard_id -> compiler_id map
+    shard_to_compiler: dict[str, str] = {}
+    for c in compilers:
+        for sid in c.get("shard_ids") or []:
+            shard_to_compiler[sid] = c["id"]
+    # Apply
+    changed = False
+    for s in shards:
+        new_link = shard_to_compiler.get(s["id"])
+        if s.get("in_compiler") != new_link:
+            s["in_compiler"] = new_link
+            changed = True
+    if changed:
+        save_shards(shards)
+
 
 # ---------------------------------------------------------------------------
 # Per-user temp directory  (extraction outputs, session-scoped, 24h TTL)
@@ -1172,58 +1451,9 @@ async def api_forma_models(request: Request, user: str = Depends(require_user)):
     if not top_folders:
         return JSONResponse({"models": [], "error": "No folders found in project."})
 
+    print(f"[Forma] Walking {len(top_folders)} top folder(s)...")
+
     MODEL_EXTS = {".rvt", ".ifc", ".nwc", ".nwd"}
-
-    def _name(folder):
-        return (folder.get("attributes", {}).get("displayName", "") or "")
-
-    def _has_shared_in_name(folder):
-        return "shared" in _name(folder).lower()
-
-    # ── Resolve the SHARED entry point ────────────────────────────────
-    # ACC's API returns whatever the project's "topFolders" are, which can
-    # be either the SHARED folders directly OR a wrapper folder ("Project
-    # Files") with the SHARED folders nested inside as children. Try the
-    # top level first; if nothing matches, descend one level into each
-    # wrapper and look at its children for SHARED-named folders.
-    shared_folders = [f for f in top_folders if _has_shared_in_name(f)]
-
-    if not shared_folders:
-        # Fallback: probe each top folder for SHARED-named immediate
-        # children. This is the path your Wynn project takes — Forma
-        # returns "Project Files" only at the top level.
-        print(f"[Forma] No SHARED at top level; descending into "
-              f"{[_name(f) for f in top_folders]} to look for SHARED children…")
-        for wrapper in top_folders:
-            wid    = wrapper.get("id")
-            wname  = _name(wrapper)
-            try:
-                r = http_requests.get(
-                    f"{base_url}/data/v1/projects/b.{project_id}/folders/{wid}/contents",
-                    headers=headers,
-                    params={"page[number]": 0, "page[limit]": 200},
-                    timeout=20,
-                )
-            except Exception as e:
-                print(f"[Forma] Timeout/error probing wrapper {wname}: {e}")
-                continue
-            if r.status_code != 200:
-                print(f"[Forma] Wrapper {wname} returned {r.status_code}")
-                continue
-            for child in (r.json().get("data") or []):
-                if child.get("type") != "folders":
-                    continue
-                if _has_shared_in_name(child):
-                    print(f"[Forma]   → matched child '{_name(child)}' under '{wname}'")
-                    shared_folders.append(child)
-
-    if not shared_folders:
-        return JSONResponse({
-            "models": [],
-            "error": "No SHARED folder found in this project (checked top level + one level down).",
-        })
-
-    print(f"[Forma] SHARED entry points: {[_name(f) for f in shared_folders]}")
 
     def walk_all():
         found_models    = []
@@ -1268,7 +1498,7 @@ async def api_forma_models(request: Request, user: str = Depends(require_user)):
                     break
                 page += 1
 
-        for folder in shared_folders:
+        for folder in top_folders:
             fname = folder.get("attributes", {}).get("displayName", folder["id"])
             walk_folder(folder["id"], fname)
 
@@ -2519,10 +2749,6 @@ async def api_pending_process(project_key: str, sub_idx: int, request: Request, 
         data[project_key]["submissions"][sub_idx]["users"] = users
     _save_portal_requests(data)
 
-    append_activity("portal_decision", project_key=project_key, actor=user,
-                    sub_idx=sub_idx, success=success, errors=errors, rejected=rejected,
-                    user_count=len(users))
-
     return JSONResponse({"success": success, "errors": errors, "rejected": rejected})
 
 
@@ -2582,8 +2808,6 @@ async def api_registry_create(request: Request, user: str = Depends(require_owne
         "admins": [a.strip().lower() for a in body.get("admins", "").split(",") if a.strip()],
     }
     save_registry(registry)
-    append_activity("registry_edit", project_key=key, actor=user,
-                    action="create", project_name=registry[key]["name"])
     return JSONResponse({"status": "ok", "key": key})
 
 @app.put("/api/registry/project/{key}")
@@ -2603,19 +2827,14 @@ async def api_registry_update(key: str, request: Request, user: str = Depends(re
         "admins": [a.strip().lower() for a in body.get("admins", "").split(",") if a.strip()],
     })
     save_registry(registry)
-    append_activity("registry_edit", project_key=key, actor=user,
-                    action="update", project_name=registry[key]["name"])
     return JSONResponse({"status": "ok"})
 
 @app.delete("/api/registry/project/{key}")
 async def api_registry_delete(key: str, user: str = Depends(require_owner)):
     registry = load_registry()
     if key in registry:
-        deleted_name = registry[key].get("name", key)
         del registry[key]
         save_registry(registry)
-        append_activity("registry_edit", project_key=key, actor=user,
-                        action="delete", project_name=deleted_name)
     return JSONResponse({"status": "ok"})
 
 
@@ -2631,9 +2850,6 @@ async def api_registry_sync(key: str, request: Request, user: str = Depends(requ
 
     results = _sync_project_metadata(user, key, registry)
     save_registry(registry)
-    append_activity("metadata_sync", project_key=key, actor=user,
-                    scope="single", project_name=registry[key].get("name", key),
-                    synced=results)
     return JSONResponse({"status": "ok", "synced": results})
 
 
@@ -2682,8 +2898,6 @@ async def api_registry_sync_mine(request: Request, user: str = Depends(require_u
             }
 
     save_registry(registry)
-    append_activity("metadata_sync", project_key=None, actor=user,
-                    scope="batch", project_count=len(keys))
     return JSONResponse({
         "status":      "ok",
         "project_count": len(keys),
@@ -3851,21 +4065,6 @@ async def api_extract(request: Request, user: str = Depends(require_user)):
             except Exception as e:
                 print(f"[l4] Failed to stamp L3 run for {script_name}: {e}")
 
-        # Log the extraction event to the activity feed
-        try:
-            cfg_ctx = (load_config(user).get("active_context") or {})
-            append_activity(
-                "extraction",
-                project_key=cfg_ctx.get("active_project_key"),
-                actor=user,
-                script=script_name,
-                platform=platform_key,
-                status="success" if ok else "error",
-                file_count=len(files),
-            )
-        except Exception:
-            pass  # never block the response on logging
-
         return JSONResponse({
             "status":  "success" if ok else "error",
             "message": "Extraction complete." if ok else f"Script exited with code {result.returncode}.",
@@ -4106,21 +4305,6 @@ async def api_extract_stream(request: Request, user: str = Depends(require_user)
                     _stamp_l3_run(user, script_name, [f["filename"] for f in files])
                 except Exception as e:
                     print(f"[l4] Failed to stamp L3 run for {script_name}: {e}")
-
-            # Log the extraction event to the activity feed
-            try:
-                cfg_ctx = (load_config(user).get("active_context") or {})
-                append_activity(
-                    "extraction",
-                    project_key=cfg_ctx.get("active_project_key"),
-                    actor=user,
-                    script=script_name,
-                    platform=platform_key,
-                    status="success" if ok else "error",
-                    file_count=len(files),
-                )
-            except Exception:
-                pass  # never block the stream on logging
 
             done_payload = json.dumps({
                 "status":  "success" if ok else "error",
@@ -4569,10 +4753,6 @@ async def api_bake(request: Request, user: str = Depends(require_user)):
     index = load_packages_index()
     index[pkg_id] = pkg_entry
     save_packages_index(index)
-
-    append_activity("package_bake", project_key=project_key or None, actor=user,
-                    pkg_id=pkg_id, platform=platform, script=script, label=label,
-                    file_count=len(file_meta))
 
     return JSONResponse({"status": "ok", "pkg_id": pkg_id, "expires_at": expires_at})
 
@@ -5622,19 +5802,12 @@ async def api_exports_read(filename: str, user: str = Depends(require_user)):
 async def api_invite_log(
     project_key: str = None,
     limit: int = 50,
-    type: str = None,
     user: str = Depends(require_user)
 ):
-    """Return activity log entries scoped to the user's registry projects.
+    """Return invite log entries scoped to the user's registry projects.
 
     project_key: if provided, filter to that specific project only.
     limit: max entries to return (most recent first), default 50.
-    type:  filter by event type. Supported values:
-           - 'invite'  → invite events only (entries with no `type` field
-                         are treated as invites for backward-compat)
-           - 'extraction', 'registry_edit', 'metadata_sync',
-             'package_bake', 'portal_decision' → match exactly
-           - None (default) → all event types
     """
     log           = load_invite_log()
     user_projects = get_user_projects(user)
@@ -5647,13 +5820,6 @@ async def api_invite_log(
     # If a specific project is selected, filter to that project only
     if project_key:
         log = [e for e in log if e.get("project_key") == project_key]
-
-    # Filter by event type (invites are entries without an explicit type)
-    if type:
-        if type == "invite":
-            log = [e for e in log if not e.get("type")]
-        else:
-            log = [e for e in log if e.get("type") == type]
 
     # Most recent first, capped at limit
     log = log[-limit:][::-1]
@@ -6184,6 +6350,260 @@ async def api_user_search(email: str, user: str = Depends(require_user)):
 # Pre-warm the cache now that all loaders are defined. This pays the
 # blob round-trip cost once at worker startup so the first user request
 # lands on an already-warm cache.
+# ---------------------------------------------------------------------------
+# Scheduler — API Endpoints
+# ---------------------------------------------------------------------------
+# All routes admin-only via require_user (every authenticated user is an
+# admin in this app — there's no separate admin-vs-user distinction).
+#
+# Endpoints exposed:
+#   GET    /api/scheduler/scripts         — script catalog (no state)
+#   GET    /api/scheduler/shards          — list all shards
+#   POST   /api/scheduler/shards          — create
+#   PUT    /api/scheduler/shards/{id}     — update
+#   DELETE /api/scheduler/shards/{id}     — delete (blocked if in compiler)
+#   POST   /api/scheduler/shards/{id}/toggle — pause/resume
+#   GET    /api/scheduler/compilers       — list
+#   POST   /api/scheduler/compilers       — create
+#   PUT    /api/scheduler/compilers/{id}  — update
+#   DELETE /api/scheduler/compilers/{id}  — delete (frees its shards)
+#   POST   /api/scheduler/compilers/{id}/toggle — pause/resume
+#   GET    /api/scheduler/runs            — recent run records
+#
+# What's NOT here (next building block): /run endpoints that actually fire.
+
+@app.get("/api/scheduler/scripts")
+async def api_scheduler_scripts(user: str = Depends(require_user)):
+    """Return the static script catalog. Used by the UI to populate
+    Platform/Script dropdowns and validate context fields client-side."""
+    return JSONResponse({
+        "scripts": SCRIPT_CATALOG,
+        "valid_formats":      sorted(VALID_OUTPUT_FORMATS),
+        "valid_frequencies":  sorted(VALID_FREQUENCIES),
+        "valid_destinations": sorted(VALID_DESTINATIONS),
+    })
+
+# ── Shards CRUD ────────────────────────────────────────────────────────────
+
+@app.get("/api/scheduler/shards")
+async def api_scheduler_shards_list(user: str = Depends(require_user)):
+    """List all shards. Shared pool — every admin sees every shard."""
+    return JSONResponse({"shards": load_shards()})
+
+@app.post("/api/scheduler/shards")
+async def api_scheduler_shard_create(request: Request, user: str = Depends(require_user)):
+    payload = await request.json()
+    ok, err = validate_shard(payload, allow_partial=False)
+    if not ok:
+        return JSONResponse({"error": err}, status_code=400)
+
+    now = int(time.time() * 1000)
+    shard = {
+        "id":            _new_id("shard"),
+        "name":          payload["name"].strip(),
+        "platform":      SCRIPT_CATALOG[payload["script"]]["platform"],
+        "script":        payload["script"],
+        "context":       payload.get("context") or {},
+        "output":        payload.get("output") or {"format": "json", "prefix": "", "naming": ["append_date"]},
+        "destination":   payload.get("destination") or {"type": "blob"},
+        "active":        bool(payload.get("active", True)),
+        "in_compiler":   None,    # always null at create — joins compiler later
+        "consecutive_failures": 0,
+        "auto_disabled": False,
+        "created_by":    user,
+        "created_at":    now,
+        "updated_at":    now,
+        "last_run_id":   None,
+    }
+    shards = load_shards()
+    shards.append(shard)
+    save_shards(shards)
+    return JSONResponse({"shard": shard})
+
+@app.put("/api/scheduler/shards/{shard_id}")
+async def api_scheduler_shard_update(shard_id: str, request: Request,
+                                      user: str = Depends(require_user)):
+    payload = await request.json()
+    ok, err = validate_shard(payload, allow_partial=True)
+    if not ok:
+        return JSONResponse({"error": err}, status_code=400)
+
+    shards = load_shards()
+    idx = next((i for i, s in enumerate(shards) if s["id"] == shard_id), -1)
+    if idx < 0:
+        return JSONResponse({"error": "Shard not found."}, status_code=404)
+
+    shard = shards[idx]
+    # Apply only the fields present in the payload, preserving everything else
+    if "name" in payload:        shard["name"]        = payload["name"].strip()
+    if "script" in payload:      shard["script"]      = payload["script"]
+    if "platform" in payload:    shard["platform"]    = payload["platform"]
+    if "context" in payload:     shard["context"]     = payload["context"] or {}
+    if "output" in payload:      shard["output"]      = payload["output"] or {}
+    if "destination" in payload: shard["destination"] = payload["destination"] or {}
+    if "active" in payload:      shard["active"]      = bool(payload["active"])
+    # If platform/script changed, re-derive platform from catalog to stay consistent
+    if "script" in payload:
+        shard["platform"] = SCRIPT_CATALOG[payload["script"]]["platform"]
+    shard["updated_at"] = int(time.time() * 1000)
+    shards[idx] = shard
+    save_shards(shards)
+    return JSONResponse({"shard": shard})
+
+@app.delete("/api/scheduler/shards/{shard_id}")
+async def api_scheduler_shard_delete(shard_id: str, user: str = Depends(require_user)):
+    shards = load_shards()
+    target = next((s for s in shards if s["id"] == shard_id), None)
+    if target is None:
+        return JSONResponse({"error": "Shard not found."}, status_code=404)
+    # Block deletion if shard is referenced by a compiler. The user must
+    # remove it from the compiler first — protects against accidental
+    # deletion of a shard that's part of an active automation.
+    if target.get("in_compiler"):
+        return JSONResponse({
+            "error": "This shard belongs to a compiler. Remove it from the compiler first.",
+            "in_compiler": target["in_compiler"],
+        }, status_code=409)
+    shards = [s for s in shards if s["id"] != shard_id]
+    save_shards(shards)
+    return JSONResponse({"deleted": shard_id})
+
+@app.post("/api/scheduler/shards/{shard_id}/toggle")
+async def api_scheduler_shard_toggle(shard_id: str, user: str = Depends(require_user)):
+    shards = load_shards()
+    idx = next((i for i, s in enumerate(shards) if s["id"] == shard_id), -1)
+    if idx < 0:
+        return JSONResponse({"error": "Shard not found."}, status_code=404)
+    shards[idx]["active"] = not shards[idx].get("active", True)
+    shards[idx]["updated_at"] = int(time.time() * 1000)
+    save_shards(shards)
+    return JSONResponse({"shard": shards[idx]})
+
+# ── Compilers CRUD ────────────────────────────────────────────────────────
+
+@app.get("/api/scheduler/compilers")
+async def api_scheduler_compilers_list(user: str = Depends(require_user)):
+    return JSONResponse({"compilers": load_compilers()})
+
+@app.post("/api/scheduler/compilers")
+async def api_scheduler_compiler_create(request: Request,
+                                         user: str = Depends(require_user)):
+    payload = await request.json()
+    ok, err = validate_compiler(payload, allow_partial=False)
+    if not ok:
+        return JSONResponse({"error": err}, status_code=400)
+
+    # Validate referenced shards exist + aren't already in another compiler
+    shard_ids = payload.get("shard_ids") or []
+    if shard_ids:
+        shards = load_shards()
+        shard_index = {s["id"]: s for s in shards}
+        for sid in shard_ids:
+            if sid not in shard_index:
+                return JSONResponse({"error": f"Shard {sid} not found."}, status_code=400)
+            existing = shard_index[sid].get("in_compiler")
+            if existing:
+                return JSONResponse({
+                    "error": f"Shard {sid} is already in compiler {existing}. "
+                             "Remove from the other compiler first."
+                }, status_code=409)
+
+    now = int(time.time() * 1000)
+    compiler = {
+        "id":         _new_id("compiler"),
+        "name":       payload["name"].strip(),
+        "schedule":   payload["schedule"],
+        "shard_ids":  shard_ids,
+        "active":     bool(payload.get("active", True)),
+        "created_by": user,
+        "created_at": now,
+        "updated_at": now,
+        "last_run_id": None,
+    }
+    compilers = load_compilers()
+    compilers.append(compiler)
+    save_compilers(compilers)
+    _sync_shard_compiler_links()
+    return JSONResponse({"compiler": compiler})
+
+@app.put("/api/scheduler/compilers/{compiler_id}")
+async def api_scheduler_compiler_update(compiler_id: str, request: Request,
+                                         user: str = Depends(require_user)):
+    payload = await request.json()
+    ok, err = validate_compiler(payload, allow_partial=True)
+    if not ok:
+        return JSONResponse({"error": err}, status_code=400)
+
+    compilers = load_compilers()
+    idx = next((i for i, c in enumerate(compilers) if c["id"] == compiler_id), -1)
+    if idx < 0:
+        return JSONResponse({"error": "Compiler not found."}, status_code=404)
+
+    # If shard_ids changing, validate ownership transitions
+    if "shard_ids" in payload:
+        new_shard_ids = payload["shard_ids"] or []
+        shards = load_shards()
+        shard_index = {s["id"]: s for s in shards}
+        for sid in new_shard_ids:
+            if sid not in shard_index:
+                return JSONResponse({"error": f"Shard {sid} not found."}, status_code=400)
+            existing = shard_index[sid].get("in_compiler")
+            if existing and existing != compiler_id:
+                return JSONResponse({
+                    "error": f"Shard {sid} is already in compiler {existing}. "
+                             "Remove from the other compiler first."
+                }, status_code=409)
+
+    c = compilers[idx]
+    if "name" in payload:       c["name"]       = payload["name"].strip()
+    if "schedule" in payload:   c["schedule"]   = payload["schedule"]
+    if "shard_ids" in payload:  c["shard_ids"]  = payload["shard_ids"] or []
+    if "active" in payload:     c["active"]     = bool(payload["active"])
+    c["updated_at"] = int(time.time() * 1000)
+    compilers[idx] = c
+    save_compilers(compilers)
+    _sync_shard_compiler_links()
+    return JSONResponse({"compiler": c})
+
+@app.delete("/api/scheduler/compilers/{compiler_id}")
+async def api_scheduler_compiler_delete(compiler_id: str,
+                                         user: str = Depends(require_user)):
+    compilers = load_compilers()
+    if not any(c["id"] == compiler_id for c in compilers):
+        return JSONResponse({"error": "Compiler not found."}, status_code=404)
+    compilers = [c for c in compilers if c["id"] != compiler_id]
+    save_compilers(compilers)
+    # Rerun link sync — orphaned shards have their in_compiler cleared
+    _sync_shard_compiler_links()
+    return JSONResponse({"deleted": compiler_id})
+
+@app.post("/api/scheduler/compilers/{compiler_id}/toggle")
+async def api_scheduler_compiler_toggle(compiler_id: str,
+                                         user: str = Depends(require_user)):
+    compilers = load_compilers()
+    idx = next((i for i, c in enumerate(compilers) if c["id"] == compiler_id), -1)
+    if idx < 0:
+        return JSONResponse({"error": "Compiler not found."}, status_code=404)
+    compilers[idx]["active"] = not compilers[idx].get("active", True)
+    compilers[idx]["updated_at"] = int(time.time() * 1000)
+    save_compilers(compilers)
+    return JSONResponse({"compiler": compilers[idx]})
+
+# ── Runs ──────────────────────────────────────────────────────────────────
+
+@app.get("/api/scheduler/runs")
+async def api_scheduler_runs_list(limit: int = 100,
+                                   user: str = Depends(require_user)):
+    """Return the most recent N run records (most recent first)."""
+    runs = load_runs()
+    # Newest first
+    runs_sorted = sorted(runs, key=lambda r: r.get("started_at", 0), reverse=True)
+    return JSONResponse({"runs": runs_sorted[:max(1, min(limit, 500))]})
+
+
+# ---------------------------------------------------------------------------
+# Pre-warm cache at startup (must run after all routes are defined)
+# ---------------------------------------------------------------------------
 try:
     _prewarm_cache()
 except Exception as _prewarm_err:
