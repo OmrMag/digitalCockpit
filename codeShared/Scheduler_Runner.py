@@ -519,7 +519,16 @@ def _check_l4_dependency_for_shard(
     user: str,
     check_l4_dependency: Callable[[str, str], dict],
 ) -> Optional[dict]:
-    """Return the dep-check result if this shard's script is an L4, else None.
+    """Return a dep-check result ONLY if this shard's script is registered
+    in L4_DEPENDENCIES. For all other scripts (the majority), this returns
+    None — meaning "no dependency to check, proceed with the run".
+
+    The cockpit's _check_l4_dependency() returns reason='unknown_script'
+    for scripts not in its map. That's a "no dep needed" signal, NOT a
+    failure — we filter it out here so the runner doesn't mistakenly
+    block scripts that simply have no L4 prerequisite (e.g.
+    Revizto_GET_License_Members, Morta_GET_Hub_Members,
+    Forma_GET_Models, etc.).
 
     Note we use a slightly modified check: the cockpit's _check_l4_dependency
     looks at the user's CURRENT config context. For shards we want to check
@@ -530,12 +539,17 @@ def _check_l4_dependency_for_shard(
     same admin who created the shard. Edge case: an admin running another
     admin's shard. We accept this approximation for Block 4."""
     script = shard.get("script", "")
-    # Heuristic: only L4 scripts are gated. We check via the callback,
-    # which itself checks if the script is in L4_DEPENDENCIES.
     try:
-        return check_l4_dependency(user, script)
+        result = check_l4_dependency(user, script)
     except Exception:
         return None
+    if not isinstance(result, dict):
+        return None
+    # 'unknown_script' = "I don't have a dependency entry for this script,
+    # which means it doesn't have one." Treat as pass-through.
+    if result.get("reason") == "unknown_script":
+        return None
+    return result
 
 
 def _collect_output_files(run_temp: Path) -> list[Path]:
