@@ -190,7 +190,7 @@
       <!-- Runs pane -->
       <div class="pane" id="pane-runs">
         <div id="runs-empty" class="empty-state">
-          <span class="empty-text">No runs yet. Runs appear here once "Run now" is wired up (coming next).</span>
+          <span class="empty-text">No runs yet. Click Run now on a shard or compiler to fire one.</span>
         </div>
         <div id="runs-list"></div>
       </div>
@@ -423,7 +423,7 @@
     let body = null;
     try { body = await res.json(); } catch(e){}
     if (!res.ok) {
-      const errMsg = (body && body.error) || ('HTTP '+res.status);
+      const errMsg = (body && (body.error || body.detail)) || ('HTTP '+res.status);
       throw new Error(errMsg);
     }
     return body;
@@ -579,7 +579,7 @@
       +     '<div class="auto-row-meta">'+escHtml((cat.platform||s.platform||'').toUpperCase())+' · '+escHtml(shardSourceLine(s))+' · '+escHtml(compilerLine)+'</div>'
       +   '</div>'
       +   '<div class="auto-row-actions">'
-      +     '<button class="icon-btn" title="Run now (coming soon)" disabled><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z"/></svg></button>'
+      +     '<button class="icon-btn" title="Run now" onclick="runShard(\''+s.id+'\')"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z"/></svg></button>'
       +     '<button class="icon-btn" title="'+(s.active?'Pause':'Resume')+'" onclick="toggleShard(\''+s.id+'\')">'+(s.active?'<svg xmlns=\"http://www.w3.org/2000/svg\" fill=\"none\" viewBox=\"0 0 24 24\" stroke-width=\"2\" stroke=\"currentColor\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" d=\"M15.75 5.25v13.5m-7.5-13.5v13.5\"/></svg>':'<svg xmlns=\"http://www.w3.org/2000/svg\" fill=\"none\" viewBox=\"0 0 24 24\" stroke-width=\"2\" stroke=\"currentColor\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" d=\"M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z\"/></svg>')+'</button>'
       +     '<button class="icon-btn" title="Edit" onclick="openShardBuilder(\''+s.id+'\')"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z"/></svg></button>'
       +     '<button class="icon-btn del" title="Delete" onclick="deleteShard(\''+s.id+'\')"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166M5.79 5.79c.34-.059.68-.114 1.022-.165"/></svg></button>'
@@ -647,7 +647,7 @@
       +       '<div class="auto-row-meta">'+escHtml(scheduleSummary(c.schedule))+' · '+(c.shard_ids||[]).length+' shard(s)</div>'
       +     '</div>'
       +     '<div class="auto-row-actions">'
-      +       '<button class="icon-btn" title="Run now (coming soon)" disabled><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z"/></svg></button>'
+      +       '<button class="icon-btn" title="Run now" onclick="runCompiler(\''+c.id+'\')"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z"/></svg></button>'
       +       '<button class="icon-btn" title="'+(c.active?'Pause':'Resume')+'" onclick="toggleCompiler(\''+c.id+'\')">'+(c.active?'<svg xmlns=\"http://www.w3.org/2000/svg\" fill=\"none\" viewBox=\"0 0 24 24\" stroke-width=\"2\" stroke=\"currentColor\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" d=\"M15.75 5.25v13.5m-7.5-13.5v13.5\"/></svg>':'<svg xmlns=\"http://www.w3.org/2000/svg\" fill=\"none\" viewBox=\"0 0 24 24\" stroke-width=\"2\" stroke=\"currentColor\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" d=\"M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z\"/></svg>')+'</button>'
       +       '<button class="icon-btn" title="Edit" onclick="openCompilerBuilder(\''+c.id+'\')"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z"/></svg></button>'
       +       '<button class="icon-btn del" title="Delete compiler" onclick="deleteCompiler(\''+c.id+'\')"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166M5.79 5.79c.34-.059.68-.114 1.022-.165"/></svg></button>'
@@ -682,6 +682,83 @@
         + '</div>';
     }).join('');
   }
+
+  // ═════════════════════════════════════════════════════════════════
+  // BLOCK 4 — Run now actions + auto-refresh polling
+  // ═════════════════════════════════════════════════════════════════
+  let runsPollTimer = null;
+
+  // Returns true if any run in the currently-loaded list is still 'running'
+  function anyRunning(){
+    return Array.isArray(allRuns) && allRuns.some(r => r && r.status === 'running');
+  }
+
+  // Begin polling /api/scheduler/runs every 5s. Auto-stops when no runs
+  // are in 'running' state for 2 consecutive polls (handles the case
+  // where a run completes between polls).
+  function startRunsPolling(){
+    if (runsPollTimer) return; // already polling
+    let stableEmptyCount = 0;
+    runsPollTimer = setInterval(async () => {
+      try {
+        await loadRuns();
+        renderRuns();
+        if (!anyRunning()) {
+          stableEmptyCount += 1;
+          if (stableEmptyCount >= 2) {
+            stopRunsPolling();
+          }
+        } else {
+          stableEmptyCount = 0;
+        }
+      } catch(e) {
+        console.warn('Runs poll error:', e);
+      }
+    }, 5000);
+  }
+
+  function stopRunsPolling(){
+    if (runsPollTimer) {
+      clearInterval(runsPollTimer);
+      runsPollTimer = null;
+    }
+  }
+
+  window.runShard = async function(id){
+    const shard = allShards.find(x=>x.id===id);
+    const name = (shard && shard.name) || id;
+    try {
+      await api('/api/scheduler/shards/'+id+'/run', {method:'POST'});
+      toast('Started: '+name);
+      const runsTab = document.querySelector('[data-tab="runs"]');
+      if (runsTab) runsTab.click();
+      await loadRuns();
+      renderRuns();
+      startRunsPolling();
+    } catch(e) {
+      toast('Run failed: '+e.message, true);
+    }
+  };
+
+  window.runCompiler = async function(id){
+    const comp = allCompilers.find(x=>x.id===id);
+    const name = (comp && comp.name) || id;
+    if (!confirm('Run all shards in compiler "'+name+'" now?')) return;
+    try {
+      await api('/api/scheduler/compilers/'+id+'/run', {method:'POST'});
+      toast('Started: '+name);
+      const runsTab = document.querySelector('[data-tab="runs"]');
+      if (runsTab) runsTab.click();
+      await loadRuns();
+      renderRuns();
+      startRunsPolling();
+    } catch(e) {
+      toast('Run failed: '+e.message, true);
+    }
+  };
+  // ═════════════════════════════════════════════════════════════════
+  // BLOCK 4 END
+  // ═════════════════════════════════════════════════════════════════
 
   // ── Shard CRUD actions ────────────────────────────────────
   window.toggleShard = async function(id){

@@ -13,13 +13,16 @@ import urllib.parse
 from pathlib import Path
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
-from fastapi import FastAPI, Request, Form, UploadFile, File, Depends, Cookie, HTTPException
+from fastapi import FastAPI, Request, Form, UploadFile, File, Depends, Cookie, HTTPException, BackgroundTasks
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+
+# Block 4 — Scheduler runner + blob client for export containers
+from codeShared import Scheduler_Runner
+from codeShared import Blob_Client
 from itsdangerous import URLSafeSerializer
 import subprocess, sys
-import time
 import uuid
 
 # Lightweight readiness probe for /profile (Morta API + Revizto access).
@@ -6604,6 +6607,192 @@ async def api_scheduler_runs_list(limit: int = 100,
 # ---------------------------------------------------------------------------
 # Pre-warm cache at startup (must run after all routes are defined)
 # ---------------------------------------------------------------------------
+
+# ═══════════════════════════════════════════════════════════════════════════
+# BLOCK 4 — SCHEDULER "RUN NOW" ENDPOINTS                                   ▼
+# ═══════════════════════════════════════════════════════════════════════════
+# ── resolve_script_path ──────────────────────────────────────────────────
+# Translate (platform, script_name) into a concrete .py path under SCRIPT_DIRS.
+# Convention: scripts live at SCRIPT_DIRS[platform] / {script_name}.py
+# We DO NOT trust script_name from the request — the only legitimate values
+# are keys in SCRIPT_CATALOG. Any other value raises.
+def resolve_script_path(platform: str, script_name: str) -> Path:
+    if script_name not in SCRIPT_CATALOG:
+        raise ValueError(f"Unknown script: {script_name}")
+    catalog_entry = SCRIPT_CATALOG[script_name]
+    if catalog_entry["platform"] != platform:
+        raise ValueError(
+            f"Script {script_name} belongs to platform "
+            f"{catalog_entry['platform']}, not {platform}"
+        )
+    base = SCRIPT_DIRS.get(platform)
+    if not base:
+        raise ValueError(f"No script directory configured for platform: {platform}")
+    return Path(base) / f"{script_name}.py"
+
+
+# ── append_or_replace_run ────────────────────────────────────────────────
+# Run records get written twice — once at start (status=running) and once
+# at end (status=success/failed/partial). We need to update the existing
+# entry by id, not blindly append a duplicate.
+def _append_or_replace_run(record: dict) -> None:
+    runs = load_runs()
+    rid  = record.get("id")
+    found = False
+    for i, r in enumerate(runs):
+        if r.get("id") == rid:
+            runs[i] = record
+            found = True
+            break
+    if not found:
+        runs.append(record)
+    # Trim to RUN_LOG_MAX_ENTRIES (defined in Block 2)
+    if len(runs) > RUN_LOG_MAX_ENTRIES:
+        runs = runs[-RUN_LOG_MAX_ENTRIES:]
+    save_runs(runs)
+
+
+# ── update_one_shard ────────────────────────────────────────────────────
+# Update specific fields on a shard by id, leaving everything else intact.
+# Used by the runner to update consecutive_failures, auto_disabled, etc.
+def _update_one_shard(shard_id: str, updates: dict) -> None:
+    shards = load_shards()
+    for s in shards:
+        if s.get("id") == shard_id:
+            s.update(updates)
+            break
+    save_shards(shards)
+
+
+# ── load_shard_by_id ────────────────────────────────────────────────────
+def _load_shard_by_id(shard_id: str) -> dict | None:
+    for s in load_shards():
+        if s.get("id") == shard_id:
+            return s
+    return None
+
+
+# ── write_config_to_path ────────────────────────────────────────────────
+# Mirror of write_script_config, but operates on a pre-built config dict
+# instead of building one. (build_script_config is called separately by the
+# runner so it can apply the shard-context override before write.)
+def _write_config_to_path(cfg: dict, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(cfg, f, indent=2)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# POST /api/scheduler/shards/{id}/run — fire one shard now
+# ═══════════════════════════════════════════════════════════════════════════
+@app.post("/api/scheduler/shards/{shard_id}/run")
+async def scheduler_run_shard(
+    shard_id: str,
+    background_tasks: BackgroundTasks,
+    user: str = Depends(require_user),
+):
+    shard = _load_shard_by_id(shard_id)
+    if not shard:
+        raise HTTPException(status_code=404, detail="Shard not found")
+
+    if not shard.get("active", True):
+        raise HTTPException(status_code=409, detail="Shard is paused. Resume it first.")
+    if shard.get("auto_disabled"):
+        raise HTTPException(status_code=409, detail="Shard is auto-disabled. Resume it first.")
+
+    # Pre-generate the run_id so we can return it immediately. The runner
+    # will write the actual record from inside the background task.
+    # NB: The runner generates its OWN run_id internally — we don't pass
+    # this one in. Instead, we return a marker that the UI polls
+    # /api/scheduler/runs to find the new entry.
+    background_tasks.add_task(
+        Scheduler_Runner.run_shard,
+        shard=shard,
+        triggering_user=user,
+        build_config_for_user=build_script_config,
+        write_config_to_path=_write_config_to_path,
+        prepare_forma_3l_token=prepare_forma_3l_token,
+        prepare_revizto_tokens=prepare_revizto_tokens,
+        check_l4_dependency=_check_l4_dependency,
+        update_shard=_update_one_shard,
+        append_run=_append_or_replace_run,
+        blob_upload_file=Blob_Client.upload_file,
+        blob_generate_url=Blob_Client.generate_download_url,
+        blob_container_for_platform=Blob_Client.container_for_platform,
+        resolve_script_path=resolve_script_path,
+        stamp_l3_run=_stamp_l3_run,
+    )
+
+    return JSONResponse({
+        "status":   "queued",
+        "message":  f"Shard '{shard.get('name', shard_id)}' is running. Watch Recent Runs for status.",
+        "shard_id": shard_id,
+    })
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# POST /api/scheduler/compilers/{id}/run — fire all shards in a compiler
+# ═══════════════════════════════════════════════════════════════════════════
+@app.post("/api/scheduler/compilers/{compiler_id}/run")
+async def scheduler_run_compiler(
+    compiler_id: str,
+    background_tasks: BackgroundTasks,
+    user: str = Depends(require_user),
+):
+    compilers = load_compilers()
+    compiler  = next((c for c in compilers if c.get("id") == compiler_id), None)
+    if not compiler:
+        raise HTTPException(status_code=404, detail="Compiler not found")
+    if not compiler.get("active", True):
+        raise HTTPException(status_code=409, detail="Compiler is paused. Resume it first.")
+    if not (compiler.get("shard_ids") or []):
+        raise HTTPException(status_code=409, detail="Compiler has no shards.")
+
+    background_tasks.add_task(
+        Scheduler_Runner.run_compiler,
+        compiler=compiler,
+        triggering_user=user,
+        load_shard_by_id=_load_shard_by_id,
+        append_run=_append_or_replace_run,
+        # Forwarded to run_shard for each child:
+        build_config_for_user=build_script_config,
+        write_config_to_path=_write_config_to_path,
+        prepare_forma_3l_token=prepare_forma_3l_token,
+        prepare_revizto_tokens=prepare_revizto_tokens,
+        check_l4_dependency=_check_l4_dependency,
+        update_shard=_update_one_shard,
+        blob_upload_file=Blob_Client.upload_file,
+        blob_generate_url=Blob_Client.generate_download_url,
+        blob_container_for_platform=Blob_Client.container_for_platform,
+        resolve_script_path=resolve_script_path,
+        stamp_l3_run=_stamp_l3_run,
+    )
+
+    return JSONResponse({
+        "status":      "queued",
+        "message":     f"Compiler '{compiler.get('name', compiler_id)}' running {len(compiler['shard_ids'])} shards.",
+        "compiler_id": compiler_id,
+    })
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# GET /api/scheduler/runs/{id} — fetch one run by id (for UI polling)
+# ═══════════════════════════════════════════════════════════════════════════
+@app.get("/api/scheduler/runs/{run_id}")
+async def scheduler_get_run(run_id: str, user: str = Depends(require_user)):
+    runs = load_runs()
+    run  = next((r for r in runs if r.get("id") == run_id), None)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    return run
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+
+# ═══════════════════════════════════════════════════════════════════════════
+# BLOCK 4 END                                                                ▲
+# ═══════════════════════════════════════════════════════════════════════════
+
 try:
     _prewarm_cache()
 except Exception as _prewarm_err:
