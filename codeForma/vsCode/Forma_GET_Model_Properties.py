@@ -33,6 +33,64 @@ RETRY_ATTEMPTS  = 3
 RETRY_BACKOFF   = [5, 15, 30]          # seconds before attempt 2, 3, 4
 
 
+# ── Output shaping ──────────────────────────────────────────────────────────
+# Categories whose full element data we keep in the grouped output.
+# Everything else from Forma is counted (in *_RawCounts.json) but the row
+# data is dropped to keep the main output file manageable. This list mirrors
+# Proccesed_Model_Properties.ELEMENT_CATEGORIES; if you change one, change
+# the other too. Project Information and Document are kept as well so the
+# downstream report can read project metadata from the same file.
+KEPT_CATEGORIES = {
+    "Revit Walls", "Revit Floors", "Revit Roofs", "Revit Ceilings",
+    "Revit Doors", "Revit Windows", "Revit Curtain Panels",
+    "Revit Curtain Wall Mullions", "Revit Curtain Systems",
+    "Revit Stairs", "Revit Railings", "Revit Ramps",
+    "Revit Landings", "Revit Runs", "Revit Columns",
+    "Revit Generic Models", "Revit Mass", "Revit Topography",
+    "Revit Parking", "Revit Planting", "Revit Site",
+    "Revit Slab Edges", "Revit Shaft Openings",
+    "Revit Rectangular Straight Wall Opening",
+    "Revit Structural opening cut",
+    "Revit Structural Framing", "Revit Structural Columns",
+    "Revit Structural Foundations", "Revit Structural Beam Systems",
+    "Revit Structural Trusses", "Revit Structural Connections",
+    "Revit Structural Fabric Reinforcement", "Revit Structural Rebar",
+    "Revit Structural Path Reinforcement",
+    "Revit Mechanical Equipment", "Revit Air Terminals",
+    "Revit Ducts", "Revit Duct Fittings", "Revit Duct Accessories",
+    "Revit Flex Ducts", "Revit Pipes", "Revit Pipe Fittings",
+    "Revit Pipe Accessories", "Revit Flex Pipes",
+    "Revit Plumbing Fixtures", "Revit Sprinklers",
+    "Revit Electrical Equipment", "Revit Electrical Fixtures",
+    "Revit Lighting Fixtures", "Revit Lighting Devices",
+    "Revit Fire Alarm Devices", "Revit Communication Devices",
+    "Revit Data Devices", "Revit Security Devices",
+    "Revit Cable Trays", "Revit Conduits",
+    "Revit Furniture", "Revit Furniture Systems", "Revit Casework",
+    "Revit Specialty Equipment", "Revit Assemblies", "Revit Parts",
+    # Project metadata
+    "Revit Project Information", "Revit Document",
+}
+
+
+def _safe_filename(name: str) -> str:
+    """Strip filesystem-unsafe characters from a model name. Keeps spaces,
+    parens, hyphens, dots — strips slashes, colons, quotes, etc."""
+    if not name:
+        return "model"
+    # Drop the .rvt/.ifc/.nwc/.nwd extension if present
+    base, ext = os.path.splitext(name)
+    if ext.lower() in (".rvt", ".ifc", ".nwc", ".nwd"):
+        name = base
+    bad = '/\\:*?"<>|\r\n\t'
+    for ch in bad:
+        name = name.replace(ch, "_")
+    # Collapse runs of underscores / spaces
+    while "  " in name: name = name.replace("  ", " ")
+    while "__" in name: name = name.replace("__", "_")
+    return name.strip(" _.") or "model"
+
+
 def get_token():
     """Get best available token: 3-legged if cached, otherwise 2-legged."""
     try:
@@ -368,53 +426,141 @@ if __name__ == "__main__":
         print("[Forma] No properties downloaded — aborting before file write.")
         exit(1)
 
-    # ── Streaming write — JSON only ────────────────────────────────────
-    # Earlier versions also produced a flat CSV alongside the JSON. With
-    # 917k+ rows × 2300+ columns that CSV grows to ~10 GB and the
-    # second pass over the temp file pushed total runtime past the
-    # 10-minute extraction timeout. The CSV is only read by humans
-    # opening it in Excel — which itself can't handle that volume — so
-    # it's been dropped at the L3 stage. Downstream processing (L4
-    # Model Health Report, future custom-report builder) reads the
-    # JSON directly, streaming line-by-line.
-    json_path = os.path.join(EXPORTS_DIR, "forma_model_properties.json")
+    # ── Categorized streaming write ────────────────────────────────────
+    # Output layout: a single grouped JSON keyed by Revit Category, with
+    # the full row data only for categories in KEPT_CATEGORIES. Every
+    # category Forma returns is also tallied into a small *_RawCounts.json
+    # side file so the downstream report (L4) can show the full picture
+    # — including categories whose row data we dropped.
+    #
+    # Implementation: we open one ndjson temp file per kept category as
+    # rows arrive (lazy), append rows to those temp files line by line,
+    # then stitch them into the final grouped JSON at the end. Memory
+    # stays bounded at one in-flight row plus a small fd map; disk holds
+    # the data instead of RAM.
 
-    print("Writing JSON…", flush=True)
-    row_count     = 0
-    bad_lines     = 0
-    progress_step = 5000      # one dot per N rows
-    next_dot      = progress_step
+    # Resolve a model name to use as the output prefix. Prefer the live
+    # MODEL_NAME from config; if that's missing (item_id was supplied
+    # without name), use the displayName we resolved during folder search.
+    model_label = MODEL_NAME or "model"
+    model_label = _safe_filename(model_label)
+
+    grouped_path     = os.path.join(EXPORTS_DIR, f"{model_label}.json")
+    raw_counts_path  = os.path.join(EXPORTS_DIR, f"{model_label}_RawCounts.json")
+
+    print(f"Writing categorized JSON → {os.path.basename(grouped_path)} …", flush=True)
+
+    row_count       = 0
+    kept_count      = 0
+    bad_lines       = 0
+    progress_step   = 50000
+    next_dot        = progress_step
+
+    category_counts = {}                # name -> int — every Category seen
+    category_files  = {}                # name -> open temp file handle (kept categories only)
+    category_paths  = {}                # name -> temp file path
+    category_first  = {}                # name -> bool, True until first row written
+
+    def _open_category_tmp(cat):
+        """Lazily open a temp file for a kept category. Returns the open fh."""
+        if cat in category_files:
+            return category_files[cat]
+        fd, path = tempfile.mkstemp(prefix=f"forma_cat_", suffix=".ndjson")
+        fh = os.fdopen(fd, "w", encoding="utf-8")
+        category_files[cat] = fh
+        category_paths[cat] = path
+        category_first[cat] = True
+        return fh
 
     try:
-        with open(json_path, "w", encoding="utf-8") as jf:
-            jf.write("[")
-            first = True
-            for line in _read_gzipped_ndjson_file(properties_tmp):
-                try:
-                    obj = json.loads(line)
-                except json.JSONDecodeError:
-                    bad_lines += 1
-                    continue
-                row = _build_row(obj, fields)
-                if not first:
-                    jf.write(",\n    ")
-                else:
-                    jf.write("\n    ")
-                    first = False
-                json.dump(row, jf)
-                row_count += 1
-                if row_count >= next_dot:
-                    print(".", end="", flush=True)
-                    next_dot += progress_step
-            jf.write("\n]\n")
-        print(f" {row_count} rows. ({bad_lines} bad lines skipped)" if bad_lines else f" {row_count} rows.")
-        print(f"Saved {json_path}")
-    except Exception as e:
-        print(f"[Forma] JSON write failed: {e}")
-        exit_code = 1
-    else:
+        for line in _read_gzipped_ndjson_file(properties_tmp):
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                bad_lines += 1
+                continue
+
+            row_count += 1
+            if row_count >= next_dot:
+                print(".", end="", flush=True)
+                next_dot += progress_step
+
+            row = _build_row(obj, fields)
+            cat = row.get("Category", "<no Category>")
+            category_counts[cat] = category_counts.get(cat, 0) + 1
+
+            if cat in KEPT_CATEGORIES:
+                fh = _open_category_tmp(cat)
+                # Append one ndjson line per row — cheap, no JSON-array
+                # bookkeeping until we stitch at the end.
+                fh.write(json.dumps(row, ensure_ascii=False))
+                fh.write("\n")
+                kept_count += 1
+
+        # Close all the per-category temp files so we can read them back.
+        for fh in category_files.values():
+            fh.close()
+
+        suffix = f" ({bad_lines} bad lines skipped)" if bad_lines else ""
+        print(f" {row_count:,} rows scanned, {kept_count:,} kept across "
+              f"{len(category_files)} categories.{suffix}", flush=True)
+
+        # ── Stitch ndjson temp files into one grouped JSON ─────────────
+        # We write `{` then for each kept category that has rows, write
+        # `"<cat>": [`, stream the temp file's lines as JSON array members,
+        # then `]`. This pass touches each row exactly once more — there's
+        # no parsing here, just text concatenation.
+        print("Stitching grouped JSON…", flush=True)
+        with open(grouped_path, "w", encoding="utf-8") as out:
+            out.write("{\n")
+            cat_names = sorted(category_paths.keys())
+            for ci, cat in enumerate(cat_names):
+                tmp_path = category_paths[cat]
+                first_in_cat = True
+                # JSON-encode the category name as a key
+                out.write(json.dumps(cat))
+                out.write(": [\n")
+                with open(tmp_path, "r", encoding="utf-8") as src:
+                    for ln in src:
+                        ln = ln.rstrip("\n")
+                        if not ln:
+                            continue
+                        if first_in_cat:
+                            out.write("    ")
+                            first_in_cat = False
+                        else:
+                            out.write(",\n    ")
+                        out.write(ln)
+                out.write("\n]")
+                if ci < len(cat_names) - 1:
+                    out.write(",")
+                out.write("\n")
+            out.write("}\n")
+        print(f"Saved {grouped_path}")
+
+        # ── Raw counts side artifact ────────────────────────────────────
+        # Sorted by count desc so it's easy to eyeball top categories.
+        ordered = dict(sorted(category_counts.items(), key=lambda x: -x[1]))
+        with open(raw_counts_path, "w", encoding="utf-8") as f:
+            json.dump({
+                "model_name":        MODEL_NAME or "",
+                "total_objects":     row_count,
+                "kept_objects":      kept_count,
+                "unique_categories": len(category_counts),
+                "kept_categories":   len(category_files),
+                "counts":            ordered,
+            }, f, indent=2, ensure_ascii=False)
+        print(f"Saved {raw_counts_path}")
+
         exit_code = 0
+    except Exception as e:
+        print(f"[Forma] Categorized write failed: {type(e).__name__}: {e}")
+        exit_code = 1
     finally:
+        # Clean up per-category temp files and the source download
+        for path in category_paths.values():
+            try: os.unlink(path)
+            except Exception: pass
         try: os.unlink(properties_tmp)
         except Exception: pass
     exit(exit_code)
