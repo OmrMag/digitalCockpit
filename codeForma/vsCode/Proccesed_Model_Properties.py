@@ -238,6 +238,14 @@ if __name__ == "__main__":
     no_level_count   = defaultdict(int)
     demolished_count = defaultdict(int)
     filtered_cat_count = defaultdict(int)   # ELEMENT_CATEGORIES only
+    # Three-level breakdown for the Aggregate output:
+    #   category_breakdown[category][family_name][type_name] = count
+    # Family name comes from _RFN; type name comes from Type Name (with
+    # _RFT / name fallbacks). Elements missing either level get a placeholder
+    # so every row is still accounted for.
+    category_breakdown = defaultdict(
+        lambda: defaultdict(lambda: defaultdict(int))
+    )
 
     cad_dwg = set(); cad_dxf = set(); cad_dwf = set()
     rvt_links_set = set()       # populated only if L3 kept this category in future
@@ -259,6 +267,16 @@ if __name__ == "__main__":
         if category in ("Revit Document", "Revit Project Information"):
             project_info = obj
             continue
+
+        # Three-level breakdown for the Aggregate. Family name comes from
+        # _RFN ("Revit Family Name"); type name from Type Name with _RFT
+        # ("Revit Family Type") and 'name' as fallbacks. Missing values
+        # collapse to '<no family>' / '<no type>' so the breakdown stays
+        # exhaustive and we can spot rows with sparse identity later.
+        family_name = obj.get("_RFN") or "<no family>"
+        type_name   = (obj.get("Type Name") or obj.get("_RFT") or
+                       obj.get("name") or "<no type>")
+        category_breakdown[category][family_name][type_name] += 1
 
         # Levels / worksets are tracked on every element (so they pick up
         # all levels/worksets that physical elements actually use)
@@ -391,14 +409,43 @@ if __name__ == "__main__":
         json.dump(grouped, f, indent=4, ensure_ascii=False)
     print(f"Saved {report_path}")
 
-    # ── Aggregate: pass-through of raw counts, sorted desc ──────────────
+    # ── Aggregate: three-level nested breakdown ─────────────────────────
+    # Each category becomes a dict whose top-level keys are:
+    #   - "count": total instances of the category
+    #   - one key per family name (_RFN), whose value is in turn:
+    #       - "count": total instances of that family
+    #       - one key per type name (Type Name / _RFT / name), each
+    #         {"count": <n>}
+    # Categories that L3 dropped row-wise (Views, Sheets, Family, etc.)
+    # appear with their count from RawCounts and no family/type breakdown
+    # since we don't have row data for them.
+    aggregate_categories = {}
+    all_cat_names = sorted(set(category_count.keys()) | set(category_breakdown.keys()))
+    for cat in all_cat_names:
+        families = category_breakdown.get(cat, {})
+        # Total count: prefer RawCounts (authoritative) but fall back to
+        # the streamed total for kept categories that aren't in RawCounts.
+        cat_total = category_count.get(cat) or sum(
+            sum(types.values()) for types in families.values()
+        )
+        cat_block = {"count": cat_total}
+        # Sort families alphabetically; types within each family also
+        # alphabetically. Easier to scan than count-sorted lists.
+        for fam in sorted(families.keys()):
+            types = families[fam]
+            fam_block = {"count": sum(types.values())}
+            for tname in sorted(types.keys()):
+                fam_block[tname] = {"count": types[tname]}
+            cat_block[fam] = fam_block
+        aggregate_categories[cat] = cat_block
+
     aggregate_payload = {
         "model_name":        MODEL_NAME,
         "total_objects":     raw_counts.get("total_objects", 0),
         "kept_objects":      raw_counts.get("kept_objects", 0),
         "unique_categories": raw_counts.get("unique_categories", len(category_count)),
         "kept_categories":   raw_counts.get("kept_categories", len(filtered_cat_count)),
-        "category_counts":   dict(sorted(category_count.items(), key=lambda x: -x[1])),
+        "categories":        aggregate_categories,
     }
     with open(aggregate_path, "w", encoding="utf-8") as f:
         json.dump(aggregate_payload, f, indent=4, ensure_ascii=False)
