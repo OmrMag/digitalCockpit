@@ -70,6 +70,11 @@ KEPT_CATEGORIES = {
     "Revit Specialty Equipment", "Revit Assemblies", "Revit Parts",
     # Project metadata
     "Revit Project Information", "Revit Document",
+    # Reference points & metadata used by the L4 report
+    "Revit Project Base Point",   # carries Angle to True North
+    "Revit Survey Point",         # carries E/W, N/S, Elev, Lat, Lon
+    "Revit Phases",               # one row per phase (name)
+    "Revit Family Type",          # for the "Family Types in Library" count
 }
 
 

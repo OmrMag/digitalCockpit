@@ -252,6 +252,13 @@ if __name__ == "__main__":
     ifc_links = set()
     pdf_files = set(); img_files = set()
 
+    # New report metrics (populated from the dedicated reference categories
+    # we now keep in L3: Project Base Point, Survey Point, Phases, Family Type)
+    survey_point        = None
+    project_base_point  = None
+    phase_names         = []     # in order encountered
+    family_type_count   = 0
+
     elements_count = 0
     rows_seen      = 0
     progress_step  = 50000
@@ -263,9 +270,35 @@ if __name__ == "__main__":
             print(".", end="", flush=True)
             next_dot += progress_step
 
-        # Project metadata: capture verbatim
+        # Project metadata: capture verbatim. Document and Project Information
+        # often carry overlapping but not identical fields, so we merge them
+        # additively (Document seen first, then Project Information adds /
+        # overrides) instead of letting one obliterate the other.
         if category in ("Revit Document", "Revit Project Information"):
-            project_info = obj
+            project_info.update(obj)
+            continue
+
+        # Reference points carry survey coordinates + true-north angle.
+        # First row wins (these categories should have exactly one each).
+        if category == "Revit Survey Point":
+            if survey_point is None:
+                survey_point = obj
+            continue
+        if category == "Revit Project Base Point":
+            if project_base_point is None:
+                project_base_point = obj
+            continue
+
+        # Phases: one row per phase. We just collect the names in order
+        # so the report can list them.
+        if category == "Revit Phases":
+            phase_name = obj.get("name") or obj.get("Type Name") or "<unnamed>"
+            phase_names.append(phase_name)
+            continue
+
+        # Family Types library: count only — names would balloon the report.
+        if category == "Revit Family Type":
+            family_type_count += 1
             continue
 
         # Three-level breakdown for the Aggregate. Family name comes from
@@ -352,8 +385,35 @@ if __name__ == "__main__":
     # Append the model name itself for clarity
     report.append({"Section": "Project Info", "Metric": "Model Name", "Value": MODEL_NAME})
 
+    # ── Survey Point + Project Base Point coordinates ───────────────────
+    # These come from the dedicated reference categories L3 now keeps.
+    # If a model doesn't have them (some Forma exports omit them), we
+    # still emit "N/A" rows so the report has a consistent shape.
+    if survey_point:
+        report.append({"Section": "Project Info", "Metric": "Survey Point E/W",       "Value": survey_point.get("E/W",  "N/A")})
+        report.append({"Section": "Project Info", "Metric": "Survey Point N/S",       "Value": survey_point.get("N/S",  "N/A")})
+        report.append({"Section": "Project Info", "Metric": "Survey Point Elevation", "Value": survey_point.get("Elev", "N/A")})
+        report.append({"Section": "Project Info", "Metric": "Survey Point Latitude",  "Value": survey_point.get("Lat",  "N/A")})
+        report.append({"Section": "Project Info", "Metric": "Survey Point Longitude", "Value": survey_point.get("Lon",  "N/A")})
+    else:
+        for m in ("Survey Point E/W", "Survey Point N/S", "Survey Point Elevation",
+                  "Survey Point Latitude", "Survey Point Longitude"):
+            report.append({"Section": "Project Info", "Metric": m, "Value": "N/A"})
+
+    if project_base_point:
+        report.append({"Section": "Project Info", "Metric": "Angle to True North",
+                       "Value": project_base_point.get("Angle to True North", "N/A")})
+        report.append({"Section": "Project Info", "Metric": "Project Base Point Elevation",
+                       "Value": project_base_point.get("Elev", "N/A")})
+    else:
+        report.append({"Section": "Project Info", "Metric": "Angle to True North",       "Value": "N/A"})
+        report.append({"Section": "Project Info", "Metric": "Project Base Point Elevation","Value": "N/A"})
+
     for metric, value in [
+        ("Total Element Count (raw)", f"{raw_counts.get('total_objects', 0):,}"),
         ("Total Elements",           f"{elements_count:,}"),
+        ("Family Types in Library",  family_type_count),
+        ("Number of Phases",         len(phase_names)),
         ("Levels",                   category_count.get("Revit Level", 0)),
         ("Grids",                    category_count.get("Revit Grids", 0)),
         ("Sheets",                   category_count.get("Revit Sheet", 0)),
@@ -373,6 +433,10 @@ if __name__ == "__main__":
         ("Worksets",                 len(real_worksets)),
     ]:
         report.append({"Section": "Model Summary", "Metric": metric, "Value": value})
+
+    # ── Phases section (one row per phase, with its name) ───────────────
+    for i, pn in enumerate(phase_names, start=1):
+        report.append({"Section": "Phases", "Metric": f"Phase {i}", "Value": pn})
 
     for cat, count in sorted(filtered_cat_count.items(), key=lambda x: -x[1]):
         report.append({"Section": "Elements by Category", "Metric": cat.replace("Revit ", ""), "Value": count})
@@ -466,7 +530,19 @@ if __name__ == "__main__":
     print(f"  Organization Desc:            {project_info.get('Organization Description', 'N/A')}")
     if project_info.get('Building Name'):
         print(f"  Building Name:                {project_info.get('Building Name')}")
+    if survey_point:
+        print(f"  Survey Point E/W:             {survey_point.get('E/W', 'N/A')}")
+        print(f"  Survey Point N/S:             {survey_point.get('N/S', 'N/A')}")
+        print(f"  Survey Point Elev:            {survey_point.get('Elev', 'N/A')}")
+    if project_base_point:
+        print(f"  Angle to True North:          {project_base_point.get('Angle to True North', 'N/A')}")
+    print(f"  Total Element Count (raw):    {raw_counts.get('total_objects', 0):,}")
     print(f"  Total Elements:               {elements_count:,}")
+    print(f"  Family Types in Library:      {family_type_count:,}")
+    print(f"  Number of Phases:             {len(phase_names)}")
+    if phase_names:
+        for i, pn in enumerate(phase_names, start=1):
+            print(f"    Phase {i}:                     {pn}")
     print(f"  Levels:                       {category_count.get('Revit Level', 0)}")
     print(f"  Sheets:                       {category_count.get('Revit Sheet', 0)}")
     print(f"  Total Views:                  {total_views}")
