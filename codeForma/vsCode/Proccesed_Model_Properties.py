@@ -439,6 +439,30 @@ if __name__ == "__main__":
     ]:
         report.append({"Section": "Model Summary", "Metric": metric, "Value": value})
 
+    # ── Source / Authoring Info ─────────────────────────────────────────
+    # These fields live on the Revit Document object and are most useful
+    # when the model originated from an IFC import (e.g. Tekla → Revit
+    # via IFC). For native Revit models they typically stay "Undefined"
+    # or are absent entirely.
+    def _format_size(raw):
+        """Render a byte count as MB. Accepts int or numeric string."""
+        try:
+            n = int(raw)
+        except (TypeError, ValueError):
+            return raw if raw else "N/A"
+        return f"{n / (1024 * 1024):,.2f} MB"
+
+    raw_size = project_info.get("Original IFC File Size")
+    for metric, value in [
+        ("Authoring Application",      project_info.get("IfcApplicationName",    "N/A")),
+        ("Authoring App Version",      project_info.get("IfcApplicationVersion", "N/A")),
+        ("Authoring Organization",     project_info.get("IfcOrganization",       "N/A")),
+        ("Original IFC File Name",     project_info.get("Original IFC File Name","N/A")),
+        ("Original IFC File Size",     _format_size(raw_size)),
+        ("Revit Importer Version",     project_info.get("Revit Importer Version","N/A")),
+    ]:
+        report.append({"Section": "Source / Authoring Info", "Metric": metric, "Value": value})
+
     # ── Phases section (one row per phase, with its name) ───────────────
     for i, pn in enumerate(phase_names, start=1):
         report.append({"Section": "Phases", "Metric": f"Phase {i}", "Value": pn})
@@ -547,6 +571,21 @@ if __name__ == "__main__":
     print(f"  Total Element Count (raw):    {raw_counts.get('total_objects', 0):,}")
     print(f"  Total Elements:               {elements_count:,}")
     print(f"  Family Types in Library:      {family_type_count:,}")
+    # Source / Authoring Info — only print rows that have real values
+    src_fields = [
+        ("Authoring Application",   project_info.get("IfcApplicationName")),
+        ("Authoring App Version",   project_info.get("IfcApplicationVersion")),
+        ("Authoring Organization",  project_info.get("IfcOrganization")),
+        ("Original IFC File Name",  project_info.get("Original IFC File Name")),
+        ("Original IFC File Size",  _format_size(project_info.get("Original IFC File Size"))
+            if project_info.get("Original IFC File Size") else None),
+        ("Revit Importer Version",  project_info.get("Revit Importer Version")),
+    ]
+    if any(v for _, v in src_fields):
+        print("  ----- Source / Authoring Info -----")
+        for label, value in src_fields:
+            if value:
+                print(f"  {label + ':':<30}{value}")
     print(f"  Number of Phases:             {len(phase_names)}")
     if phase_names:
         for i, pn in enumerate(phase_names, start=1):
