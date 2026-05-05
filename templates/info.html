@@ -10,10 +10,11 @@
 .doc-nav a{font-size:9px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:var(--text-dark-muted);text-decoration:none;padding:5px 10px;border-radius:4px;border:1px solid transparent;transition:all .15s;}
 .doc-nav a:hover{background:var(--navy);color:var(--cream);border-color:var(--navy);}
 
-.doc-section{margin-bottom:56px;padding-bottom:56px;border-bottom:1px solid var(--border-cream);}
+.doc-section{margin-bottom:56px;padding-bottom:56px;border-bottom:1px solid var(--border-cream);max-width:100%;overflow:hidden;}
 .doc-section:last-child{border-bottom:none;}
-.doc-section-inner{display:grid;grid-template-columns:160px 1fr;gap:0 40px;}
-.doc-num{font-size:10px;font-weight:700;letter-spacing:2px;color:var(--text-dark-muted);opacity:.35;padding-top:4px;text-transform:uppercase;}
+.doc-section-inner{display:grid;grid-template-columns:90px 1fr;gap:0 28px;max-width:100%;}
+.doc-num{font-size:9px;font-weight:700;letter-spacing:1.5px;color:var(--text-dark-muted);opacity:.35;padding-top:4px;text-transform:uppercase;line-height:1.4;}
+.doc-body{min-width:0;overflow-wrap:break-word;}
 .doc-body h2{font-size:15px;font-weight:700;color:var(--navy);margin:0 0 12px;letter-spacing:-.3px;}
 .doc-body h3{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text-dark-muted);margin:20px 0 8px;}
 .doc-body p{font-size:11px;color:var(--text-dark);line-height:1.75;margin-bottom:12px;}
@@ -21,17 +22,17 @@
 .doc-body ul{font-size:11px;color:var(--text-dark);line-height:1.75;margin:8px 0 12px;padding-left:18px;}
 .doc-body ul li{margin-bottom:4px;}
 
-.doc-table-wrap{overflow-x:auto;border-radius:var(--radius-lg);border:1px solid var(--border-cream);box-shadow:var(--shadow);margin:12px 0;}
+.doc-table-wrap{overflow-x:auto;border-radius:var(--radius-lg);border:1px solid var(--border-cream);box-shadow:var(--shadow);margin:12px 0;max-width:100%;}
 .doc-table{width:100%;border-collapse:collapse;background:white;}
 .doc-table thead{background:var(--navy);}
 .doc-table th{font-size:9px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:rgba(232,237,242,.7);padding:9px 14px;text-align:left;}
-.doc-table td{padding:8px 14px;border-bottom:1px solid var(--border-cream);font-size:10px;color:var(--text-dark);line-height:1.6;vertical-align:top;}
+.doc-table td{padding:8px 14px;border-bottom:1px solid var(--border-cream);font-size:10px;color:var(--text-dark);line-height:1.6;vertical-align:top;overflow-wrap:break-word;word-break:break-word;}
 .doc-table tr:last-child td{border-bottom:none;}
 .doc-table tr:hover td{background:rgba(11,37,69,.025);}
-.doc-table code{font-size:9.5px;background:rgba(11,37,69,.07);color:var(--navy);padding:1px 5px;border-radius:3px;font-family:var(--font);}
+.doc-table code{font-size:9.5px;background:rgba(11,37,69,.07);color:var(--navy);padding:1px 5px;border-radius:3px;font-family:var(--font);overflow-wrap:break-word;}
 
-.doc-code{background:var(--navy);border-radius:var(--radius-lg);padding:20px 22px;overflow-x:auto;box-shadow:var(--shadow-lg);margin:12px 0;}
-.doc-code pre{font-family:var(--font);font-size:10.5px;color:#8db4d8;line-height:1.8;margin:0;white-space:pre;}
+.doc-code{background:var(--navy);border-radius:var(--radius-lg);padding:20px 22px;overflow-x:auto;box-shadow:var(--shadow-lg);margin:12px 0;max-width:100%;}
+.doc-code pre{font-family:var(--font);font-size:10.5px;color:#8db4d8;line-height:1.8;margin:0;white-space:pre;display:inline-block;min-width:0;}
 .dc-w{color:#e8edf2;font-weight:600;}
 .dc-g{color:#52d39a;}
 .dc-r{color:#f87171;}
@@ -80,11 +81,11 @@
 .pill.w{background:rgba(251,191,36,.1);color:#a16207;}
 .pill.d{background:rgba(11,37,69,.07);color:var(--navy);}
 
-.diagram-wrap{background:var(--navy);border-radius:var(--radius-lg);padding:24px;box-shadow:var(--shadow-lg);margin:16px 0;overflow-x:auto;}
+.diagram-wrap{background:var(--navy);border-radius:var(--radius-lg);padding:24px;box-shadow:var(--shadow-lg);margin:16px 0;overflow-x:auto;max-width:100%;}
 .diagram-wrap svg{display:block;max-width:100%;height:auto;}
 
 .kvtable{width:100%;font-size:10.5px;margin:8px 0 12px;}
-.kvtable td{padding:5px 0;vertical-align:top;}
+.kvtable td{padding:5px 0;vertical-align:top;overflow-wrap:break-word;}
 .kvtable td:first-child{color:var(--text-dark-muted);font-weight:600;width:30%;padding-right:12px;}
 .kvtable td:last-child{color:var(--text-dark);}
 .kvtable td code{font-size:10px;background:rgba(11,37,69,.06);color:var(--navy);padding:1px 5px;border-radius:3px;}
@@ -143,71 +144,101 @@
 <p>Architecturally, the cockpit is a thin orchestration layer over standalone Python extraction scripts. The web application receives requests from the browser, merges per-admin credentials into a temporary config file, and launches the appropriate script as a managed subprocess with its environment populated by environment variables. The script writes output to a per-admin temp directory; the cockpit streams stdout to the browser via Server-Sent Events and serves the resulting files via signed download links.</p>
 
 <div class="diagram-wrap">
-<svg viewBox="0 0 700 320" xmlns="http://www.w3.org/2000/svg">
+<svg viewBox="0 0 720 380" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
-      <path d="M0,0 L10,5 L0,10 z" fill="rgba(232,237,242,0.4)"/>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="rgba(232,237,242,0.5)"/>
+    </marker>
+    <marker id="arrgreen" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="rgba(82,211,154,0.55)"/>
+    </marker>
+    <marker id="arrblue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="rgba(96,184,255,0.55)"/>
+    </marker>
+    <marker id="arrr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="rgba(224,90,90,0.55)"/>
+    </marker>
+    <marker id="arrm" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="rgba(74,158,255,0.55)"/>
+    </marker>
+    <marker id="arrf" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="rgba(122,167,224,0.55)"/>
     </marker>
   </defs>
 
-  <text x="14" y="50" font-size="8" fill="rgba(255,255,255,0.2)" font-weight="700" letter-spacing="2">CLIENT</text>
-  <text x="14" y="155" font-size="8" fill="rgba(255,255,255,0.2)" font-weight="700" letter-spacing="2">SERVER</text>
-  <text x="14" y="260" font-size="8" fill="rgba(255,255,255,0.2)" font-weight="700" letter-spacing="2">EXTERNAL</text>
+  <!-- Tier labels on left -->
+  <text x="14" y="62" font-size="8" fill="rgba(255,255,255,0.22)" font-weight="700" letter-spacing="2">CLIENT</text>
+  <text x="14" y="180" font-size="8" fill="rgba(255,255,255,0.22)" font-weight="700" letter-spacing="2">SERVER</text>
+  <text x="14" y="335" font-size="8" fill="rgba(255,255,255,0.22)" font-weight="700" letter-spacing="2">EXTERNAL</text>
 
+  <!-- ── Client tier ─────────────────────────────────────── -->
   <!-- Browser -->
-  <rect x="80" y="30" width="120" height="60" rx="6" fill="rgba(74,158,255,0.08)" stroke="rgba(74,158,255,0.3)"/>
-  <text x="140" y="50" font-size="9" fill="#e8edf2" font-weight="700" text-anchor="middle">Browser</text>
-  <text x="140" y="63" font-size="8" fill="rgba(232,237,242,0.4)" text-anchor="middle">Admin UI · SSE</text>
-  <text x="140" y="75" font-size="7.5" fill="rgba(232,237,242,0.3)" text-anchor="middle">@alec.ae only</text>
+  <rect x="100" y="40" width="140" height="56" rx="6" fill="rgba(74,158,255,0.08)" stroke="rgba(74,158,255,0.35)"/>
+  <text x="170" y="60" font-size="10" fill="#e8edf2" font-weight="700" text-anchor="middle">Browser</text>
+  <text x="170" y="74" font-size="8" fill="rgba(232,237,242,0.45)" text-anchor="middle">Admin UI · SSE consumer</text>
+  <text x="170" y="86" font-size="7.5" fill="rgba(232,237,242,0.3)" text-anchor="middle">@alec.ae only</text>
 
-  <line x1="200" y1="60" x2="290" y2="120" stroke="rgba(232,237,242,0.4)" marker-end="url(#arr)"/>
-  <text x="225" y="80" font-size="7" fill="rgba(255,255,255,0.2)">HTTPS</text>
+  <!-- Browser → FastAPI arrow -->
+  <line x1="170" y1="96" x2="290" y2="170" stroke="rgba(232,237,242,0.45)" stroke-width="1" marker-end="url(#arr)"/>
+  <text x="218" y="130" font-size="7.5" fill="rgba(255,255,255,0.3)" font-weight="600">HTTPS</text>
 
-  <!-- App Service -->
-  <rect x="290" y="110" width="160" height="80" rx="6" fill="rgba(74,158,255,0.08)" stroke="rgba(74,158,255,0.4)"/>
-  <text x="370" y="128" font-size="9" fill="#4a9eff" font-weight="700" text-anchor="middle">FastAPI · app.py</text>
-  <text x="370" y="142" font-size="8" fill="rgba(232,237,242,0.5)" text-anchor="middle">Azure App Service B1</text>
-  <text x="370" y="155" font-size="7.5" fill="rgba(232,237,242,0.35)" text-anchor="middle">Python 3.11 · Uvicorn · Jinja2</text>
-  <text x="370" y="167" font-size="7.5" fill="rgba(232,237,242,0.35)" text-anchor="middle">~6,400 LOC · stateless workers</text>
-  <text x="370" y="182" font-size="7.5" fill="rgba(232,237,242,0.35)" text-anchor="middle">West Europe · Linux container</text>
+  <!-- ── Server tier ─────────────────────────────────────── -->
+  <!-- FastAPI app box -->
+  <rect x="280" y="160" width="180" height="90" rx="6" fill="rgba(74,158,255,0.1)" stroke="rgba(74,158,255,0.5)" stroke-width="1.5"/>
+  <text x="370" y="180" font-size="10" fill="#4a9eff" font-weight="700" text-anchor="middle">FastAPI · app.py</text>
+  <text x="370" y="195" font-size="8" fill="rgba(232,237,242,0.55)" text-anchor="middle">Azure App Service B1</text>
+  <text x="370" y="208" font-size="7.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">Python 3.11 · Uvicorn · Jinja2</text>
+  <text x="370" y="220" font-size="7.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">~6,400 LOC · stateless workers</text>
+  <text x="370" y="234" font-size="7.5" fill="rgba(232,237,242,0.35)" text-anchor="middle">West Europe · Linux container</text>
 
-  <line x1="450" y1="140" x2="540" y2="140" stroke="rgba(232,237,242,0.4)" marker-end="url(#arr)"/>
-  <line x1="540" y1="140" x2="450" y2="155" stroke="rgba(82,211,154,0.3)" marker-end="url(#arr)" stroke-dasharray="2,2"/>
+  <!-- FastAPI ⇄ Blob Storage (bidirectional) -->
+  <line x1="460" y1="195" x2="555" y2="195" stroke="rgba(82,211,154,0.55)" stroke-width="1" marker-end="url(#arrgreen)"/>
+  <line x1="555" y1="215" x2="460" y2="215" stroke="rgba(232,237,242,0.4)" stroke-width="1" marker-end="url(#arr)"/>
+  <text x="508" y="186" font-size="7" fill="rgba(82,211,154,0.55)" text-anchor="middle">write</text>
+  <text x="508" y="228" font-size="7" fill="rgba(232,237,242,0.4)" text-anchor="middle">read</text>
 
   <!-- Blob Storage -->
-  <rect x="540" y="110" width="140" height="80" rx="6" fill="rgba(82,211,154,0.08)" stroke="rgba(82,211,154,0.4)"/>
-  <text x="610" y="128" font-size="9" fill="#34d399" font-weight="700" text-anchor="middle">Azure Blob Storage</text>
-  <text x="610" y="142" font-size="8" fill="rgba(232,237,242,0.5)" text-anchor="middle">cockpitdatastorage</text>
-  <text x="610" y="156" font-size="7.5" fill="rgba(232,237,242,0.35)" text-anchor="middle">cockpit-data · runtime</text>
-  <text x="610" y="167" font-size="7.5" fill="rgba(232,237,242,0.35)" text-anchor="middle">forma-/revizto-/morta-exports</text>
-  <text x="610" y="180" font-size="7.5" fill="rgba(232,237,242,0.35)" text-anchor="middle">15-day retention on exports</text>
+  <rect x="555" y="160" width="155" height="90" rx="6" fill="rgba(82,211,154,0.1)" stroke="rgba(82,211,154,0.5)" stroke-width="1.5"/>
+  <text x="632" y="180" font-size="10" fill="#34d399" font-weight="700" text-anchor="middle">Azure Blob Storage</text>
+  <text x="632" y="195" font-size="8" fill="rgba(232,237,242,0.55)" text-anchor="middle">cockpitdatastorage</text>
+  <text x="632" y="210" font-size="7.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">cockpit-data · runtime</text>
+  <text x="632" y="222" font-size="7.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">forma- / revizto- / morta-</text>
+  <text x="632" y="232" font-size="7.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">exports · 15-day retention</text>
 
-  <!-- Subprocess layer -->
-  <line x1="370" y1="190" x2="370" y2="225" stroke="rgba(232,237,242,0.3)" marker-end="url(#arr)" stroke-dasharray="2,2"/>
-  <text x="395" y="210" font-size="7" fill="rgba(255,255,255,0.2)">subprocess + env</text>
+  <!-- FastAPI → ACS (top right corner) -->
+  <line x1="450" y1="160" x2="555" y2="80" stroke="rgba(96,184,255,0.5)" stroke-width="1" stroke-dasharray="3,3" marker-end="url(#arrblue)"/>
+  <text x="500" y="115" font-size="7" fill="rgba(96,184,255,0.55)" text-anchor="middle">email</text>
 
-  <rect x="270" y="225" width="200" height="55" rx="6" fill="rgba(232,237,242,0.04)" stroke="rgba(232,237,242,0.2)"/>
-  <text x="370" y="244" font-size="9" fill="rgba(232,237,242,0.7)" font-weight="700" text-anchor="middle">Script Layer</text>
-  <text x="370" y="258" font-size="8" fill="rgba(232,237,242,0.4)" text-anchor="middle">Forma_*.py · Revizto_*.py · Morta_*.py</text>
-  <text x="370" y="270" font-size="7.5" fill="rgba(232,237,242,0.3)" text-anchor="middle">read COCKPIT_CONFIG · write COCKPIT_EXPORTS_DIR</text>
+  <!-- ACS -->
+  <rect x="550" y="50" width="140" height="48" rx="6" fill="rgba(96,184,255,0.1)" stroke="rgba(96,184,255,0.45)"/>
+  <text x="620" y="68" font-size="9" fill="#60b8ff" font-weight="700" text-anchor="middle">Azure Communication</text>
+  <text x="620" y="80" font-size="8" fill="rgba(232,237,242,0.5)" text-anchor="middle">Services (ACS)</text>
+  <text x="620" y="91" font-size="7" fill="rgba(232,237,242,0.35)" text-anchor="middle">transactional email</text>
 
-  <!-- Platforms -->
-  <line x1="270" y1="252" x2="180" y2="290" stroke="rgba(224,90,90,0.4)" marker-end="url(#arr)"/>
-  <line x1="320" y1="280" x2="320" y2="290" stroke="rgba(74,158,255,0.4)" marker-end="url(#arr)"/>
-  <line x1="470" y1="252" x2="540" y2="290" stroke="rgba(122,167,224,0.4)" marker-end="url(#arr)"/>
+  <!-- FastAPI → Script Layer (subprocess) -->
+  <line x1="370" y1="250" x2="370" y2="280" stroke="rgba(232,237,242,0.35)" stroke-width="1" stroke-dasharray="2,3" marker-end="url(#arr)"/>
+  <text x="430" y="268" font-size="7" fill="rgba(255,255,255,0.4)">subprocess + env vars</text>
 
-  <rect x="80" y="290" width="120" height="22" rx="4" fill="rgba(224,90,90,0.1)" stroke="rgba(224,90,90,0.4)"/>
-  <text x="140" y="304" font-size="9" fill="#e05a5a" font-weight="700" text-anchor="middle">Revizto v5</text>
-  <rect x="260" y="290" width="120" height="22" rx="4" fill="rgba(74,158,255,0.1)" stroke="rgba(74,158,255,0.4)"/>
-  <text x="320" y="304" font-size="9" fill="#4a9eff" font-weight="700" text-anchor="middle">Morta v1</text>
-  <rect x="440" y="290" width="180" height="22" rx="4" fill="rgba(122,167,224,0.1)" stroke="rgba(122,167,224,0.4)"/>
-  <text x="530" y="304" font-size="9" fill="#7aa7e0" font-weight="700" text-anchor="middle">Autodesk APS · Forma · ACC</text>
+  <!-- Script layer -->
+  <rect x="240" y="280" width="260" height="55" rx="6" fill="rgba(232,237,242,0.05)" stroke="rgba(232,237,242,0.25)"/>
+  <text x="370" y="298" font-size="9" fill="rgba(232,237,242,0.75)" font-weight="700" text-anchor="middle">Script Layer (subprocess)</text>
+  <text x="370" y="311" font-size="7.5" fill="rgba(232,237,242,0.5)" text-anchor="middle">Forma_*.py · Revizto_*.py · Morta_*.py</text>
+  <text x="370" y="324" font-size="7.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">read COCKPIT_CONFIG · write COCKPIT_EXPORTS_DIR</text>
 
-  <!-- Communication Services -->
-  <line x1="450" y1="160" x2="535" y2="80" stroke="rgba(96,184,255,0.4)" marker-end="url(#arr)" stroke-dasharray="3,2"/>
-  <rect x="535" y="40" width="100" height="40" rx="4" fill="rgba(96,184,255,0.1)" stroke="rgba(96,184,255,0.4)"/>
-  <text x="585" y="56" font-size="9" fill="#60b8ff" font-weight="700" text-anchor="middle">ACS</text>
-  <text x="585" y="70" font-size="7.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">transactional email</text>
+  <!-- ── External tier ───────────────────────────────────── -->
+  <!-- Three platform endpoints — even spacing, paths from script layer -->
+  <line x1="280" y1="335" x2="135" y2="355" stroke="rgba(224,90,90,0.55)" stroke-width="1" marker-end="url(#arrr)"/>
+  <line x1="370" y1="335" x2="370" y2="355" stroke="rgba(74,158,255,0.55)" stroke-width="1" marker-end="url(#arrm)"/>
+  <line x1="460" y1="335" x2="605" y2="355" stroke="rgba(122,167,224,0.55)" stroke-width="1" marker-end="url(#arrf)"/>
+
+  <rect x="60" y="355" width="150" height="22" rx="4" fill="rgba(224,90,90,0.12)" stroke="rgba(224,90,90,0.5)"/>
+  <text x="135" y="370" font-size="9" fill="#e05a5a" font-weight="700" text-anchor="middle">Revizto v5</text>
+
+  <rect x="295" y="355" width="150" height="22" rx="4" fill="rgba(74,158,255,0.12)" stroke="rgba(74,158,255,0.5)"/>
+  <text x="370" y="370" font-size="9" fill="#4a9eff" font-weight="700" text-anchor="middle">Morta v1</text>
+
+  <rect x="530" y="355" width="150" height="22" rx="4" fill="rgba(122,167,224,0.12)" stroke="rgba(122,167,224,0.5)"/>
+  <text x="605" y="370" font-size="9" fill="#7aa7e0" font-weight="700" text-anchor="middle">Autodesk APS</text>
 </svg>
 </div>
 
@@ -493,7 +524,7 @@
 ══════════════════════════════════════════════════════════════════ -->
 <div class="doc-section" id="s-auth">
 <div class="doc-section-inner">
-<div class="doc-num">04<br>Auth</div>
+<div class="doc-num">05<br>Auth</div>
 <div class="doc-body">
 <h2>Authentication &amp; Access Control</h2>
 
@@ -529,11 +560,11 @@
 </div></div></div>
 
 <!-- ═══════════════════════════════════════════════════════════════
-     05  CONFIG MERGE
+     06  CONFIG MERGE
 ══════════════════════════════════════════════════════════════════ -->
 <div class="doc-section" id="s-config">
 <div class="doc-section-inner">
-<div class="doc-num">05<br>Config</div>
+<div class="doc-num">06<br>Config</div>
 <div class="doc-body">
 <h2>Per-Admin Config &amp; Shared Credential Inheritance</h2>
 
@@ -581,11 +612,11 @@
 </div></div></div>
 
 <!-- ═══════════════════════════════════════════════════════════════
-     06  CACHE & TTL
+     07  CACHE & TTL
 ══════════════════════════════════════════════════════════════════ -->
 <div class="doc-section" id="s-cache">
 <div class="doc-section-inner">
-<div class="doc-num">06<br>Cache</div>
+<div class="doc-num">07<br>Cache</div>
 <div class="doc-body">
 <h2>In-Memory Cache, TTL &amp; Prewarm</h2>
 
@@ -628,11 +659,11 @@
 </div></div></div>
 
 <!-- ═══════════════════════════════════════════════════════════════
-     07  WEB APP
+     08  WEB APP
 ══════════════════════════════════════════════════════════════════ -->
 <div class="doc-section" id="s-webapp">
 <div class="doc-section-inner">
-<div class="doc-num">07<br>Web App</div>
+<div class="doc-num">08<br>Web App</div>
 <div class="doc-body">
 <h2>Web Application — app.py</h2>
 
@@ -662,11 +693,11 @@
 </div></div></div>
 
 <!-- ═══════════════════════════════════════════════════════════════
-     08  PLATFORMS
+     09  PLATFORMS
 ══════════════════════════════════════════════════════════════════ -->
 <div class="doc-section" id="s-platforms">
 <div class="doc-section-inner">
-<div class="doc-num">08<br>Platforms</div>
+<div class="doc-num">09<br>Platforms</div>
 <div class="doc-body">
 <h2>Platform Integrations</h2>
 
@@ -699,11 +730,11 @@
 </div></div></div>
 
 <!-- ═══════════════════════════════════════════════════════════════
-     09  REVIZTO AUTH FLOW
+     10  REVIZTO AUTH FLOW
 ══════════════════════════════════════════════════════════════════ -->
 <div class="doc-section" id="s-revizto-auth">
 <div class="doc-section-inner">
-<div class="doc-num">09<br>Revizto Auth</div>
+<div class="doc-num">10<br>Revizto Auth</div>
 <div class="doc-body">
 <h2>Revizto Authentication Flow</h2>
 
@@ -722,11 +753,11 @@
 </div></div></div>
 
 <!-- ═══════════════════════════════════════════════════════════════
-     10  FORMA OAUTH
+     11  FORMA OAUTH
 ══════════════════════════════════════════════════════════════════ -->
 <div class="doc-section" id="s-forma-auth">
 <div class="doc-section-inner">
-<div class="doc-num">10<br>Forma OAuth</div>
+<div class="doc-num">11<br>Forma OAuth</div>
 <div class="doc-body">
 <h2>Forma / ACC — Two-Legged vs Three-Legged OAuth</h2>
 
@@ -759,11 +790,11 @@
 </div></div></div>
 
 <!-- ═══════════════════════════════════════════════════════════════
-     11  PLATFORM ACCESS HIERARCHY
+     12  PLATFORM ACCESS HIERARCHY
 ══════════════════════════════════════════════════════════════════ -->
 <div class="doc-section" id="s-hierarchy">
 <div class="doc-section-inner">
-<div class="doc-num">11<br>Hierarchy</div>
+<div class="doc-num">12<br>Hierarchy</div>
 <div class="doc-body">
 <h2>Platform Access Hierarchy</h2>
 
@@ -880,11 +911,11 @@
 </div></div></div>
 
 <!-- ═══════════════════════════════════════════════════════════════
-     12  CREDENTIAL TREE
+     13  CREDENTIAL TREE
 ══════════════════════════════════════════════════════════════════ -->
 <div class="doc-section" id="s-cred-tree">
 <div class="doc-section-inner">
-<div class="doc-num">11<br>Credentials</div>
+<div class="doc-num">13<br>Credentials</div>
 <div class="doc-body">
 <h2>Credential Inheritance Tree</h2>
 
@@ -931,11 +962,11 @@
 </div></div></div>
 
 <!-- ═══════════════════════════════════════════════════════════════
-     12  SCRIPT LAYER
+     14  SCRIPT LAYER
 ══════════════════════════════════════════════════════════════════ -->
 <div class="doc-section" id="s-scripts">
 <div class="doc-section-inner">
-<div class="doc-num">12<br>Scripts</div>
+<div class="doc-num">14<br>Scripts</div>
 <div class="doc-body">
 <h2>Script Layer</h2>
 
@@ -969,11 +1000,11 @@
 </div></div></div>
 
 <!-- ═══════════════════════════════════════════════════════════════
-     13  EXTRACTION TIERS (L1–L4)
+     15  EXTRACTION TIERS (L1–L4)
 ══════════════════════════════════════════════════════════════════ -->
 <div class="doc-section" id="s-forma-l">
 <div class="doc-section-inner">
-<div class="doc-num">13<br>Tiers</div>
+<div class="doc-num">15<br>Tiers</div>
 <div class="doc-body">
 <h2>Extraction Tiers — L1 through L4</h2>
 
@@ -1139,11 +1170,11 @@
 </div></div></div>
 
 <!-- ═══════════════════════════════════════════════════════════════
-     14  EXTRACTION RUN
+     16  EXTRACTION RUN
 ══════════════════════════════════════════════════════════════════ -->
 <div class="doc-section" id="s-extraction">
 <div class="doc-section-inner">
-<div class="doc-num">14<br>Extraction</div>
+<div class="doc-num">16<br>Extraction</div>
 <div class="doc-body">
 <h2>Extraction Run — Subprocess Lifecycle</h2>
 
@@ -1168,11 +1199,11 @@
 </div></div></div>
 
 <!-- ═══════════════════════════════════════════════════════════════
-     15  STREAMING (SSE)
+     17  STREAMING (SSE)
 ══════════════════════════════════════════════════════════════════ -->
 <div class="doc-section" id="s-streaming">
 <div class="doc-section-inner">
-<div class="doc-num">15<br>Streaming</div>
+<div class="doc-num">17<br>Streaming</div>
 <div class="doc-body">
 <h2>Live Streaming Output — Server-Sent Events</h2>
 
@@ -1202,11 +1233,11 @@ data: </span><span class="dc-c">{"status": "success", "duration_sec": 47.3}</spa
 </div></div></div>
 
 <!-- ═══════════════════════════════════════════════════════════════
-     16  BAKE / PACKAGES
+     18  BAKE / PACKAGES
 ══════════════════════════════════════════════════════════════════ -->
 <div class="doc-section" id="s-bake">
 <div class="doc-section-inner">
-<div class="doc-num">16<br>Bake</div>
+<div class="doc-num">18<br>Bake</div>
 <div class="doc-body">
 <h2>Bake &amp; Packages — Persistent Snapshots</h2>
 
@@ -1258,11 +1289,11 @@ packages/pkg_abc123/WAMI-0000-MECHANICAL TOWER.rvt_Aggregate.json</span>
 </div></div></div>
 
 <!-- ═══════════════════════════════════════════════════════════════
-     17  SCHEDULER (NEW)
+     19  SCHEDULER (NEW)
 ══════════════════════════════════════════════════════════════════ -->
 <div class="doc-section" id="s-scheduler">
 <div class="doc-section-inner">
-<div class="doc-num">17<br>Scheduler</div>
+<div class="doc-num">19<br>Scheduler</div>
 <div class="doc-body">
 <h2>Scheduler — Shards &amp; Compilers</h2>
 
@@ -1341,11 +1372,11 @@ packages/pkg_abc123/WAMI-0000-MECHANICAL TOWER.rvt_Aggregate.json</span>
 </div></div></div>
 
 <!-- ═══════════════════════════════════════════════════════════════
-     18  DATA FLOWS
+     20  DATA FLOWS
 ══════════════════════════════════════════════════════════════════ -->
 <div class="doc-section" id="s-flows">
 <div class="doc-section-inner">
-<div class="doc-num">18<br>Flows</div>
+<div class="doc-num">20<br>Flows</div>
 <div class="doc-body">
 <h2>Key Data Flows</h2>
 
@@ -1369,11 +1400,11 @@ packages/pkg_abc123/WAMI-0000-MECHANICAL TOWER.rvt_Aggregate.json</span>
 </div></div></div>
 
 <!-- ═══════════════════════════════════════════════════════════════
-     19  FILE MAP
+     21  FILE MAP
 ══════════════════════════════════════════════════════════════════ -->
 <div class="doc-section" id="s-files">
 <div class="doc-section-inner">
-<div class="doc-num">19<br>File Map</div>
+<div class="doc-num">21<br>File Map</div>
 <div class="doc-body">
 <h2>Codebase File Map</h2>
 
@@ -1447,11 +1478,11 @@ packages/pkg_abc123/WAMI-0000-MECHANICAL TOWER.rvt_Aggregate.json</span>
 </div></div></div>
 
 <!-- ═══════════════════════════════════════════════════════════════
-     20  ENV VARS
+     22  ENV VARS
 ══════════════════════════════════════════════════════════════════ -->
 <div class="doc-section" id="s-env">
 <div class="doc-section-inner">
-<div class="doc-num">20<br>Env</div>
+<div class="doc-num">22<br>Env</div>
 <div class="doc-body">
 <h2>Environment Variables</h2>
 
@@ -1474,11 +1505,11 @@ packages/pkg_abc123/WAMI-0000-MECHANICAL TOWER.rvt_Aggregate.json</span>
 </div></div></div>
 
 <!-- ═══════════════════════════════════════════════════════════════
-     21  FRONTEND EVENTS
+     23  FRONTEND EVENTS
 ══════════════════════════════════════════════════════════════════ -->
 <div class="doc-section" id="s-frontend">
 <div class="doc-section-inner">
-<div class="doc-num">21<br>Frontend</div>
+<div class="doc-num">23<br>Frontend</div>
 <div class="doc-body">
 <h2>Frontend Event Model</h2>
 
@@ -1503,11 +1534,11 @@ packages/pkg_abc123/WAMI-0000-MECHANICAL TOWER.rvt_Aggregate.json</span>
 </div></div></div>
 
 <!-- ═══════════════════════════════════════════════════════════════
-     22  DEPLOY
+     24  DEPLOY
 ══════════════════════════════════════════════════════════════════ -->
 <div class="doc-section" id="s-deploy">
 <div class="doc-section-inner">
-<div class="doc-num">22<br>Deploy</div>
+<div class="doc-num">24<br>Deploy</div>
 <div class="doc-body">
 <h2>Deploy Pipeline &amp; Operational Discipline</h2>
 
@@ -1545,11 +1576,11 @@ packages/pkg_abc123/WAMI-0000-MECHANICAL TOWER.rvt_Aggregate.json</span>
 </div></div></div>
 
 <!-- ═══════════════════════════════════════════════════════════════
-     23  OPERATIONAL QUIRKS
+     25  OPERATIONAL QUIRKS
 ══════════════════════════════════════════════════════════════════ -->
 <div class="doc-section" id="s-quirks">
 <div class="doc-section-inner">
-<div class="doc-num">23<br>Quirks</div>
+<div class="doc-num">25<br>Quirks</div>
 <div class="doc-body">
 <h2>Operational Quirks &amp; Lessons Learned</h2>
 
@@ -1579,11 +1610,11 @@ packages/pkg_abc123/WAMI-0000-MECHANICAL TOWER.rvt_Aggregate.json</span>
 </div></div></div>
 
 <!-- ═══════════════════════════════════════════════════════════════
-     24  CONSTRAINTS
+     26  CONSTRAINTS
 ══════════════════════════════════════════════════════════════════ -->
 <div class="doc-section" id="s-constraints">
 <div class="doc-section-inner">
-<div class="doc-num">24<br>Constraints</div>
+<div class="doc-num">26<br>Constraints</div>
 <div class="doc-body">
 <h2>Resource Constraints &amp; Hard Limits</h2>
 
@@ -1631,11 +1662,11 @@ packages/pkg_abc123/WAMI-0000-MECHANICAL TOWER.rvt_Aggregate.json</span>
 </div></div></div>
 
 <!-- ═══════════════════════════════════════════════════════════════
-     25  ROADMAP
+     27  ROADMAP
 ══════════════════════════════════════════════════════════════════ -->
 <div class="doc-section" id="s-future">
 <div class="doc-section-inner">
-<div class="doc-num">25<br>Roadmap</div>
+<div class="doc-num">27<br>Roadmap</div>
 <div class="doc-body">
 <h2>Roadmap &amp; Known Deferred Work</h2>
 
