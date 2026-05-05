@@ -100,7 +100,14 @@ if __name__ == "__main__":
     else:
         tests = get_clash_tests(PROJECT_UUID)
         if tests:
-            print(json.dumps(tests, indent=4))
+            # Print one line per test (name only). The full JSON dump used to
+            # be printed here, but on projects with hundreds/thousands of
+            # tests the cockpit terminal had to render that as DOM and would
+            # stall the browser tab. The full data is still written to the
+            # JSON/CSV files below — terminal output is summary-only.
+            print(f"\n{len(tests)} clash test(s):")
+            for t in tests:
+                print(f"  - {t.get('testName', '<unnamed>')}")
             save_json(tests)
             save_csv(tests)
         else:
