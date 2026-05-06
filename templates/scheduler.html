@@ -130,6 +130,27 @@
 .run-status.partial{background:rgba(234,179,8,.13);color:#a16207}
 .run-status.running{background:rgba(74,158,255,.1);color:var(--accent)}
 
+/* Run row expand/collapse */
+.run-row{cursor:pointer;transition:background-color .15s}
+.run-row:hover{background-color:rgba(0,0,0,.02)}
+.run-row.is-open{background-color:rgba(0,0,0,.025)}
+.run-caret{display:inline-block;width:10px;font-size:10px;color:var(--text-dark-muted);margin-right:6px;transition:transform .15s;flex-shrink:0;transform:rotate(0deg)}
+.run-row.is-open .run-caret{transform:rotate(90deg)}
+.run-detail{padding:10px 16px 12px 30px;border-left:2px solid var(--border-cream);margin:0 0 6px 13px;font-size:var(--fs-xs);line-height:1.55;display:none}
+.run-detail.show{display:block}
+.run-detail-row{display:flex;gap:12px;padding:3px 0;color:var(--text-dark)}
+.run-detail-key{font-weight:600;color:var(--text-dark-muted);text-transform:uppercase;letter-spacing:.05em;font-size:9px;padding-top:2px;flex-shrink:0;width:75px}
+.run-detail-val{flex:1;word-break:break-word}
+.run-detail-val code{background:rgba(0,0,0,.04);padding:1px 5px;border-radius:3px;font-family:var(--font);font-size:11px;color:var(--navy)}
+.run-detail-error{background:rgba(239,68,68,.06);border:1px solid rgba(239,68,68,.18);border-radius:5px;padding:7px 10px;color:#991b1b;margin-top:4px}
+.run-detail-stdout{background:#0b2545;color:#8db4d8;font-family:var(--font);font-size:10.5px;line-height:1.6;border-radius:5px;padding:9px 11px;max-height:240px;overflow-y:auto;white-space:pre-wrap;margin-top:4px}
+.run-detail-blob{display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px dashed var(--border-cream)}
+.run-detail-blob:last-child{border-bottom:none}
+.run-detail-blob-name{flex:1;font-weight:600;color:var(--navy);font-size:11px;word-break:break-word}
+.run-detail-blob-size{font-size:9.5px;color:var(--text-dark-muted);flex-shrink:0}
+.run-detail-blob-link{font-size:10px;font-weight:700;color:var(--accent);text-decoration:none;padding:3px 9px;border:1px solid var(--accent);border-radius:5px;flex-shrink:0;transition:all .12s}
+.run-detail-blob-link:hover{background:var(--accent);color:#fff}
+
 .disabled-pill{display:inline-flex;align-items:center;font-size:9px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;padding:2px 7px;border-radius:9px;background:rgba(239,68,68,.1);color:#dc2626;margin-left:6px}
 
 .modal-backdrop{display:none;position:fixed;inset:0;background:rgba(15,30,55,.45);z-index:998;backdrop-filter:blur(2px)}
@@ -190,7 +211,7 @@
       <!-- Runs pane -->
       <div class="pane" id="pane-runs">
         <div id="runs-empty" class="empty-state">
-          <span class="empty-text">No runs yet. Click Run now on a shard or compiler to fire one.</span>
+          <span class="empty-text">No runs yet. Runs appear here once "Run now" is wired up (coming next).</span>
         </div>
         <div id="runs-list"></div>
       </div>
@@ -423,7 +444,7 @@
     let body = null;
     try { body = await res.json(); } catch(e){}
     if (!res.ok) {
-      const errMsg = (body && (body.error || body.detail)) || ('HTTP '+res.status);
+      const errMsg = (body && body.error) || ('HTTP '+res.status);
       throw new Error(errMsg);
     }
     return body;
@@ -579,7 +600,7 @@
       +     '<div class="auto-row-meta">'+escHtml((cat.platform||s.platform||'').toUpperCase())+' · '+escHtml(shardSourceLine(s))+' · '+escHtml(compilerLine)+'</div>'
       +   '</div>'
       +   '<div class="auto-row-actions">'
-      +     '<button class="icon-btn" title="Run now" onclick="runShard(\''+s.id+'\')"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z"/></svg></button>'
+      +     '<button class="icon-btn" title="Run now (coming soon)" disabled><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z"/></svg></button>'
       +     '<button class="icon-btn" title="'+(s.active?'Pause':'Resume')+'" onclick="toggleShard(\''+s.id+'\')">'+(s.active?'<svg xmlns=\"http://www.w3.org/2000/svg\" fill=\"none\" viewBox=\"0 0 24 24\" stroke-width=\"2\" stroke=\"currentColor\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" d=\"M15.75 5.25v13.5m-7.5-13.5v13.5\"/></svg>':'<svg xmlns=\"http://www.w3.org/2000/svg\" fill=\"none\" viewBox=\"0 0 24 24\" stroke-width=\"2\" stroke=\"currentColor\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" d=\"M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z\"/></svg>')+'</button>'
       +     '<button class="icon-btn" title="Edit" onclick="openShardBuilder(\''+s.id+'\')"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z"/></svg></button>'
       +     '<button class="icon-btn del" title="Delete" onclick="deleteShard(\''+s.id+'\')"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166M5.79 5.79c.34-.059.68-.114 1.022-.165"/></svg></button>'
@@ -647,7 +668,7 @@
       +       '<div class="auto-row-meta">'+escHtml(scheduleSummary(c.schedule))+' · '+(c.shard_ids||[]).length+' shard(s)</div>'
       +     '</div>'
       +     '<div class="auto-row-actions">'
-      +       '<button class="icon-btn" title="Run now" onclick="runCompiler(\''+c.id+'\')"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z"/></svg></button>'
+      +       '<button class="icon-btn" title="Run now (coming soon)" disabled><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z"/></svg></button>'
       +       '<button class="icon-btn" title="'+(c.active?'Pause':'Resume')+'" onclick="toggleCompiler(\''+c.id+'\')">'+(c.active?'<svg xmlns=\"http://www.w3.org/2000/svg\" fill=\"none\" viewBox=\"0 0 24 24\" stroke-width=\"2\" stroke=\"currentColor\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" d=\"M15.75 5.25v13.5m-7.5-13.5v13.5\"/></svg>':'<svg xmlns=\"http://www.w3.org/2000/svg\" fill=\"none\" viewBox=\"0 0 24 24\" stroke-width=\"2\" stroke=\"currentColor\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" d=\"M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z\"/></svg>')+'</button>'
       +       '<button class="icon-btn" title="Edit" onclick="openCompilerBuilder(\''+c.id+'\')"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z"/></svg></button>'
       +       '<button class="icon-btn del" title="Delete compiler" onclick="deleteCompiler(\''+c.id+'\')"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166M5.79 5.79c.34-.059.68-.114 1.022-.165"/></svg></button>'
@@ -672,93 +693,93 @@
     empty.style.display = 'none';
     list.innerHTML = allRuns.map(r=>{
       const status = r.status || 'unknown';
+      // Run records use shard_name OR compiler_name depending on kind
+      const displayName = r.shard_name || r.compiler_name || r.id;
+      const trigger = r.trigger_kind || r.trigger_type || 'manual';
+      const dur = (r.duration_sec != null) ? (' · ' + r.duration_sec + 's') : '';
       return ''
-        + '<div class="auto-row">'
+        + '<div class="auto-row run-row" data-run-id="'+escAttr(r.id)+'" onclick="toggleRunDetail(\''+escAttr(r.id)+'\')">'
+        +   '<span class="run-caret">▶</span>'
         +   '<div class="auto-row-main">'
-        +     '<div class="auto-row-name">'+escHtml(r.name||r.id)+'</div>'
-        +     '<div class="auto-row-meta">'+escHtml(r.trigger_type||'')+' · started '+escHtml(fmtTime(r.started_at))+' · by '+escHtml(r.triggered_by||'?')+'</div>'
+        +     '<div class="auto-row-name">'+escHtml(displayName)+'</div>'
+        +     '<div class="auto-row-meta">'+escHtml(trigger)+' · '+escHtml(fmtTime(r.started_at))+dur+' · by '+escHtml(r.triggered_by||'?')+'</div>'
         +   '</div>'
         +   '<span class="run-status '+status+'">'+escHtml(status)+'</span>'
-        + '</div>';
+        + '</div>'
+        + '<div class="run-detail" id="run-detail-'+escAttr(r.id)+'">'+ renderRunDetail(r) +'</div>';
     }).join('');
   }
 
-  // ═════════════════════════════════════════════════════════════════
-  // BLOCK 4 — Run now actions + auto-refresh polling
-  // ═════════════════════════════════════════════════════════════════
-  let runsPollTimer = null;
-
-  // Returns true if any run in the currently-loaded list is still 'running'
-  function anyRunning(){
-    return Array.isArray(allRuns) && allRuns.some(r => r && r.status === 'running');
-  }
-
-  // Begin polling /api/scheduler/runs every 5s. Auto-stops when no runs
-  // are in 'running' state for 2 consecutive polls (handles the case
-  // where a run completes between polls).
-  function startRunsPolling(){
-    if (runsPollTimer) return; // already polling
-    let stableEmptyCount = 0;
-    runsPollTimer = setInterval(async () => {
-      try {
-        await loadRuns();
-        renderRuns();
-        if (!anyRunning()) {
-          stableEmptyCount += 1;
-          if (stableEmptyCount >= 2) {
-            stopRunsPolling();
-          }
-        } else {
-          stableEmptyCount = 0;
-        }
-      } catch(e) {
-        console.warn('Runs poll error:', e);
-      }
-    }, 5000);
-  }
-
-  function stopRunsPolling(){
-    if (runsPollTimer) {
-      clearInterval(runsPollTimer);
-      runsPollTimer = null;
+  // Build the inner HTML of a run's expanded detail panel.
+  function renderRunDetail(r){
+    const rows = [];
+    // Always-shown rows
+    rows.push(detailRow('Run ID',   '<code>'+escHtml(r.id)+'</code>'));
+    rows.push(detailRow('Script',   '<code>'+escHtml(r.script||'?')+'</code> · platform <code>'+escHtml(r.platform||'?')+'</code>'));
+    if (r.exit_code != null) rows.push(detailRow('Exit code', String(r.exit_code)));
+    if (r.duration_sec != null) rows.push(detailRow('Duration', r.duration_sec + 's'));
+    if (r.kind === 'compiler') {
+      rows.push(detailRow('Children',
+        (r.shards_succeeded||0)+' succeeded · '+(r.shards_partial||0)+' partial · '+(r.shards_failed||0)+' failed'));
     }
+
+    // Error block
+    if (r.error){
+      rows.push(detailRow('Error',
+        '<div class="run-detail-error">'+escHtml(r.error)+'</div>'));
+    }
+
+    // Output blobs (download links)
+    if (Array.isArray(r.output_blobs) && r.output_blobs.length){
+      const blobsHtml = r.output_blobs.map(b=>{
+        const link = b.download_url
+          ? '<a class="run-detail-blob-link" href="'+escAttr(b.download_url)+'" target="_blank">Download</a>'
+          : '<span style="color:#dc2626;font-size:10px">upload failed</span>';
+        return ''
+          + '<div class="run-detail-blob">'
+          +   '<span class="run-detail-blob-name">'+escHtml(b.filename||'?')+'</span>'
+          +   '<span class="run-detail-blob-size">'+(b.size_kb!=null?b.size_kb+' KB':'')+'</span>'
+          +   link
+          + '</div>';
+      }).join('');
+      rows.push(detailRow('Output', blobsHtml));
+    }
+
+    // stdout tail (last lines from the script)
+    if (Array.isArray(r.stdout_tail) && r.stdout_tail.length){
+      rows.push(detailRow('Output log',
+        '<div class="run-detail-stdout">'+escHtml(r.stdout_tail.join('\n'))+'</div>'));
+    }
+
+    return rows.join('');
   }
 
-  window.runShard = async function(id){
-    const shard = allShards.find(x=>x.id===id);
-    const name = (shard && shard.name) || id;
-    try {
-      await api('/api/scheduler/shards/'+id+'/run', {method:'POST'});
-      toast('Started: '+name);
-      const runsTab = document.querySelector('[data-tab="runs"]');
-      if (runsTab) runsTab.click();
-      await loadRuns();
-      renderRuns();
-      startRunsPolling();
-    } catch(e) {
-      toast('Run failed: '+e.message, true);
-    }
-  };
+  function detailRow(key, valHtml){
+    return '<div class="run-detail-row"><div class="run-detail-key">'+escHtml(key)+'</div><div class="run-detail-val">'+valHtml+'</div></div>';
+  }
 
-  window.runCompiler = async function(id){
-    const comp = allCompilers.find(x=>x.id===id);
-    const name = (comp && comp.name) || id;
-    if (!confirm('Run all shards in compiler "'+name+'" now?')) return;
-    try {
-      await api('/api/scheduler/compilers/'+id+'/run', {method:'POST'});
-      toast('Started: '+name);
-      const runsTab = document.querySelector('[data-tab="runs"]');
-      if (runsTab) runsTab.click();
-      await loadRuns();
-      renderRuns();
-      startRunsPolling();
-    } catch(e) {
-      toast('Run failed: '+e.message, true);
+  // Toggle expand/collapse on click. Closes any other open run first
+  // (one-at-a-time behavior keeps the list compact).
+  window.toggleRunDetail = function(runId){
+    const allRows = document.querySelectorAll('.run-row');
+    const allDetails = document.querySelectorAll('.run-detail');
+    const targetRow = document.querySelector('.run-row[data-run-id="'+runId.replace(/"/g,'\\"')+'"]');
+    const targetDetail = document.getElementById('run-detail-'+runId);
+    if (!targetRow || !targetDetail) return;
+    const wasOpen = targetRow.classList.contains('is-open');
+    // Close everything
+    allRows.forEach(el=>el.classList.remove('is-open'));
+    allDetails.forEach(el=>el.classList.remove('show'));
+    // Open this one if it wasn't already open
+    if (!wasOpen){
+      targetRow.classList.add('is-open');
+      targetDetail.classList.add('show');
     }
   };
-  // ═════════════════════════════════════════════════════════════════
-  // BLOCK 4 END
-  // ═════════════════════════════════════════════════════════════════
+
+  function escAttr(s){
+    return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  }
 
   // ── Shard CRUD actions ────────────────────────────────────
   window.toggleShard = async function(id){
