@@ -151,6 +151,26 @@
 .run-detail-blob-link{font-size:10px;font-weight:700;color:var(--accent);text-decoration:none;padding:3px 9px;border:1px solid var(--accent);border-radius:5px;flex-shrink:0;transition:all .12s}
 .run-detail-blob-link:hover{background:var(--accent);color:#fff}
 
+/* Nested child shard rows inside a compiler's expanded detail */
+.run-children{margin-top:6px}
+.run-children-head{font-size:9px;font-weight:700;color:var(--text-dark-muted);letter-spacing:.07em;text-transform:uppercase;margin:8px 0 5px 0}
+.child-run-row{display:flex;align-items:center;gap:10px;padding:7px 11px;background:#fff;border:1px solid var(--border-cream);border-radius:5px;margin-bottom:5px;cursor:pointer;transition:border-color .12s;position:relative}
+.child-run-row:last-child{margin-bottom:0}
+.child-run-row:hover{border-color:var(--accent)}
+.child-run-row.is-open{border-color:var(--accent);background:rgba(74,158,255,.025)}
+.child-run-caret{display:inline-block;width:8px;font-size:9px;color:var(--text-dark-muted);transition:transform .15s;flex-shrink:0;transform:rotate(0deg)}
+.child-run-row.is-open .child-run-caret{transform:rotate(90deg)}
+.child-run-name{flex:1;font-size:11.5px;font-weight:600;color:var(--navy);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.child-run-meta{font-size:9.5px;color:var(--text-dark-muted);flex-shrink:0}
+.child-run-detail{display:none;margin:0 0 6px 18px;padding:8px 12px;border-left:2px solid var(--border-cream);font-size:var(--fs-xs);line-height:1.55}
+.child-run-detail.show{display:block}
+
+/* Compiler-specific summary line in the expand panel (replaces ?/? script row) */
+.compiler-summary{display:flex;gap:14px;align-items:center;padding:6px 10px;background:rgba(0,0,0,.025);border-radius:5px;margin-bottom:8px;font-size:11px}
+.compiler-summary-stat{display:flex;align-items:center;gap:5px}
+.compiler-summary-num{font-size:14px;font-weight:700;color:var(--navy)}
+.compiler-summary-label{font-size:9px;font-weight:600;color:var(--text-dark-muted);text-transform:uppercase;letter-spacing:.05em}
+
 .disabled-pill{display:inline-flex;align-items:center;font-size:9px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;padding:2px 7px;border-radius:9px;background:rgba(239,68,68,.1);color:#dc2626;margin-left:6px}
 
 .modal-backdrop{display:none;position:fixed;inset:0;background:rgba(15,30,55,.45);z-index:998;backdrop-filter:blur(2px)}
@@ -553,7 +573,13 @@
   function renderAll(){
     document.getElementById('cnt-shards').textContent    = allShards.length;
     document.getElementById('cnt-compilers').textContent = allCompilers.length;
-    document.getElementById('cnt-runs').textContent      = allRuns.length;
+    // Runs badge counts top-level rows the user will see (compilers +
+    // orphan shards), not the total run records — child shard runs are
+    // nested inside compilers and don't get their own row.
+    const topLevelRunCount = allRuns.filter(r =>
+      r.kind === 'compiler' || (r.kind === 'shard' && !r.parent_compiler_run_id)
+    ).length;
+    document.getElementById('cnt-runs').textContent      = topLevelRunCount;
     renderShards();
     renderCompilers();
     renderRuns();
@@ -686,52 +712,95 @@
     const d = new Date(ms);
     return d.toLocaleString();
   }
+  // ── Recent Runs rendering ─────────────────────────────────
+  // Hierarchy: compiler runs are top-level rows that contain their child
+  // shard runs nested inside (when expanded). Manual shard runs (no
+  // parent_compiler_run_id) appear at the top level on their own.
+  // Net effect: if you see a shard at the top level, an admin clicked
+  // Run-now manually. If a shard appears inside a compiler, it ran via
+  // the compiler (cron or compiler-Run-now).
+
   function renderRuns(){
     const list = document.getElementById('runs-list');
     const empty = document.getElementById('runs-empty');
     if (!allRuns.length){ list.innerHTML=''; empty.style.display='flex'; return; }
     empty.style.display = 'none';
-    list.innerHTML = allRuns.map(r=>{
-      const status = r.status || 'unknown';
-      // Run records use shard_name OR compiler_name depending on kind
-      const displayName = r.shard_name || r.compiler_name || r.id;
-      const trigger = r.trigger_kind || r.trigger_type || 'manual';
-      const dur = (r.duration_sec != null) ? (' · ' + r.duration_sec + 's') : '';
-      return ''
-        + '<div class="auto-row run-row" data-run-id="'+escAttr(r.id)+'" onclick="toggleRunDetail(\''+escAttr(r.id)+'\')">'
-        +   '<span class="run-caret">▶</span>'
-        +   '<div class="auto-row-main">'
-        +     '<div class="auto-row-name">'+escHtml(displayName)+'</div>'
-        +     '<div class="auto-row-meta">'+escHtml(trigger)+' · '+escHtml(fmtTime(r.started_at))+dur+' · by '+escHtml(r.triggered_by||'?')+'</div>'
-        +   '</div>'
-        +   '<span class="run-status '+status+'">'+escHtml(status)+'</span>'
-        + '</div>'
-        + '<div class="run-detail" id="run-detail-'+escAttr(r.id)+'">'+ renderRunDetail(r) +'</div>';
-    }).join('');
+
+    // Build a child-index: parent_compiler_run_id -> [child shard runs]
+    const childrenByParent = {};
+    for (const r of allRuns){
+      if (r.kind === 'shard' && r.parent_compiler_run_id){
+        const pid = r.parent_compiler_run_id;
+        if (!childrenByParent[pid]) childrenByParent[pid] = [];
+        childrenByParent[pid].push(r);
+      }
+    }
+    // Sort children newest-first (consistent with the parent ordering)
+    for (const pid in childrenByParent){
+      childrenByParent[pid].sort((a,b)=>(b.started_at||'').localeCompare(a.started_at||''));
+    }
+
+    // Top-level rows: compilers + orphan shards (no parent)
+    const topLevel = allRuns.filter(r =>
+      r.kind === 'compiler' || (r.kind === 'shard' && !r.parent_compiler_run_id)
+    );
+
+    list.innerHTML = topLevel.map(r => renderTopLevelRow(r, childrenByParent)).join('');
+  }
+
+  function renderTopLevelRow(r, childrenByParent){
+    const status = r.status || 'unknown';
+    const displayName = r.compiler_name || r.shard_name || r.id;
+    const trigger = r.trigger_kind || r.trigger_type || 'manual';
+    const dur = (r.duration_sec != null) ? (' · ' + r.duration_sec + 's') : '';
+    return ''
+      + '<div class="auto-row run-row" data-run-id="'+escAttr(r.id)+'" onclick="toggleRunDetail(\''+escAttr(r.id)+'\')">'
+      +   '<span class="run-caret">▶</span>'
+      +   '<div class="auto-row-main">'
+      +     '<div class="auto-row-name">'+escHtml(displayName)+'</div>'
+      +     '<div class="auto-row-meta">'+escHtml(trigger)+' · '+escHtml(fmtTime(r.started_at))+dur+' · by '+escHtml(r.triggered_by||'?')+'</div>'
+      +   '</div>'
+      +   '<span class="run-status '+status+'">'+escHtml(status)+'</span>'
+      + '</div>'
+      + '<div class="run-detail" id="run-detail-'+escAttr(r.id)+'">'+ renderRunDetail(r, childrenByParent) +'</div>';
   }
 
   // Build the inner HTML of a run's expanded detail panel.
-  function renderRunDetail(r){
+  // For compiler runs: omit the script/platform line (compilers have none),
+  // show a compiler summary, and embed each child shard as a nested row.
+  // For shard runs: show the full detail (script, exit code, output, stdout).
+  function renderRunDetail(r, childrenByParent){
     const rows = [];
-    // Always-shown rows
-    rows.push(detailRow('Run ID',   '<code>'+escHtml(r.id)+'</code>'));
-    rows.push(detailRow('Script',   '<code>'+escHtml(r.script||'?')+'</code> · platform <code>'+escHtml(r.platform||'?')+'</code>'));
-    if (r.exit_code != null) rows.push(detailRow('Exit code', String(r.exit_code)));
-    if (r.duration_sec != null) rows.push(detailRow('Duration', r.duration_sec + 's'));
-    if (r.kind === 'compiler') {
-      rows.push(detailRow('Children',
-        (r.shards_succeeded||0)+' succeeded · '+(r.shards_partial||0)+' partial · '+(r.shards_failed||0)+' failed'));
+    rows.push(detailRow('Run ID', '<code>'+escHtml(r.id)+'</code>'));
+
+    if (r.kind === 'compiler'){
+      // Compiler-specific summary instead of the ?/? script line
+      const succ = r.shards_succeeded || 0;
+      const part = r.shards_partial   || 0;
+      const fail = r.shards_failed    || 0;
+      const total = (r.shard_count != null) ? r.shard_count : (succ + part + fail);
+      const summaryHtml = ''
+        + '<div class="compiler-summary">'
+        +   '<div class="compiler-summary-stat"><span class="compiler-summary-num">'+total+'</span><span class="compiler-summary-label">shards</span></div>'
+        +   '<div class="compiler-summary-stat"><span class="compiler-summary-num" style="color:#16a34a">'+succ+'</span><span class="compiler-summary-label">succeeded</span></div>'
+        +   '<div class="compiler-summary-stat"><span class="compiler-summary-num" style="color:#a16207">'+part+'</span><span class="compiler-summary-label">partial</span></div>'
+        +   '<div class="compiler-summary-stat"><span class="compiler-summary-num" style="color:#dc2626">'+fail+'</span><span class="compiler-summary-label">failed</span></div>'
+        + '</div>';
+      rows.push(summaryHtml);
+      if (r.duration_sec != null) rows.push(detailRow('Duration', r.duration_sec + 's'));
+    } else {
+      // Shard run — full detail
+      rows.push(detailRow('Script', '<code>'+escHtml(r.script||'?')+'</code> · platform <code>'+escHtml(r.platform||'?')+'</code>'));
+      if (r.exit_code != null) rows.push(detailRow('Exit code', String(r.exit_code)));
+      if (r.duration_sec != null) rows.push(detailRow('Duration', r.duration_sec + 's'));
     }
 
-    // Error block
     if (r.error){
-      rows.push(detailRow('Error',
-        '<div class="run-detail-error">'+escHtml(r.error)+'</div>'));
+      rows.push(detailRow('Error', '<div class="run-detail-error">'+escHtml(r.error)+'</div>'));
     }
 
-    // Output blobs (download links)
     if (Array.isArray(r.output_blobs) && r.output_blobs.length){
-      const blobsHtml = r.output_blobs.map(b=>{
+      const blobsHtml = r.output_blobs.map(b => {
         const link = b.download_url
           ? '<a class="run-detail-blob-link" href="'+escAttr(b.download_url)+'" target="_blank">Download</a>'
           : '<span style="color:#dc2626;font-size:10px">upload failed</span>';
@@ -745,12 +814,71 @@
       rows.push(detailRow('Output', blobsHtml));
     }
 
-    // stdout tail (last lines from the script)
     if (Array.isArray(r.stdout_tail) && r.stdout_tail.length){
-      rows.push(detailRow('Output log',
-        '<div class="run-detail-stdout">'+escHtml(r.stdout_tail.join('\n'))+'</div>'));
+      rows.push(detailRow('Output log', '<div class="run-detail-stdout">'+escHtml(r.stdout_tail.join('\n'))+'</div>'));
     }
 
+    // For compiler runs: append nested child shard rows
+    if (r.kind === 'compiler'){
+      const children = (childrenByParent && childrenByParent[r.id]) || [];
+      if (children.length){
+        const childrenHtml = ''
+          + '<div class="run-children">'
+          +   '<div class="run-children-head">Shards in this run</div>'
+          +   children.map(c => renderChildRow(c)).join('')
+          + '</div>';
+        rows.push(childrenHtml);
+      }
+    }
+
+    return rows.join('');
+  }
+
+  // Render a nested child shard row (slimmer than top-level, expandable
+  // independently). Stops the click event from bubbling to the parent.
+  function renderChildRow(c){
+    const status = c.status || 'unknown';
+    const displayName = c.shard_name || c.id;
+    const dur = (c.duration_sec != null) ? (c.duration_sec + 's') : '';
+    return ''
+      + '<div class="child-run-row" data-run-id="'+escAttr(c.id)+'" onclick="event.stopPropagation();toggleChildRunDetail(\''+escAttr(c.id)+'\')">'
+      +   '<span class="child-run-caret">▶</span>'
+      +   '<div class="child-run-name">'+escHtml(displayName)+'</div>'
+      +   '<div class="child-run-meta">'+escHtml(dur)+'</div>'
+      +   '<span class="run-status '+status+'">'+escHtml(status)+'</span>'
+      + '</div>'
+      + '<div class="child-run-detail" id="child-detail-'+escAttr(c.id)+'">'+ renderChildDetail(c) +'</div>';
+  }
+
+  // Detail body for a child shard run. Same content shape as a top-level
+  // shard row's detail, but rendered into the child slot.
+  function renderChildDetail(c){
+    const rows = [];
+    rows.push(detailRow('Run ID', '<code>'+escHtml(c.id)+'</code>'));
+    rows.push(detailRow('Script', '<code>'+escHtml(c.script||'?')+'</code> · platform <code>'+escHtml(c.platform||'?')+'</code>'));
+    if (c.exit_code != null) rows.push(detailRow('Exit code', String(c.exit_code)));
+    if (c.duration_sec != null) rows.push(detailRow('Duration', c.duration_sec + 's'));
+
+    if (c.error){
+      rows.push(detailRow('Error', '<div class="run-detail-error">'+escHtml(c.error)+'</div>'));
+    }
+    if (Array.isArray(c.output_blobs) && c.output_blobs.length){
+      const blobsHtml = c.output_blobs.map(b => {
+        const link = b.download_url
+          ? '<a class="run-detail-blob-link" href="'+escAttr(b.download_url)+'" target="_blank">Download</a>'
+          : '<span style="color:#dc2626;font-size:10px">upload failed</span>';
+        return ''
+          + '<div class="run-detail-blob">'
+          +   '<span class="run-detail-blob-name">'+escHtml(b.filename||'?')+'</span>'
+          +   '<span class="run-detail-blob-size">'+(b.size_kb!=null?b.size_kb+' KB':'')+'</span>'
+          +   link
+          + '</div>';
+      }).join('');
+      rows.push(detailRow('Output', blobsHtml));
+    }
+    if (Array.isArray(c.stdout_tail) && c.stdout_tail.length){
+      rows.push(detailRow('Output log', '<div class="run-detail-stdout">'+escHtml(c.stdout_tail.join('\n'))+'</div>'));
+    }
     return rows.join('');
   }
 
@@ -758,23 +886,33 @@
     return '<div class="run-detail-row"><div class="run-detail-key">'+escHtml(key)+'</div><div class="run-detail-val">'+valHtml+'</div></div>';
   }
 
-  // Toggle expand/collapse on click. Closes any other open run first
-  // (one-at-a-time behavior keeps the list compact).
+  // Toggle a top-level run's expand. Closes any other top-level open;
+  // does not affect any child rows that may have been opened previously
+  // (they belong to a different parent and aren't visible anyway when
+  // the parent collapses).
   window.toggleRunDetail = function(runId){
-    const allRows = document.querySelectorAll('.run-row');
-    const allDetails = document.querySelectorAll('.run-detail');
+    const allTopRows = document.querySelectorAll('.run-row');
+    const allTopDetails = document.querySelectorAll('.run-detail');
     const targetRow = document.querySelector('.run-row[data-run-id="'+runId.replace(/"/g,'\\"')+'"]');
     const targetDetail = document.getElementById('run-detail-'+runId);
     if (!targetRow || !targetDetail) return;
     const wasOpen = targetRow.classList.contains('is-open');
-    // Close everything
-    allRows.forEach(el=>el.classList.remove('is-open'));
-    allDetails.forEach(el=>el.classList.remove('show'));
-    // Open this one if it wasn't already open
+    allTopRows.forEach(el=>el.classList.remove('is-open'));
+    allTopDetails.forEach(el=>el.classList.remove('show'));
     if (!wasOpen){
       targetRow.classList.add('is-open');
       targetDetail.classList.add('show');
     }
+  };
+
+  // Toggle a nested child shard's expand. Independent of top-level state.
+  // Multiple children inside the same compiler can be open at once.
+  window.toggleChildRunDetail = function(runId){
+    const targetRow = document.querySelector('.child-run-row[data-run-id="'+runId.replace(/"/g,'\\"')+'"]');
+    const targetDetail = document.getElementById('child-detail-'+runId);
+    if (!targetRow || !targetDetail) return;
+    targetRow.classList.toggle('is-open');
+    targetDetail.classList.toggle('show');
   };
 
   function escAttr(s){
