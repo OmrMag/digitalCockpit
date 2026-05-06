@@ -348,7 +348,7 @@
             <label class="f-label">Auto-deliver to local folder (optional, requires cockpit-agent)</label>
             <input type="text" class="f-input" id="sb-localpath" placeholder='e.g. C:\Egnyte\ALEC\Exports\Revizto\' maxlength="500" />
             <div style="font-size:10px;color:var(--text-dark-muted);margin-top:5px;line-height:1.5">
-              When set, the <a href="/agent-tokens" target="_blank" style="color:var(--accent)">cockpit-agent</a> on your laptop downloads completed runs to this folder.
+              When set, the <a href="/agent-tokens" target="_blank" style="color:var(--accent)">cockpit-agent</a> on your laptop downloads <strong>compiler-fired</strong> runs of this shard to this folder. Manual Run-now extractions stay in cloud storage only.
               Leave blank to skip auto-delivery for this shard.
             </div>
           </div>
@@ -779,12 +779,16 @@
     list.innerHTML = topLevel.map(r => renderTopLevelRow(r, childrenByParent)).join('');
   }
 
-  // Block 6A: build a "delivered" badge for a shard run, but only if the
-  // run's shard has a local_path configured (no point showing "pending"
-  // for shards the agent will never touch). For successful/partial runs,
-  // checks delivered_by[] for currentUser.
+  // Block 6A: build a "delivered" badge for a shard run, but only when
+  // ALL of these are true:
+  //   - it's a shard run (kind === 'shard')
+  //   - it ran as part of a compiler (has parent_compiler_run_id)
+  //     → standalone Run-now on a shard is ad-hoc; agent ignores those
+  //   - status is success or partial (no point on a failed run)
+  //   - the shard now has a local_path configured
   function deliveryBadge(r){
     if (r.kind !== 'shard') return '';
+    if (!r.parent_compiler_run_id) return '';
     if (r.status !== 'success' && r.status !== 'partial') return '';
     // Look up the shard's local_path
     const shard = allShards.find(s => s.id === r.shard_id);

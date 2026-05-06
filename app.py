@@ -7283,6 +7283,12 @@ async def api_agent_runs_pending(user: str = Depends(require_user_or_token),
     for r in runs:
         if r.get("kind") != "shard":
             continue
+        # Block 6A rule (revised): agent only delivers shard runs that
+        # ran as part of a compiler. Standalone "Run-now" on a shard is
+        # treated as ad-hoc / debugging output and stays in cloud storage
+        # only — the laptop folders are reserved for scheduled deliveries.
+        if not r.get("parent_compiler_run_id"):
+            continue
         if r.get("status") not in ("success", "partial"):
             continue
         if user in (r.get("delivered_by") or []):
