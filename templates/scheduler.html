@@ -818,6 +818,13 @@
   //     → standalone Run-now on a shard is ad-hoc; agent ignores those
   //   - status is success or partial (no point on a failed run)
   //   - the shard now has a local_path configured
+  // Block 8: claim-based delivery. A run is "delivered" the moment ANY
+  // admin's agent claims it — not per-user. So:
+  //   - if delivered_by has a value → ✓ delivered (by whoever)
+  //   - if empty/null → ⏱ pending
+  // Shape-tolerant: handles both new string-shape `delivered_by: "x@y.com"`
+  // and legacy list-shape `delivered_by: ["x@y.com"]` from pre-Block-8 data
+  // (the server migrates these on startup, but it can't hurt to be defensive).
   function deliveryBadge(r){
     if (r.kind !== 'shard') return '';
     if (!r.parent_compiler_run_id) return '';
@@ -827,9 +834,20 @@
     if (!shard) return '';
     const localPath = (shard.destination || {}).local_path;
     if (!localPath) return '';
-    const delivered = Array.isArray(r.delivered_by) && r.delivered_by.indexOf(currentUser) >= 0;
-    if (delivered){
-      return '<span class="delivery-pill delivered" title="Delivered to '+escAttr(localPath)+'">✓ delivered</span>';
+
+    // Resolve claim owner from either shape
+    let claimedBy = null;
+    if (typeof r.delivered_by === 'string' && r.delivered_by) {
+      claimedBy = r.delivered_by;
+    } else if (Array.isArray(r.delivered_by) && r.delivered_by.length > 0) {
+      claimedBy = r.delivered_by[0];
+    }
+
+    if (claimedBy){
+      // "by you" reads better than "by oawad@alec.ae" when it's the current user
+      const byLabel = (claimedBy === currentUser) ? 'you' : claimedBy;
+      const tooltip = 'Delivered by ' + byLabel + ' → ' + localPath;
+      return '<span class="delivery-pill delivered" title="'+escAttr(tooltip)+'">✓ delivered</span>';
     } else {
       return '<span class="delivery-pill pending" title="Awaiting agent pickup → '+escAttr(localPath)+'">⏱ pending</span>';
     }

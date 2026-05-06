@@ -130,10 +130,11 @@ def run_shard(
         "error":              None,
         "exit_code":          None,
         "stdout_tail":        [],
-        # Block 6A: which user(s) have downloaded this run via the agent.
-        # Empty list means no agent has picked it up yet. The agent flips
-        # this to add its user when it successfully delivers locally.
-        "delivered_by":       [],
+        # Block 8: which user's agent has claimed this run for delivery.
+        # null = unclaimed (still pending). String = claimed by that user.
+        # First-claim wins: once any agent calls mark-delivered, no other
+        # agent picks it up.
+        "delivered_by":       None,
     }
 
     # Stamp the run as running before any heavy work — the UI polls this
@@ -427,10 +428,10 @@ def run_compiler(
         "shards_succeeded": 0,
         "shards_failed":    0,
         "shards_partial":   0,
-        # Block 6A: agent-delivered tracking. For compilers this is mostly
-        # symbolic — the agent downloads child SHARD outputs, not compiler
-        # outputs (compilers have no outputs). Kept here for schema parity.
-        "delivered_by":   [],
+        # Block 8: claim-based delivery. For compilers this is symbolic
+        # (compilers have no outputs of their own — children are what gets
+        # delivered). Kept for schema parity.
+        "delivered_by":   None,
     }
 
     try:
@@ -464,7 +465,7 @@ def run_compiler(
                 "duration_sec": 0,
                 "output_blobs": [],
                 "error":        "Shard referenced by compiler no longer exists.",
-                "delivered_by": [],
+                "delivered_by": None,
             }
             try: append_run(phantom)
             except Exception: pass

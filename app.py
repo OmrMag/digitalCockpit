@@ -7276,16 +7276,16 @@ async def api_agent_runs_pending(user: str = Depends(require_user_or_token),
                                   authorization: str | None = Header(default=None)):
     """Return runs that the agent should download for the requesting user.
 
+    Block 8 (claim-based delivery): a run is "pending" when nobody's agent
+    has claimed it yet. Once any admin's agent successfully delivers, that
+    run is hidden from EVERY admin's pending list — first-claim wins.
+
     A run is "pending delivery" iff:
-      - status is 'success' or 'partial' (NOT 'running' or 'failed' — failed
-        runs have no useful output, running ones aren't done yet)
-      - kind is 'shard' (compilers have no outputs themselves; their
-        children are what the agent fetches)
-      - the requesting user is NOT in delivered_by[] yet
-      - run was completed AFTER the agent token's install_date_iso
-        (so reinstalling doesn't trigger a redownload of old data)
+      - status is 'success' or 'partial' (NOT 'running' or 'failed')
+      - kind is 'shard' AND ran via a compiler (parent_compiler_run_id set)
       - the originating shard has a destination.local_path configured
-        (otherwise there's nowhere to deliver the file to)
+      - delivered_by is empty (no one has claimed yet)
+      - run completed AFTER the requesting agent's token install_date_iso
     """
     # Determine the install_date cutoff for this token (only relevant when
     # auth was via bearer token; cookie auth has no install_date concept,
@@ -7315,15 +7315,12 @@ async def api_agent_runs_pending(user: str = Depends(require_user_or_token),
     for r in runs:
         if r.get("kind") != "shard":
             continue
-        # Block 6A rule (revised): agent only delivers shard runs that
-        # ran as part of a compiler. Standalone "Run-now" on a shard is
-        # treated as ad-hoc / debugging output and stays in cloud storage
-        # only — the laptop folders are reserved for scheduled deliveries.
         if not r.get("parent_compiler_run_id"):
             continue
         if r.get("status") not in ("success", "partial"):
             continue
-        if user in (r.get("delivered_by") or []):
+        # Block 8: claim-based filter — skip if anyone has claimed.
+        if _run_claim_owner(r):
             continue
         ended_at = r.get("ended_at") or ""
         if ended_at and ended_at < install_cutoff_iso:
@@ -7349,24 +7346,97 @@ async def api_agent_runs_pending(user: str = Depends(require_user_or_token),
     return {"pending": pending, "user": user, "install_cutoff": install_cutoff_iso}
 
 
+# ── Block 8 helper: read claim owner from a run record ────────────────────
+# Backward-compat: handles BOTH old list-shape `delivered_by: [user1, user2]`
+# AND new string-shape `delivered_by: "user@x.com"`. Returns None if empty.
+# This is the central place that interprets the claim — call it everywhere
+# rather than reading delivered_by directly.
+def _run_claim_owner(run: dict) -> str | None:
+    raw = run.get("delivered_by")
+    if not raw:
+        return None
+    if isinstance(raw, str):
+        return raw or None
+    if isinstance(raw, list):
+        # Pre-Block-8 shape — first element wins. If list is empty → None.
+        return raw[0] if raw else None
+    # Unknown shape — treat as no claim (defensive)
+    return None
+
+
 @app.post("/api/agent/runs/{run_id}/mark-delivered")
 async def api_agent_runs_mark_delivered(run_id: str,
                                           user: str = Depends(require_user_or_token)):
-    """Agent calls this after successfully writing the run's output to
-    the local disk. Adds the user to the run's delivered_by[] list so
-    the run no longer appears in /api/agent/runs/pending for this user.
-    Idempotent — calling twice is fine."""
+    """Block 8: claim-based delivery. The first agent to call this 'wins' —
+    the run is marked claimed by that user. Subsequent calls are idempotent
+    no-ops that return the existing owner.
+
+    Returns:
+      - {"ok": true, "run_id": ..., "delivered_by": "<user>"} on first claim
+      - {"ok": true, "already_claimed": true, "delivered_by": "<other_user>"}
+        if someone else got there first. Agent should treat this as
+        success (not failure) and proceed.
+
+    The race window between two agents calling at the same instant is
+    handled by last-write-wins on the JSON file. In practice the only cost
+    is a redundant blob download by the second agent — harmless because
+    files write to the same shared path with identical content.
+    """
     runs = load_runs()
     target = next((r for r in runs if r.get("id") == run_id), None)
     if not target:
         return JSONResponse({"error": "Run not found."}, status_code=404)
 
-    delivered = target.get("delivered_by") or []
-    if user not in delivered:
-        delivered.append(user)
-        target["delivered_by"] = delivered
-        save_runs(runs)
-    return {"ok": True, "run_id": run_id, "delivered_by": delivered}
+    existing_owner = _run_claim_owner(target)
+    if existing_owner and existing_owner != user:
+        # Already claimed by someone else — return ok=true with the flag
+        # so the agent knows the file is already accounted for and doesn't
+        # need to retry. Still 200, not an error.
+        return {
+            "ok":              True,
+            "already_claimed": True,
+            "run_id":          run_id,
+            "delivered_by":    existing_owner,
+        }
+
+    if existing_owner == user:
+        # Idempotent — same user calling twice is fine
+        return {"ok": True, "run_id": run_id, "delivered_by": user}
+
+    # Fresh claim — mark it
+    target["delivered_by"] = user
+    save_runs(runs)
+    return {"ok": True, "run_id": run_id, "delivered_by": user}
+
+
+# ── Block 8: one-shot migration of existing list-shape records ────────────
+# Converts delivered_by: ["user1", "user2"] → delivered_by: "user1" in place.
+# Idempotent — already-string records pass through. Safe to run on every
+# startup. Logs how many records changed.
+def _migrate_delivered_by_list_to_string():
+    try:
+        runs = load_runs()
+        if not runs:
+            return
+        changed = 0
+        for r in runs:
+            raw = r.get("delivered_by")
+            if isinstance(raw, list):
+                if raw:
+                    r["delivered_by"] = raw[0]   # first claimant wins
+                else:
+                    r["delivered_by"] = None     # empty list → null
+                changed += 1
+        if changed:
+            save_runs(runs)
+            print(f"[block8] Migrated {changed} run record(s) from delivered_by:list to delivered_by:string", flush=True)
+    except Exception as e:
+        # Migration failure is non-fatal — code handles both shapes anyway.
+        print(f"[block8] delivered_by migration error (non-fatal): {e}", flush=True)
+
+
+# Run the migration once at startup (idempotent — safe on every boot)
+_migrate_delivered_by_list_to_string()
 
 
 # ═══════════════════════════════════════════════════════════════════════════
