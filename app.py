@@ -6821,6 +6821,91 @@ async def scheduler_get_run(run_id: str, user: str = Depends(require_user)):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# DELETE /api/scheduler/runs/{id} — clear a run record + its output blobs
+# ═══════════════════════════════════════════════════════════════════════════
+# Behaviour rules locked in by the spec:
+#   - Removes the run record from automation_runs.json
+#   - Also deletes the output blobs from Azure Storage (so they don't sit
+#     around for 15 days waiting for the lifecycle rule to clean them up)
+#   - For compiler-kind runs: cascades — deletes all child shard run
+#     records AND their output blobs
+#   - Refuses to delete a run that's currently in 'running' status —
+#     killing the record while a subprocess is mid-flight could orphan it.
+#     Returns 409 with a helpful message in that case.
+#   - Returns a summary of what was removed: how many records, how many
+#     blobs (with per-blob success/failure counts).
+@app.delete("/api/scheduler/runs/{run_id}")
+async def scheduler_delete_run(run_id: str, user: str = Depends(require_user)):
+    runs = load_runs()
+    target = next((r for r in runs if r.get("id") == run_id), None)
+    if target is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    # Refuse to delete an in-flight run
+    if target.get("status") == "running":
+        raise HTTPException(
+            status_code=409,
+            detail="This run is still in progress. Wait for it to finish before deleting.",
+        )
+
+    # Build the set of run IDs to remove. For compiler runs, also include
+    # child shards so the deletion is consistent — otherwise the children
+    # would become orphans (no top-level row, no parent visible, dead state).
+    ids_to_remove = {run_id}
+    if target.get("kind") == "compiler":
+        for r in runs:
+            if r.get("kind") == "shard" and r.get("parent_compiler_run_id") == run_id:
+                # Don't cascade into a still-running child either
+                if r.get("status") == "running":
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"Child shard run {r.get('id')} is still in progress. "
+                               "Wait for it to finish before deleting the compiler run.",
+                    )
+                ids_to_remove.add(r.get("id"))
+
+    # Collect every output_blob across the records we're about to delete.
+    # These are the things to remove from Azure Storage.
+    blobs_to_delete = []
+    for r in runs:
+        if r.get("id") in ids_to_remove:
+            for b in (r.get("output_blobs") or []):
+                container = b.get("container")
+                blob_path = b.get("blob_path")
+                if container and blob_path:
+                    blobs_to_delete.append((container, blob_path))
+
+    # Delete the blobs first. If some fail (network glitch, already gone),
+    # we still proceed with the record deletion — leaving orphaned blob
+    # records in JSON would be worse than orphaned blobs in storage,
+    # which the lifecycle rule will sweep up in 15 days anyway.
+    blob_results = {"deleted": 0, "failed": 0, "errors": []}
+    for container, blob_path in blobs_to_delete:
+        try:
+            ok = Blob_Client.delete_blob(container, blob_path)
+            if ok:
+                blob_results["deleted"] += 1
+            else:
+                # Blob didn't exist — count as success (idempotent)
+                blob_results["deleted"] += 1
+        except Exception as e:
+            blob_results["failed"] += 1
+            # Truncate error to avoid bloating the response
+            blob_results["errors"].append(f"{blob_path}: {str(e)[:120]}")
+
+    # Now remove the records themselves
+    new_runs = [r for r in runs if r.get("id") not in ids_to_remove]
+    save_runs(new_runs)
+
+    return JSONResponse({
+        "deleted_run_id":     run_id,
+        "deleted_record_ids": sorted(ids_to_remove),
+        "records_removed":    len(ids_to_remove),
+        "blobs":              blob_results,
+    })
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 
 # ═══════════════════════════════════════════════════════════════════════════
 # BLOCK 4 END                                                                ▲
