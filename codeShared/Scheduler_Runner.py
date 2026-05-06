@@ -269,6 +269,39 @@ def run_shard(
                                  status="failed",
                                  error="Script succeeded but produced no output files.")
 
+        # ── Step 7b: apply user output preferences (Block 7) ───────────
+        # Filter to requested formats + apply custom_name rename, both
+        # honored from the shard's output config. _apply_output_filters_and_rename
+        # supports the new `formats` list and the legacy single `format` string.
+        out_cfg = shard.get("output") or {}
+        formats_pref = out_cfg.get("formats")
+        if not formats_pref and out_cfg.get("format"):
+            # legacy compat
+            formats_pref = [out_cfg["format"]]
+        custom_name = out_cfg.get("custom_name")
+
+        if ok and (formats_pref or custom_name):
+            try:
+                output_files, filter_msg = _apply_output_filters_and_rename(
+                    output_files, formats_pref, custom_name,
+                )
+                if filter_msg:
+                    print(f"[scheduler] {filter_msg}", flush=True)
+                    # Append the filter message to stdout_tail so it's visible
+                    # in the run detail UI.
+                    stdout_tail = (stdout_tail or []) + [f"[output filter] {filter_msg}"]
+                    run_record["stdout_tail"] = stdout_tail
+            except Exception as e:
+                # If filtering blew up, log but proceed with unfiltered files
+                print(f"[scheduler] Output filter error (non-fatal): {e}", flush=True)
+
+            if not output_files:
+                # All files were filtered out — partial success: script ran but
+                # produced nothing the user asked for.
+                return _finalize_run(run_record, started, append_run,
+                                     status="partial",
+                                     error=f"Script succeeded but no files matched the requested formats {formats_pref}.")
+
         # ── Step 8: upload to blob ─────────────────────────────────────
         if ok:
             try:
@@ -575,6 +608,86 @@ def _collect_output_files(run_temp: Path) -> list[Path]:
             continue
         out.append(f)
     return out
+
+
+def _apply_output_filters_and_rename(
+    files: list[Path],
+    formats: list[str] | None,
+    custom_name: str | None,
+) -> tuple[list[Path], str]:
+    """Apply user's output preferences from the shard config:
+
+      1. FORMAT FILTER: drop files whose extension doesn't match the
+         requested formats. If formats is None or empty, return all.
+      2. CUSTOM RENAME: if custom_name is set, rename each kept file to
+         <custom_name>.<original-ext>. Preserves extensions so callers
+         downstream can still tell which is which.
+
+    Returns (kept_files, message). kept_files is the post-filter list of
+    Path objects (renamed on disk if custom_name applied). message is a
+    human-readable summary of what changed — empty string if nothing did.
+
+    Side effect: renames files in place when custom_name is set. Original
+    paths in `files` become invalid for renamed entries.
+    """
+    if not files:
+        return [], ""
+
+    notes = []
+
+    # ── 1. Format filter ────────────────────────────────────────────────
+    if formats:
+        # Normalize to a set of lowercase extensions like {".csv", ".json"}
+        wanted_exts = {"." + f.lower().strip(".") for f in formats}
+        before = len(files)
+        kept = [f for f in files if f.suffix.lower() in wanted_exts]
+        dropped = before - len(kept)
+        if dropped > 0:
+            dropped_names = [f.name for f in files if f.suffix.lower() not in wanted_exts]
+            notes.append(f"format filter dropped {dropped} file(s): {', '.join(dropped_names)}")
+        files = kept
+        if not files:
+            # Filtering removed everything. Return empty + a clear message
+            # so the caller can mark the run partial.
+            notes.append("no files matched the requested formats")
+            return [], "; ".join(notes)
+
+    # ── 2. Custom rename ────────────────────────────────────────────────
+    cn = (custom_name or "").strip()
+    if cn:
+        # If multiple files share an extension after rename, they'd
+        # collide. e.g. two CSVs both named "foo.csv". To keep things
+        # predictable, first one wins; subsequent collisions get
+        # "_2", "_3" suffixes. Should be rare in practice (most scripts
+        # produce one file per format), but worth handling.
+        seen_targets: set = set()
+        renamed: list[Path] = []
+        for f in files:
+            ext = f.suffix
+            target_name = f"{cn}{ext}"
+            if target_name in seen_targets:
+                # Collision — find a free numbered name
+                i = 2
+                while True:
+                    candidate = f"{cn}_{i}{ext}"
+                    if candidate not in seen_targets:
+                        target_name = candidate
+                        break
+                    i += 1
+            seen_targets.add(target_name)
+            new_path = f.parent / target_name
+            try:
+                f.rename(new_path)
+                renamed.append(new_path)
+            except OSError as e:
+                # If rename fails (e.g. permission), keep original. Don't
+                # abort the run — better to deliver with original names.
+                notes.append(f"rename of {f.name} → {target_name} failed: {e}")
+                renamed.append(f)
+        files = renamed
+        notes.append(f"renamed to '{cn}'")
+
+    return files, "; ".join(notes)
 
 
 def _update_shard_after_run(

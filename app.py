@@ -749,10 +749,11 @@ SCRIPT_CATALOG = {
     },
 }
 
-# Output formats the scheduler accepts. CSV/XLSX support depends on the
-# script — most produce JSON natively; CSV/XLSX may require post-conversion
-# (the script runner will handle that in a later block).
-VALID_OUTPUT_FORMATS = {"csv", "json", "xlsx"}
+# Output formats the scheduler accepts. Restricted to csv and json — xlsx
+# was removed from the picker because no current script produces xlsx
+# natively, and the runner would have to convert. Add it back if a future
+# script needs it.
+VALID_OUTPUT_FORMATS = {"csv", "json"}
 
 # Schedule frequencies the UI offers. The actual cron firing logic
 # interprets these in a later block; here we just validate the shape.
@@ -893,9 +894,40 @@ def validate_shard(payload: dict, *, allow_partial: bool = False) -> tuple[bool,
     # Output
     out = payload.get("output") or {}
     if out:
-        fmt = out.get("format")
-        if fmt is not None and fmt not in VALID_OUTPUT_FORMATS:
-            return False, f"Invalid output format {fmt!r}. Allowed: {sorted(VALID_OUTPUT_FORMATS)}"
+        # Block 7: support both legacy "format" (single string) and new
+        # "formats" (list). Old shards saved before the multi-format change
+        # keep working without migration.
+        legacy_fmt  = out.get("format")
+        formats_list = out.get("formats")
+
+        if legacy_fmt is not None:
+            if legacy_fmt not in VALID_OUTPUT_FORMATS:
+                return False, f"Invalid output.format {legacy_fmt!r}. Allowed: {sorted(VALID_OUTPUT_FORMATS)}"
+
+        if formats_list is not None:
+            if not isinstance(formats_list, list):
+                return False, "output.formats must be a list."
+            if len(formats_list) == 0:
+                return False, "output.formats must contain at least one format. Pick CSV, JSON, or both."
+            for f in formats_list:
+                if f not in VALID_OUTPUT_FORMATS:
+                    return False, f"Invalid output.formats entry {f!r}. Allowed: {sorted(VALID_OUTPUT_FORMATS)}"
+
+        # Custom filename — overrides script-natural filename when set
+        custom_name = out.get("custom_name")
+        if custom_name is not None:
+            if not isinstance(custom_name, str):
+                return False, "output.custom_name must be a string."
+            cn = custom_name.strip()
+            if cn:  # only validate format when non-empty
+                if len(cn) > 100:
+                    return False, "output.custom_name must be 100 characters or fewer."
+                # Reject path separators + characters Windows forbids in filenames
+                # (\ / : * ? " < > | plus null). Allowing dots/spaces/dashes is fine.
+                bad_chars = set('\\/:*?"<>|\x00')
+                if any(c in bad_chars for c in cn):
+                    return False, ("output.custom_name contains invalid characters. "
+                                   "Allowed: letters, numbers, dashes, underscores, dots, spaces.")
 
     # Destination
     dest = payload.get("destination") or {}
@@ -6426,7 +6458,7 @@ async def api_scheduler_shard_create(request: Request, user: str = Depends(requi
         "platform":      SCRIPT_CATALOG[payload["script"]]["platform"],
         "script":        payload["script"],
         "context":       payload.get("context") or {},
-        "output":        payload.get("output") or {"format": "json", "prefix": "", "naming": ["append_date"]},
+        "output":        payload.get("output") or {"formats": ["json"], "prefix": "", "naming": ["append_date"]},
         "destination":   payload.get("destination") or {"type": "blob"},
         "active":        bool(payload.get("active", True)),
         "in_compiler":   None,    # always null at create — joins compiler later

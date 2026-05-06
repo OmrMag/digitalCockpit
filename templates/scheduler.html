@@ -294,15 +294,21 @@
       <div class="b-block">
         <div class="b-block-head"><div class="b-num">2</div><span class="b-title">Output</span></div>
         <div class="b-body">
-          <div class="f"><label class="f-label">Format</label>
+          <div class="f"><label class="f-label">Format (pick one or both)</label>
             <div class="fmt-row">
-              <div class="fmt-opt on" data-fmt="json" onclick="sbSetFmt('json')">JSON</div>
-              <div class="fmt-opt" data-fmt="csv" onclick="sbSetFmt('csv')">CSV</div>
-              <div class="fmt-opt" data-fmt="xlsx" onclick="sbSetFmt('xlsx')">XLSX</div>
+              <div class="fmt-opt on" data-fmt="json" onclick="sbToggleFmt('json')">JSON</div>
+              <div class="fmt-opt on" data-fmt="csv" onclick="sbToggleFmt('csv')">CSV</div>
             </div>
           </div>
           <div class="f"><label class="f-label">File prefix (optional)</label>
             <input class="f-input" type="text" id="sb-prefix" placeholder="e.g. wynn_l4_" maxlength="40"/>
+          </div>
+          <div class="f"><label class="f-label">Custom filename (optional)</label>
+            <input class="f-input" type="text" id="sb-customname" placeholder="e.g. RAKC_Members  (leave blank to use script's default name)" maxlength="100"/>
+            <div style="font-size:10px;color:var(--text-dark-muted);margin-top:5px;line-height:1.5">
+              When set, replaces the script's default filename. Combines with prefix and naming options.
+              Don't include an extension — the format selector decides that.
+            </div>
           </div>
           <div class="f"><label class="f-label">Naming options</label>
             <div class="chip-row">
@@ -470,7 +476,9 @@
 
   // Shard builder state
   let editingShardId = null;
-  let sbCurFmt = 'json';
+  // Multi-format selection: a Set of strings, e.g. new Set(['json','csv'])
+  // Default is JSON only to match old behavior; user can toggle either on/off.
+  let sbFormats = new Set(['json']);
   let sbCurDest = 'blob';
 
   // Compiler builder state
@@ -622,13 +630,37 @@
     return c ? c.name : null;
   }
 
+  // Look up a project's display name from the cached projectsData. Falls
+  // back to a short ID slice if the project isn't in the user's accessible
+  // list (e.g. lost access since the shard was created, or projects
+  // haven't loaded yet). Returns null if no project is identifiable.
+  function projectNameById(platform, projectId){
+    if (!projectId) return null;
+    if (!projectsData) return projectId.slice(0, 8) + '…';
+    if (platform === 'forma' && projectsData.forma){
+      const hit = projectsData.forma.find(p => p.id === projectId);
+      if (hit) return hit.name;
+    } else if (platform === 'revizto' && projectsData.revizto){
+      const hit = projectsData.revizto.find(p => p.uuid === projectId);
+      if (hit) return hit.title;
+    } else if (platform === 'morta' && projectsData.morta){
+      const hit = projectsData.morta.find(p => (p.id === projectId || p.uuid === projectId));
+      if (hit) return hit.name || hit.title;
+    }
+    // Not found — fall back to short ID
+    return projectId.slice(0, 8) + '…';
+  }
+
   function shardSourceLine(s){
     const cat = scriptCatalog[s.script] || {};
     const ctx = s.context || {};
     const parts = [cat.display_name || s.script];
+    // Resolve project name (works for both project_id and project_uuid)
+    const platform = cat.platform || s.platform;
+    const projId = ctx.project_id || ctx.project_uuid;
+    const projName = projectNameById(platform, projId);
     if (ctx.model_name) parts.push(ctx.model_name);
-    else if (ctx.project_id) parts.push('project: '+ctx.project_id.slice(0,8));
-    else if (ctx.project_uuid) parts.push('project: '+ctx.project_uuid.slice(0,8));
+    else if (projName) parts.push(projName);
     return parts.join(' · ');
   }
 
@@ -1159,11 +1191,16 @@
     document.getElementById('sb-project-row').classList.remove('show');
     document.getElementById('sb-model-row').classList.remove('show');
     document.getElementById('sb-prefix').value = '';
+    // Block 7: clear custom filename field (if present)
+    const cn = document.getElementById('sb-customname');
+    if (cn) cn.value = '';
     document.querySelectorAll('#view-shard-builder .chip').forEach(c=>{
       const k = c.dataset.naming;
       c.classList.toggle('on', k === 'append_date');
     });
-    sbSetFmt('json');
+    // Reset to JSON-only by default (matches old behavior)
+    sbFormats = new Set(['json']);
+    sbRenderFmts();
     sbSetDest('blob');
     // Block 6A: reset local_path field
     const lp = document.getElementById('sb-localpath');
@@ -1187,9 +1224,24 @@
         setTimeout(()=>{ document.getElementById('sb-model').value = ctx.model_item_id; }, 200);
       }
     }, 50);
-    sbSetFmt((s.output && s.output.format) || 'json');
-    document.getElementById('sb-prefix').value = (s.output && s.output.prefix) || '';
-    const naming = (s.output && s.output.naming) || [];
+    // Block 7: load formats. Supports new "formats" list AND legacy "format"
+    // single-string for shards saved before the multi-format change.
+    const out = s.output || {};
+    let savedFormats;
+    if (Array.isArray(out.formats) && out.formats.length > 0) {
+      savedFormats = out.formats;
+    } else if (out.format) {
+      savedFormats = [out.format];   // legacy
+    } else {
+      savedFormats = ['json'];        // safe default
+    }
+    sbFormats = new Set(savedFormats.filter(f => f === 'json' || f === 'csv'));
+    if (sbFormats.size === 0) sbFormats.add('json');
+    sbRenderFmts();
+    document.getElementById('sb-prefix').value = out.prefix || '';
+    const cn2 = document.getElementById('sb-customname');
+    if (cn2) cn2.value = out.custom_name || '';
+    const naming = out.naming || [];
     document.querySelectorAll('#view-shard-builder .chip').forEach(c=>{
       c.classList.toggle('on', naming.includes(c.dataset.naming));
     });
@@ -1198,9 +1250,32 @@
     const lp = document.getElementById('sb-localpath');
     if (lp) lp.value = (s.destination && s.destination.local_path) || '';
   }
+  // Multi-select format toggle. Clicking a format chip flips it on/off.
+  // Refuses to leave the user with zero formats selected — at least one
+  // must stay on (the runner needs to know what to upload).
+  window.sbToggleFmt = function(f){
+    if (sbFormats.has(f)) {
+      // Don't allow turning off the last remaining format
+      if (sbFormats.size <= 1) {
+        toast('At least one format must be selected.', true);
+        return;
+      }
+      sbFormats.delete(f);
+    } else {
+      sbFormats.add(f);
+    }
+    sbRenderFmts();
+  };
+
+  function sbRenderFmts(){
+    document.querySelectorAll('#view-shard-builder .fmt-opt').forEach(o=>{
+      o.classList.toggle('on', sbFormats.has(o.dataset.fmt));
+    });
+  }
+  // Backward-compat alias for any old callers (defensive)
   window.sbSetFmt = function(f){
-    sbCurFmt = f;
-    document.querySelectorAll('#view-shard-builder .fmt-opt').forEach(o=>o.classList.toggle('on', o.dataset.fmt===f));
+    sbFormats = new Set([f]);
+    sbRenderFmts();
   };
   window.sbSetDest = function(d){
     if (d !== 'blob') return;
@@ -1345,16 +1420,26 @@
     const destination = { type: 'blob' };
     if (localPath) destination.local_path = localPath;
 
+    // Block 7: formats list + optional custom name
+    const formatsList = Array.from(sbFormats);
+    if (formatsList.length === 0) {
+      return toast('Pick at least one format (JSON or CSV).', true);
+    }
+    const customName = (document.getElementById('sb-customname').value || '').trim();
+
+    const outputBlock = {
+      formats: formatsList,
+      prefix: document.getElementById('sb-prefix').value.trim(),
+      naming: naming,
+    };
+    if (customName) outputBlock.custom_name = customName;
+
     const payload = {
       name: name,
       platform: platform,
       script: script,
       context: ctx,
-      output: {
-        format: sbCurFmt,
-        prefix: document.getElementById('sb-prefix').value.trim(),
-        naming: naming
-      },
+      output: outputBlock,
       destination: destination
     };
 
