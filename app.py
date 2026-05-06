@@ -14,7 +14,7 @@ import urllib.parse
 from pathlib import Path
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
-from fastapi import FastAPI, Request, Form, UploadFile, File, Depends, Cookie, HTTPException, BackgroundTasks
+from fastapi import FastAPI, Request, Form, UploadFile, File, Depends, Cookie, HTTPException, BackgroundTasks, Header
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -903,6 +903,16 @@ def validate_shard(payload: dict, *, allow_partial: bool = False) -> tuple[bool,
         dtype = dest.get("type")
         if dtype is not None and dtype not in VALID_DESTINATIONS:
             return False, f"Destination type {dtype!r} not yet supported. Available now: {sorted(VALID_DESTINATIONS)}"
+        # Block 6A: optional local_path used by the cockpit-agent. Just
+        # cap the length to avoid pathological inputs; we don't validate
+        # path format because it might be Windows ('C:\\...'), POSIX,
+        # or a UNC share. The agent itself handles invalid paths.
+        local_path = dest.get("local_path")
+        if local_path is not None:
+            if not isinstance(local_path, str):
+                return False, "destination.local_path must be a string."
+            if len(local_path) > 500:
+                return False, "destination.local_path must be 500 characters or fewer."
 
     return True, ""
 
@@ -3326,6 +3336,13 @@ async def manage_page(request: Request, user: str = Depends(require_user)):
 async def scheduler_page(request: Request, user: str = Depends(require_user)):
     return templates.TemplateResponse(request=request, name="scheduler.html", context={
         "active_page": "scheduler", "current_user": user,
+    })
+
+# Block 6A: Agent token management page
+@app.get("/agent-tokens", response_class=HTMLResponse)
+async def agent_tokens_page(request: Request, user: str = Depends(require_user)):
+    return templates.TemplateResponse(request=request, name="agent_tokens.html", context={
+        "active_page": "agent-tokens", "current_user": user,
     })
 
 @app.get("/settings", response_class=HTMLResponse)
@@ -6978,6 +6995,346 @@ async def _b5_shutdown_scheduler():
 # ═══════════════════════════════════════════════════════════════════════════
 # BLOCK 5 END                                                                ▲
 # ═══════════════════════════════════════════════════════════════════════════
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# BLOCK 6A — AGENT API TOKEN SYSTEM                                         ▼
+# ═══════════════════════════════════════════════════════════════════════════
+# Per-user API tokens for the cockpit-agent (a small Windows program that
+# runs on an admin's laptop and downloads completed scheduler runs to a
+# local folder per shard). Block 6A is the cockpit half of that system:
+#
+#   - token storage at agent_tokens.json in cockpit-data blob
+#   - generate / list / revoke endpoints (cockpit UI uses these)
+#   - bearer-token auth for agent-facing endpoints
+#   - new endpoints the agent will call (pending runs / mark-delivered)
+#   - schema additions: shard.destination.local_path; run.delivered_by[]
+#
+# DESIGN DECISIONS:
+#   - Tokens are SHA-256 hashed at rest. Plaintext is shown to the user
+#     ONCE at create-time and never again. Standard practice — if the
+#     storage leaks, hashes alone are useless.
+#   - Token format: ckpt_<32 hex chars>. The "ckpt_" prefix makes them
+#     visually identifiable in logs and accidental git commits.
+#   - Each token is scoped to a single user and an "install_date_iso"
+#     timestamp. The agent only sees runs that COMPLETED after this date,
+#     so reinstalling/regenerating doesn't redeliver historical runs.
+#   - Last-used-at is updated on each successful auth. Helps detect
+#     stale or potentially-leaked tokens.
+#   - Cockpit UI endpoints use the existing session-cookie auth
+#     (require_user). Agent endpoints accept BOTH session cookies and
+#     bearer tokens (require_user_or_token) — so if you're testing in a
+#     browser while logged in, the same URL works for you AND for the
+#     agent. Convenient for diagnostics.
+
+import secrets, hashlib
+
+AGENT_TOKEN_PREFIX = "ckpt_"          # token literal prefix (visible)
+AGENT_TOKEN_BYTES  = 16               # 32 hex chars after prefix
+
+
+# ── load/save: token list ────────────────────────────────────────────────
+# Stored at agent_tokens.json in cockpit-data, same pattern as users.json.
+# Cache invalidates on every write so subsequent reads see fresh data.
+
+def load_agent_tokens() -> list:
+    cached = _cache_get("agent_tokens.json")
+    if cached is not None:
+        return cached
+    if USE_BLOB:
+        data = blob_read("agent_tokens.json")
+        if data is not None:
+            _cache_set("agent_tokens.json", data)
+            return data
+    _cache_set("agent_tokens.json", [])
+    return []
+
+
+def save_agent_tokens(tokens: list) -> None:
+    if USE_BLOB:
+        blob_write("agent_tokens.json", tokens)
+    _cache_invalidate("agent_tokens.json")
+
+
+# ── helpers ──────────────────────────────────────────────────────────────
+
+def _hash_token(plaintext: str) -> str:
+    """Hash a token for storage. SHA-256 with no salt is fine here because
+    the input space (16 random bytes = 128 bits of entropy) makes brute
+    force infeasible — there's nothing to attack."""
+    return "sha256:" + hashlib.sha256(plaintext.encode("utf-8")).hexdigest()
+
+
+def _generate_token_plaintext() -> str:
+    """Return a fresh plaintext token. Caller is responsible for showing
+    it to the user once and storing only the hash."""
+    return AGENT_TOKEN_PREFIX + secrets.token_hex(AGENT_TOKEN_BYTES)
+
+
+def _resolve_user_from_bearer(authorization: str | None) -> str | None:
+    """Given an Authorization header value (e.g. 'Bearer ckpt_abc...'),
+    return the email of the token's owner if it's valid + not revoked.
+    Returns None for any failure (invalid header, no token, revoked, etc.).
+    Updates last_used_at on success."""
+    if not authorization:
+        return None
+    parts = authorization.split(None, 1)
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        return None
+    plaintext = parts[1].strip()
+    if not plaintext.startswith(AGENT_TOKEN_PREFIX):
+        return None
+
+    target_hash = _hash_token(plaintext)
+    tokens = load_agent_tokens()
+    matched = None
+    for t in tokens:
+        if t.get("revoked"):
+            continue
+        if t.get("token_hash") == target_hash:
+            matched = t
+            break
+    if not matched:
+        return None
+
+    # Bump last_used_at. Best-effort — failure to record this should not
+    # block the auth itself.
+    try:
+        matched["last_used_at"] = int(time.time() * 1000)
+        save_agent_tokens(tokens)
+    except Exception as e:
+        print(f"[agent-tokens] Failed to update last_used_at: {e}", flush=True)
+
+    return matched.get("user")
+
+
+def require_user_or_token(
+    authorization: str | None = Header(default=None),
+    user_session: str | None = Depends(get_current_user),
+) -> str:
+    """Auth dependency that accepts EITHER session cookie or bearer token.
+    Used for endpoints the agent will call. Returns the resolved user
+    email or raises 401."""
+    if user_session:
+        return user_session
+    user_token = _resolve_user_from_bearer(authorization)
+    if user_token:
+        return user_token
+    raise HTTPException(status_code=401, detail="Authentication required.")
+
+
+# ── COCKPIT UI ENDPOINTS — token management ──────────────────────────────
+# These use require_user (session cookies) so a stolen agent token can't
+# be used to view or revoke other tokens — defense in depth.
+
+@app.get("/api/agent-tokens")
+async def api_agent_tokens_list(user: str = Depends(require_user)):
+    """List the current user's tokens (without hashes). Owner can see all
+    tokens via owner-only diagnostic; everyone else sees only their own."""
+    all_tokens = load_agent_tokens()
+    visible = [t for t in all_tokens if t.get("user") == user]
+    # Strip the hash before returning — never expose it
+    cleaned = []
+    for t in visible:
+        cleaned.append({
+            "id":               t.get("id"),
+            "name":             t.get("name", ""),
+            "prefix":           t.get("prefix", ""),
+            "user":             t.get("user"),
+            "created_at":       t.get("created_at"),
+            "install_date_iso": t.get("install_date_iso"),
+            "last_used_at":     t.get("last_used_at"),
+            "revoked":          bool(t.get("revoked")),
+            "revoked_at":       t.get("revoked_at"),
+        })
+    return {"tokens": cleaned}
+
+
+@app.post("/api/agent-tokens")
+async def api_agent_tokens_create(request: Request,
+                                   user: str = Depends(require_user)):
+    """Create a new token. Returns the plaintext value ONCE — caller must
+    save it immediately because it's never shown again.
+
+    Request body (JSON): {"name": "Display label, e.g. 'My laptop'"}"""
+    payload = {}
+    try:
+        payload = await request.json()
+    except Exception:
+        pass
+    name = (payload.get("name") or "").strip()
+    if not name:
+        return JSONResponse({"error": "Token name is required."}, status_code=400)
+    if len(name) > 80:
+        return JSONResponse({"error": "Token name must be 80 characters or fewer."}, status_code=400)
+
+    plaintext = _generate_token_plaintext()
+    now_ms    = int(time.time() * 1000)
+    now_iso   = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    new_token = {
+        "id":               _new_id("tok"),
+        "user":             user,
+        "name":             name,
+        "token_hash":       _hash_token(plaintext),
+        # First 8 chars of the hex part (NOT the prefix) — shown in the UI
+        # so users can identify which token is which without seeing the full
+        # value. e.g. plaintext "ckpt_abc12345..." → display prefix "abc12345"
+        "prefix":           plaintext[len(AGENT_TOKEN_PREFIX):len(AGENT_TOKEN_PREFIX)+8],
+        "created_at":       now_ms,
+        "install_date_iso": now_iso,
+        "last_used_at":     None,
+        "revoked":          False,
+        "revoked_at":       None,
+    }
+    tokens = load_agent_tokens()
+    tokens.append(new_token)
+    save_agent_tokens(tokens)
+
+    # Return the plaintext ONCE in the response. The cockpit UI is
+    # responsible for showing it to the user with copy-to-clipboard.
+    return {
+        "token":     plaintext,                     # ONLY time this appears
+        "id":        new_token["id"],
+        "name":      new_token["name"],
+        "prefix":    new_token["prefix"],
+        "created_at": new_token["created_at"],
+        "install_date_iso": new_token["install_date_iso"],
+    }
+
+
+@app.delete("/api/agent-tokens/{token_id}")
+async def api_agent_tokens_revoke(token_id: str,
+                                   user: str = Depends(require_user)):
+    """Revoke (soft-delete) a token. Idempotent — revoking an already-revoked
+    token is a no-op success. We keep revoked tokens in storage so audit
+    history stays intact (you can see which tokens were ever issued)."""
+    tokens = load_agent_tokens()
+    target = next((t for t in tokens if t.get("id") == token_id), None)
+    if not target:
+        return JSONResponse({"error": "Token not found."}, status_code=404)
+    # Authorisation: only the owning user (or system owner) can revoke
+    if target.get("user") != user and not is_owner(user):
+        return JSONResponse({"error": "You can only revoke your own tokens."}, status_code=403)
+    if target.get("revoked"):
+        return {"revoked": token_id, "already_revoked": True}
+    target["revoked"]    = True
+    target["revoked_at"] = int(time.time() * 1000)
+    save_agent_tokens(tokens)
+    return {"revoked": token_id}
+
+
+# ── AGENT-FACING ENDPOINTS — bearer token auth ───────────────────────────
+# These accept either session cookies or bearer tokens (via the
+# require_user_or_token dependency). The agent uses bearer tokens.
+
+@app.get("/api/agent/health")
+async def api_agent_health(user: str = Depends(require_user_or_token)):
+    """Sanity-check endpoint for the agent. Returns the resolved user
+    so the agent can confirm its token works and which account it
+    represents. Used in setup + as a heartbeat."""
+    return {
+        "ok":     True,
+        "user":   user,
+        "server_time_iso": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+
+
+@app.get("/api/agent/runs/pending")
+async def api_agent_runs_pending(user: str = Depends(require_user_or_token),
+                                  authorization: str | None = Header(default=None)):
+    """Return runs that the agent should download for the requesting user.
+
+    A run is "pending delivery" iff:
+      - status is 'success' or 'partial' (NOT 'running' or 'failed' — failed
+        runs have no useful output, running ones aren't done yet)
+      - kind is 'shard' (compilers have no outputs themselves; their
+        children are what the agent fetches)
+      - the requesting user is NOT in delivered_by[] yet
+      - run was completed AFTER the agent token's install_date_iso
+        (so reinstalling doesn't trigger a redownload of old data)
+      - the originating shard has a destination.local_path configured
+        (otherwise there's nowhere to deliver the file to)
+    """
+    # Determine the install_date cutoff for this token (only relevant when
+    # auth was via bearer token; cookie auth has no install_date concept,
+    # so we pass through and use a far-past sentinel).
+    install_cutoff_iso = "1970-01-01T00:00:00Z"
+    if authorization:
+        # Re-resolve the token to find its install_date. Cheap — load is cached.
+        plaintext = (authorization or "").split(None, 1)[-1].strip()
+        if plaintext.startswith(AGENT_TOKEN_PREFIX):
+            target_hash = _hash_token(plaintext)
+            for t in load_agent_tokens():
+                if t.get("token_hash") == target_hash and not t.get("revoked"):
+                    install_cutoff_iso = t.get("install_date_iso") or install_cutoff_iso
+                    break
+
+    # Build a fast lookup: shard_id -> destination.local_path
+    shards = load_shards()
+    shard_local_path = {}
+    for s in shards:
+        dest = s.get("destination") or {}
+        lp   = dest.get("local_path")
+        if lp:
+            shard_local_path[s["id"]] = lp
+
+    runs = load_runs()
+    pending = []
+    for r in runs:
+        if r.get("kind") != "shard":
+            continue
+        if r.get("status") not in ("success", "partial"):
+            continue
+        if user in (r.get("delivered_by") or []):
+            continue
+        ended_at = r.get("ended_at") or ""
+        if ended_at and ended_at < install_cutoff_iso:
+            continue
+        sid = r.get("shard_id")
+        local_path = shard_local_path.get(sid)
+        if not local_path:
+            continue  # no destination configured for this shard's agent path
+
+        # Strip stdout_tail to keep the response light. The agent doesn't
+        # need it — it only cares about output_blobs and the local_path.
+        pending.append({
+            "id":           r.get("id"),
+            "shard_id":     sid,
+            "shard_name":   r.get("shard_name", ""),
+            "platform":     r.get("platform", ""),
+            "script":       r.get("script", ""),
+            "ended_at":     ended_at,
+            "output_blobs": r.get("output_blobs") or [],
+            "local_path":   local_path,
+        })
+
+    return {"pending": pending, "user": user, "install_cutoff": install_cutoff_iso}
+
+
+@app.post("/api/agent/runs/{run_id}/mark-delivered")
+async def api_agent_runs_mark_delivered(run_id: str,
+                                          user: str = Depends(require_user_or_token)):
+    """Agent calls this after successfully writing the run's output to
+    the local disk. Adds the user to the run's delivered_by[] list so
+    the run no longer appears in /api/agent/runs/pending for this user.
+    Idempotent — calling twice is fine."""
+    runs = load_runs()
+    target = next((r for r in runs if r.get("id") == run_id), None)
+    if not target:
+        return JSONResponse({"error": "Run not found."}, status_code=404)
+
+    delivered = target.get("delivered_by") or []
+    if user not in delivered:
+        delivered.append(user)
+        target["delivered_by"] = delivered
+        save_runs(runs)
+    return {"ok": True, "run_id": run_id, "delivered_by": delivered}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# BLOCK 6A END                                                              ▲
+# ═══════════════════════════════════════════════════════════════════════════
+
 
 try:
     _prewarm_cache()

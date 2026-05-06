@@ -1,0 +1,261 @@
+{% extends "base.html" %}
+
+{% block title %}Agent Tokens — Digital Construction Cockpit{% endblock %}
+
+{% block page_title %}Agent Tokens{% endblock %}
+{% block page_subtitle %}API tokens for the cockpit-agent (laptop file delivery){% endblock %}
+
+{% block content %}
+<style>
+  .tok-card{background:var(--card-bg,#fff);border:1px solid var(--border-cream);border-radius:var(--radius-lg);overflow:hidden;margin-bottom:18px}
+  .tok-card-header{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid var(--border-cream)}
+  .tok-card-title{font-size:var(--fs-xs);font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--text-dark-muted)}
+  .tok-card-body{padding:20px}
+
+  .tok-info{font-size:13px;color:var(--text-dark);line-height:1.55;margin-bottom:14px}
+  .tok-info code{background:rgba(0,0,0,.04);padding:1px 6px;border-radius:3px;font-family:var(--font);font-size:12px;color:var(--navy)}
+  .tok-info-warn{background:rgba(234,179,8,.07);border:1px solid rgba(234,179,8,.25);border-radius:6px;padding:10px 14px;margin-top:10px;font-size:12px;color:#7a5b0b}
+
+  .tok-create-form{display:flex;gap:8px;align-items:flex-end}
+  .tok-create-form label{font-size:var(--fs-xs);font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--text-dark-muted);margin-bottom:5px;display:block}
+  .tok-create-form input[type="text"]{flex:1;background:rgba(248,250,252,1);border:1px solid var(--border-cream);border-radius:var(--radius);padding:8px 11px;font-size:var(--fs-sm);color:var(--navy);outline:none;font-family:var(--font);box-sizing:border-box}
+  .tok-create-form input[type="text"]:focus{border-color:var(--accent)}
+  .btn-create{padding:8px 16px;border-radius:var(--radius);border:none;background:var(--accent);color:#fff;font-size:var(--fs-sm);font-weight:700;cursor:pointer;font-family:var(--font);transition:opacity .12s;white-space:nowrap}
+  .btn-create:hover{opacity:.9}
+
+  .tok-list{}
+  .tok-row{display:flex;align-items:center;gap:14px;padding:13px 16px;border:1px solid var(--border-cream);border-radius:var(--radius);margin-bottom:8px;transition:border-color .13s}
+  .tok-row:last-child{margin-bottom:0}
+  .tok-row:hover{border-color:var(--accent)}
+  .tok-row.revoked{opacity:.55;background:rgba(0,0,0,.02)}
+  .tok-row-main{flex:1;min-width:0}
+  .tok-row-name{font-size:var(--fs-sm);font-weight:600;color:var(--navy);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .tok-row-meta{font-size:var(--fs-xs);color:var(--text-dark-muted);margin-top:3px}
+  .tok-row-prefix{display:inline-block;background:rgba(0,0,0,.045);padding:2px 7px;border-radius:3px;font-family:var(--font);font-size:10.5px;color:var(--navy);margin-right:6px}
+  .tok-pill{font-size:9.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;padding:2px 7px;border-radius:9px;background:rgba(34,197,94,.1);color:#16a34a;flex-shrink:0}
+  .tok-pill.revoked{background:rgba(239,68,68,.1);color:#dc2626}
+  .btn-revoke{padding:6px 12px;border-radius:var(--radius);border:1px solid var(--border-cream);background:transparent;color:var(--text-dark-muted);font-size:var(--fs-xs);font-weight:600;cursor:pointer;font-family:var(--font);transition:all .12s;flex-shrink:0}
+  .btn-revoke:hover{border-color:#dc2626;color:#dc2626}
+  .empty-state{padding:24px;text-align:center;color:var(--text-dark-muted);font-size:var(--fs-sm)}
+
+  /* Token-revealed modal — appears once after creation */
+  .reveal-modal-bg{position:fixed;inset:0;background:rgba(15,23,42,.55);display:none;align-items:center;justify-content:center;z-index:1000}
+  .reveal-modal-bg.show{display:flex}
+  .reveal-modal{background:#fff;border-radius:var(--radius-lg);padding:26px 30px;max-width:560px;width:90%;box-shadow:0 25px 50px -12px rgba(0,0,0,.25)}
+  .reveal-modal-title{font-size:16px;font-weight:700;color:var(--navy);margin-bottom:6px}
+  .reveal-modal-sub{font-size:12.5px;color:var(--text-dark-muted);margin-bottom:14px;line-height:1.55}
+  .reveal-token{background:#0b2545;color:#7fb3e0;font-family:var(--font);font-size:13px;padding:13px 16px;border-radius:6px;word-break:break-all;margin-bottom:8px;line-height:1.45}
+  .reveal-modal-warning{background:rgba(239,68,68,.06);border:1px solid rgba(239,68,68,.2);border-radius:6px;padding:9px 13px;margin:10px 0;font-size:11.5px;color:#991b1b;line-height:1.5}
+  .reveal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
+  .btn-copy{padding:7px 14px;border-radius:var(--radius);border:1px solid var(--accent);background:transparent;color:var(--accent);font-size:var(--fs-sm);font-weight:700;cursor:pointer;font-family:var(--font)}
+  .btn-copy:hover{background:rgba(74,158,255,.06)}
+  .btn-done{padding:7px 18px;border-radius:var(--radius);border:none;background:var(--accent);color:#fff;font-size:var(--fs-sm);font-weight:700;cursor:pointer;font-family:var(--font)}
+  .btn-done:hover{opacity:.88}
+
+  #tok-toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%) translateY(50px);background:var(--navy);color:#fff;border-radius:var(--radius);padding:10px 18px;font-size:var(--fs-sm);font-weight:600;opacity:0;transition:all .25s ease;z-index:1100;pointer-events:none;white-space:nowrap}
+  #tok-toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+  #tok-toast.error{color:#fca5a5}
+</style>
+
+<div class="tok-card">
+  <div class="tok-card-header">
+    <span class="tok-card-title">About agent tokens</span>
+  </div>
+  <div class="tok-card-body">
+    <div class="tok-info">
+      Agent tokens are API credentials used by the <strong>cockpit-agent</strong> — a small
+      program that runs on your laptop and downloads scheduler outputs to local
+      folders you configure per shard. Each token is tied to your account and
+      grants the agent the ability to fetch your runs.
+    </div>
+    <div class="tok-info">
+      Create one token per laptop you want files delivered to. Paste the token
+      into the agent's config file once. The plaintext is shown <strong>only once</strong>
+      after creation — store it somewhere safe.
+    </div>
+    <div class="tok-info-warn">
+      <strong>Security:</strong> a token grants read access to your run records and
+      output files. If a token is exposed, revoke it immediately — that invalidates
+      it instantly. Tokens never let an agent log in to the cockpit UI or modify
+      anything.
+    </div>
+  </div>
+</div>
+
+<div class="tok-card">
+  <div class="tok-card-header">
+    <span class="tok-card-title">Create new token</span>
+  </div>
+  <div class="tok-card-body">
+    <div class="tok-create-form">
+      <div style="flex:1">
+        <label for="tok-name">Token name (so you can identify it later)</label>
+        <input type="text" id="tok-name" placeholder="e.g. My laptop, Office desktop, Home PC" maxlength="80" />
+      </div>
+      <button class="btn-create" id="btn-create" onclick="createToken()">Create token</button>
+    </div>
+  </div>
+</div>
+
+<div class="tok-card">
+  <div class="tok-card-header">
+    <span class="tok-card-title">Your tokens</span>
+  </div>
+  <div class="tok-card-body">
+    <div id="tok-list">
+      <div class="empty-state">Loading…</div>
+    </div>
+  </div>
+</div>
+
+<!-- Reveal modal: shows the plaintext token once after creation -->
+<div class="reveal-modal-bg" id="reveal-bg">
+  <div class="reveal-modal">
+    <div class="reveal-modal-title">Token created</div>
+    <div class="reveal-modal-sub">Copy this token now and paste it into your agent's config file. <strong>It will not be shown again.</strong></div>
+    <div class="reveal-token" id="reveal-token-val">—</div>
+    <div class="reveal-modal-warning">
+      Once you close this dialog, the token can never be viewed again. If you lose it,
+      revoke this token and create a new one.
+    </div>
+    <div class="reveal-actions">
+      <button class="btn-copy" onclick="copyRevealToken()">Copy to clipboard</button>
+      <button class="btn-done" onclick="closeReveal()">Done</button>
+    </div>
+  </div>
+</div>
+
+<div id="tok-toast"></div>
+
+<script>
+(function(){
+  function escHtml(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+  function fmtTime(t){
+    if (t == null) return '—';
+    if (typeof t === 'number') return new Date(t).toLocaleString();
+    return new Date(t).toLocaleString();
+  }
+  function toast(msg, isError){
+    const t = document.getElementById('tok-toast');
+    t.textContent = msg;
+    t.classList.toggle('error', !!isError);
+    t.classList.add('show');
+    clearTimeout(window.__tokToastTimer);
+    window.__tokToastTimer = setTimeout(()=>t.classList.remove('show'), 3000);
+  }
+  async function api(path, opts){
+    const res = await fetch(path, Object.assign({headers:{'Content-Type':'application/json'}}, opts||{}));
+    let body = null;
+    try { body = await res.json(); } catch(e){}
+    if (!res.ok) {
+      const errMsg = (body && (body.error || body.detail)) || ('HTTP '+res.status);
+      throw new Error(errMsg);
+    }
+    return body;
+  }
+
+  let revealedTokenValue = '';
+
+  async function loadTokens(){
+    const list = document.getElementById('tok-list');
+    try {
+      const data = await api('/api/agent-tokens');
+      const tokens = (data && data.tokens) || [];
+      if (!tokens.length){
+        list.innerHTML = '<div class="empty-state">No tokens yet. Create one above to set up the agent.</div>';
+        return;
+      }
+      // Sort: active first, then revoked. Within each, newest first.
+      tokens.sort((a,b)=>{
+        if (a.revoked !== b.revoked) return a.revoked ? 1 : -1;
+        return (b.created_at || 0) - (a.created_at || 0);
+      });
+      list.innerHTML = tokens.map(t => {
+        const last = t.last_used_at ? ('last used ' + fmtTime(t.last_used_at)) : 'never used';
+        const created = 'created ' + fmtTime(t.created_at);
+        const pill = t.revoked
+          ? '<span class="tok-pill revoked">revoked</span>'
+          : '<span class="tok-pill">active</span>';
+        const action = t.revoked
+          ? ''
+          : '<button class="btn-revoke" onclick="revokeToken(\''+escHtml(t.id)+'\', \''+escHtml(t.name)+'\')">Revoke</button>';
+        return ''
+          + '<div class="tok-row '+(t.revoked?'revoked':'')+'">'
+          +   '<div class="tok-row-main">'
+          +     '<div class="tok-row-name">'+escHtml(t.name||'(untitled)')+'</div>'
+          +     '<div class="tok-row-meta"><span class="tok-row-prefix">ckpt_'+escHtml(t.prefix||'')+'…</span> '+escHtml(created)+' · '+escHtml(last)+'</div>'
+          +   '</div>'
+          +   pill
+          +   action
+          + '</div>';
+      }).join('');
+    } catch(e) {
+      list.innerHTML = '<div class="empty-state">Failed to load tokens: '+escHtml(e.message)+'</div>';
+    }
+  }
+
+  window.createToken = async function(){
+    const nameEl = document.getElementById('tok-name');
+    const name = (nameEl.value || '').trim();
+    if (!name){ toast('Give this token a name first.', true); nameEl.focus(); return; }
+    try {
+      const res = await api('/api/agent-tokens', {method:'POST', body: JSON.stringify({name})});
+      revealedTokenValue = res.token;
+      document.getElementById('reveal-token-val').textContent = res.token;
+      document.getElementById('reveal-bg').classList.add('show');
+      nameEl.value = '';
+      // Refresh list in background
+      loadTokens();
+    } catch(e) {
+      toast('Create failed: '+e.message, true);
+    }
+  };
+
+  window.revokeToken = async function(id, name){
+    if (!confirm('Revoke token "'+name+'"? The agent using this token will stop working immediately. This cannot be undone.')) return;
+    try {
+      await api('/api/agent-tokens/'+id, {method:'DELETE'});
+      toast('Revoked: '+name);
+      loadTokens();
+    } catch(e) {
+      toast('Revoke failed: '+e.message, true);
+    }
+  };
+
+  window.copyRevealToken = function(){
+    if (!revealedTokenValue) return;
+    if (navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(revealedTokenValue).then(
+        () => toast('Token copied to clipboard'),
+        () => toast('Copy failed — select and copy manually', true)
+      );
+    } else {
+      // Fallback for older browsers
+      const ta = document.createElement('textarea');
+      ta.value = revealedTokenValue;
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); toast('Token copied to clipboard'); }
+      catch(e){ toast('Copy failed — select and copy manually', true); }
+      document.body.removeChild(ta);
+    }
+  };
+
+  window.closeReveal = function(){
+    document.getElementById('reveal-bg').classList.remove('show');
+    revealedTokenValue = '';
+    document.getElementById('reveal-token-val').textContent = '—';
+  };
+
+  // Close on Escape
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && document.getElementById('reveal-bg').classList.contains('show')) {
+      closeReveal();
+    }
+  });
+
+  // Initial load
+  loadTokens();
+})();
+</script>
+{% endblock %}

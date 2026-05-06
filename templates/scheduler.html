@@ -176,6 +176,13 @@
 .run-delete-btn:hover{background:rgba(239,68,68,.1);color:#dc2626}
 .run-delete-btn:active{background:rgba(239,68,68,.18)}
 
+/* Block 6A: agent-delivery pill — shows whether the cockpit-agent has
+   downloaded this run's output to the user's local folder yet. Only
+   appears for shards that have a local_path configured. */
+.delivery-pill{font-size:9px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;padding:2px 7px;border-radius:9px;flex-shrink:0;margin-right:6px}
+.delivery-pill.delivered{background:rgba(34,197,94,.1);color:#16a34a}
+.delivery-pill.pending{background:rgba(234,179,8,.13);color:#a16207}
+
 .disabled-pill{display:inline-flex;align-items:center;font-size:9px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;padding:2px 7px;border-radius:9px;background:rgba(239,68,68,.1);color:#dc2626;margin-left:6px}
 
 .modal-backdrop{display:none;position:fixed;inset:0;background:rgba(15,30,55,.45);z-index:998;backdrop-filter:blur(2px)}
@@ -331,6 +338,20 @@
               </div>
             </div>
           </div>
+
+          <!-- Block 6A: optional local path for the cockpit-agent.
+               Independent of the destination cards above — files ALWAYS go
+               to cloud first; if a local path is set, the agent on the
+               admin's laptop also writes a copy there. Empty = no agent
+               delivery for this shard. -->
+          <div class="f" style="margin-top:14px;padding-top:14px;border-top:1px dashed var(--border-cream)">
+            <label class="f-label">Auto-deliver to local folder (optional, requires cockpit-agent)</label>
+            <input type="text" class="f-input" id="sb-localpath" placeholder='e.g. C:\Egnyte\ALEC\Exports\Revizto\' maxlength="500" />
+            <div style="font-size:10px;color:var(--text-dark-muted);margin-top:5px;line-height:1.5">
+              When set, the <a href="/agent-tokens" target="_blank" style="color:var(--accent)">cockpit-agent</a> on your laptop downloads completed runs to this folder.
+              Leave blank to skip auto-delivery for this shard.
+            </div>
+          </div>
         </div>
       </div>
 
@@ -433,6 +454,11 @@
 <script>
 (function(){
   // ── State ─────────────────────────────────────────────────
+  // current_user comes from Jinja template context — used for
+  // showing "delivered" badges on runs the agent has picked up
+  // for this user.
+  const currentUser = "{{ current_user|e }}";
+
   let scriptCatalog = {};      // { script_id: { platform, display_name, required_context, description } }
   let allShards = [];
   let allCompilers = [];
@@ -753,6 +779,26 @@
     list.innerHTML = topLevel.map(r => renderTopLevelRow(r, childrenByParent)).join('');
   }
 
+  // Block 6A: build a "delivered" badge for a shard run, but only if the
+  // run's shard has a local_path configured (no point showing "pending"
+  // for shards the agent will never touch). For successful/partial runs,
+  // checks delivered_by[] for currentUser.
+  function deliveryBadge(r){
+    if (r.kind !== 'shard') return '';
+    if (r.status !== 'success' && r.status !== 'partial') return '';
+    // Look up the shard's local_path
+    const shard = allShards.find(s => s.id === r.shard_id);
+    if (!shard) return '';
+    const localPath = (shard.destination || {}).local_path;
+    if (!localPath) return '';
+    const delivered = Array.isArray(r.delivered_by) && r.delivered_by.indexOf(currentUser) >= 0;
+    if (delivered){
+      return '<span class="delivery-pill delivered" title="Delivered to '+escAttr(localPath)+'">✓ delivered</span>';
+    } else {
+      return '<span class="delivery-pill pending" title="Awaiting agent pickup → '+escAttr(localPath)+'">⏱ pending</span>';
+    }
+  }
+
   function renderTopLevelRow(r, childrenByParent){
     const status = r.status || 'unknown';
     const displayName = r.compiler_name || r.shard_name || r.id;
@@ -763,6 +809,7 @@
     const deleteBtn = (status === 'running')
       ? ''
       : '<button class="run-delete-btn" title="Delete run + outputs" onclick="event.stopPropagation();deleteRun(\''+escAttr(r.id)+'\')">×</button>';
+    const delivBadge = deliveryBadge(r);
     return ''
       + '<div class="auto-row run-row" data-run-id="'+escAttr(r.id)+'" onclick="toggleRunDetail(\''+escAttr(r.id)+'\')">'
       +   '<span class="run-caret">▶</span>'
@@ -770,6 +817,7 @@
       +     '<div class="auto-row-name">'+escHtml(displayName)+'</div>'
       +     '<div class="auto-row-meta">'+escHtml(trigger)+' · '+escHtml(fmtTime(r.started_at))+dur+' · by '+escHtml(r.triggered_by||'?')+'</div>'
       +   '</div>'
+      +   delivBadge
       +   '<span class="run-status '+status+'">'+escHtml(status)+'</span>'
       +   deleteBtn
       + '</div>'
@@ -851,11 +899,13 @@
     const status = c.status || 'unknown';
     const displayName = c.shard_name || c.id;
     const dur = (c.duration_sec != null) ? (c.duration_sec + 's') : '';
+    const delivBadge = deliveryBadge(c);
     return ''
       + '<div class="child-run-row" data-run-id="'+escAttr(c.id)+'" onclick="event.stopPropagation();toggleChildRunDetail(\''+escAttr(c.id)+'\')">'
       +   '<span class="child-run-caret">▶</span>'
       +   '<div class="child-run-name">'+escHtml(displayName)+'</div>'
       +   '<div class="child-run-meta">'+escHtml(dur)+'</div>'
+      +   delivBadge
       +   '<span class="run-status '+status+'">'+escHtml(status)+'</span>'
       + '</div>'
       + '<div class="child-run-detail" id="child-detail-'+escAttr(c.id)+'">'+ renderChildDetail(c) +'</div>';
@@ -1031,6 +1081,9 @@
     });
     sbSetFmt('json');
     sbSetDest('blob');
+    // Block 6A: reset local_path field
+    const lp = document.getElementById('sb-localpath');
+    if (lp) lp.value = '';
   }
   function fillShardBuilder(s){
     document.getElementById('sb-name').value = s.name || '';
@@ -1057,6 +1110,9 @@
       c.classList.toggle('on', naming.includes(c.dataset.naming));
     });
     sbSetDest((s.destination && s.destination.type) || 'blob');
+    // Block 6A: fill local_path field if set
+    const lp = document.getElementById('sb-localpath');
+    if (lp) lp.value = (s.destination && s.destination.local_path) || '';
   }
   window.sbSetFmt = function(f){
     sbCurFmt = f;
@@ -1200,6 +1256,11 @@
     const naming = [];
     document.querySelectorAll('#view-shard-builder .chip.on').forEach(c=>naming.push(c.dataset.naming));
 
+    // Block 6A: optional local path for the cockpit-agent
+    const localPath = (document.getElementById('sb-localpath').value || '').trim();
+    const destination = { type: 'blob' };
+    if (localPath) destination.local_path = localPath;
+
     const payload = {
       name: name,
       platform: platform,
@@ -1210,7 +1271,7 @@
         prefix: document.getElementById('sb-prefix').value.trim(),
         naming: naming
       },
-      destination: { type: 'blob' }
+      destination: destination
     };
 
     const btn = document.getElementById('sb-save-btn');
