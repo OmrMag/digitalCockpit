@@ -2771,10 +2771,12 @@ async def api_pending_process(project_key: str, sub_idx: int, request: Request, 
                 if r["status"] != "success": err_parts.append(f"Morta: {r.get('detail','failed')}")
 
             if u.get("revizto"):
+                u_location = u.get("location", "")
                 r = revizto_invite(email, first_name, last_name, company, department, config,
                                    project_uuid=revizto_uuid, license_role_id=u_rev_lic_role,
                                    project_role_id=u_rev_proj_role, invite_to_license=u_rev_to_license,
-                                   invite_to_project=u_rev_to_project, admin_email=user)
+                                   invite_to_project=u_rev_to_project, location=u_location,
+                                   admin_email=user)
                 if r["status"] != "success": err_parts.append(f"Revizto: {r.get('detail','failed')}")
 
             if u.get("forma"):
