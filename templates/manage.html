@@ -662,11 +662,18 @@ function renderExpandPanel(key, idx, panel) {
     // table uses. Always show all platform columns regardless of which
     // platforms the submitter requested — cells fade per existing CSS
     // (.morta-off / .revizto-off / .forma-off on <tr>).
+    //
+    // Column order:
+    //   1. ☑ checkbox        (sticky-left @ 0)
+    //   2. Email              (sticky-left @ 28px) — primary identifier
+    //   3. Submitted Company  (read-only reference)
+    //   4. Submitted Dept     (read-only reference)
+    //   5. Name → onward, mirroring the invite table layout
     let thead = `<tr>
         <th style="width:24px;"><input type="checkbox" id="selAll-${key}-${idx}" title="Toggle all" style="cursor:pointer;width:13px;height:13px;accent-color:var(--navy);"></th>
+        <th>Email</th>
         <th title="Original company from portal submission (read-only)">Submitted Company</th>
         <th title="Original department from portal submission (read-only)">Submitted Dept</th>
-        <th>Email</th>
         <th>Name</th>
         <th>Morta</th>
         <th>Tag</th>
@@ -741,12 +748,13 @@ function renderExpandPanel(key, idx, panel) {
                 <input type="checkbox" class="row-chk" data-ak="${ak}" ${a.approved?'checked':''} style="cursor:pointer;width:13px;height:13px;accent-color:var(--navy);">
             </td>
 
-            <td style="white-space:nowrap;color:var(--text-dark-muted);font-size:var(--fs-xs);" title="Original portal submission — read only">${esc(u.company)}</td>
-            <td style="white-space:nowrap;color:var(--text-dark-muted);font-size:var(--fs-xs);" title="Original portal submission — read only">${esc(u.department)}</td>
-
             <td>
                 <input type="email" class="cell-input" data-ak="${ak}" data-bind="email" value="${esc(a.email)}" placeholder="user@company.com" style="min-width:160px;">
             </td>
+
+            <td style="white-space:nowrap;color:var(--text-dark-muted);font-size:var(--fs-xs);" title="Original portal submission — read only">${esc(u.company)}</td>
+            <td style="white-space:nowrap;color:var(--text-dark-muted);font-size:var(--fs-xs);" title="Original portal submission — read only">${esc(u.department)}</td>
+
             <td>
                 <input type="text" class="cell-input" data-ak="${ak}" data-bind="full_name" value="${esc(((a.first_name||'')+' '+(a.last_name||'')).trim())}" placeholder="First Last" style="min-width:120px;">
             </td>
