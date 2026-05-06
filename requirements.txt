@@ -8,3 +8,4 @@ openpyxl
 pandas
 azure-storage-blob
 httpx
+apscheduler>=3.10.4,<4.0.0

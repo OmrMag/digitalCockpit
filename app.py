@@ -21,6 +21,7 @@ from fastapi.templating import Jinja2Templates
 # Block 4 — Scheduler runner + blob client for export containers
 from codeShared import Scheduler_Runner
 from codeShared import Blob_Client
+from codeShared import Scheduler_Engine   # Block 5 — cron firing engine
 from itsdangerous import URLSafeSerializer
 import subprocess, sys
 import uuid
@@ -6527,6 +6528,11 @@ async def api_scheduler_compiler_create(request: Request,
     compilers.append(compiler)
     save_compilers(compilers)
     _sync_shard_compiler_links()
+    # Block 5: register the new compiler with the cron engine so it fires on schedule.
+    try:
+        Scheduler_Engine.register_compiler(compiler)
+    except Exception as e:
+        print(f"[block5] register_compiler({compiler['id']}) failed: {e}", flush=True)
     return JSONResponse({"compiler": compiler})
 
 @app.put("/api/scheduler/compilers/{compiler_id}")
@@ -6566,6 +6572,11 @@ async def api_scheduler_compiler_update(compiler_id: str, request: Request,
     compilers[idx] = c
     save_compilers(compilers)
     _sync_shard_compiler_links()
+    # Block 5: re-register so schedule changes take effect immediately.
+    try:
+        Scheduler_Engine.register_compiler(c)
+    except Exception as e:
+        print(f"[block5] register_compiler({c['id']}) on update failed: {e}", flush=True)
     return JSONResponse({"compiler": c})
 
 @app.delete("/api/scheduler/compilers/{compiler_id}")
@@ -6578,6 +6589,11 @@ async def api_scheduler_compiler_delete(compiler_id: str,
     save_compilers(compilers)
     # Rerun link sync — orphaned shards have their in_compiler cleared
     _sync_shard_compiler_links()
+    # Block 5: unregister the cron job
+    try:
+        Scheduler_Engine.unregister_compiler(compiler_id)
+    except Exception as e:
+        print(f"[block5] unregister_compiler({compiler_id}) failed: {e}", flush=True)
     return JSONResponse({"deleted": compiler_id})
 
 @app.post("/api/scheduler/compilers/{compiler_id}/toggle")
@@ -6590,6 +6606,12 @@ async def api_scheduler_compiler_toggle(compiler_id: str,
     compilers[idx]["active"] = not compilers[idx].get("active", True)
     compilers[idx]["updated_at"] = int(time.time() * 1000)
     save_compilers(compilers)
+    # Block 5: sync the cron job state. register_compiler() handles both
+    # "now active" (adds/replaces job) and "now inactive" (unregisters).
+    try:
+        Scheduler_Engine.register_compiler(compilers[idx])
+    except Exception as e:
+        print(f"[block5] register_compiler({compiler_id}) on toggle failed: {e}", flush=True)
     return JSONResponse({"compiler": compilers[idx]})
 
 # ── Runs ──────────────────────────────────────────────────────────────────
@@ -6602,6 +6624,16 @@ async def api_scheduler_runs_list(limit: int = 100,
     # Newest first
     runs_sorted = sorted(runs, key=lambda r: r.get("started_at", 0), reverse=True)
     return JSONResponse({"runs": runs_sorted[:max(1, min(limit, 500))]})
+
+
+# Block 5: scheduler engine status — lists registered cron jobs + next-fire times
+@app.get("/api/scheduler/engine")
+async def api_scheduler_engine_status(user: str = Depends(require_user)):
+    """Diagnostic endpoint: shows cron engine status + registered jobs."""
+    return JSONResponse({
+        "engine": Scheduler_Engine.status(),
+        "jobs":   Scheduler_Engine.list_jobs(),
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -6791,6 +6823,74 @@ async def scheduler_get_run(run_id: str, user: str = Depends(require_user)):
 
 # ═══════════════════════════════════════════════════════════════════════════
 # BLOCK 4 END                                                                ▲
+# ═══════════════════════════════════════════════════════════════════════════
+
+# ═══════════════════════════════════════════════════════════════════════════
+# BLOCK 5 — CRON FIRING ENGINE (boot + shutdown + factory)                  ▼
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# Boots APScheduler when the FastAPI process starts. Registers a job for
+# each active compiler. Each job's fire callback delegates back to
+# Scheduler_Runner.run_compiler() with the right per-compiler kwargs.
+#
+# The factory pattern (run_compiler_kwargs_factory) lets us build the
+# kwargs fresh at fire time instead of capturing them at boot. That way
+# any later updates to (for example) Blob_Client functions are picked up
+# without restarting the scheduler.
+
+def _build_run_compiler_kwargs(compiler_id: str) -> dict:
+    """Factory called by Scheduler_Engine when a job fires. Returns the
+    kwargs dict that Scheduler_Runner.run_compiler() needs at fire time.
+
+    The triggering_user is determined inside Scheduler_Engine itself
+    (it uses compiler.created_by), so we don't include it here."""
+    return {
+        # Persistence
+        "load_shard_by_id":      _load_shard_by_id,
+        "append_run":            _append_or_replace_run,
+        # Forwarded to run_shard for each child shard
+        "build_config_for_user":   build_script_config,
+        "write_config_to_path":    _write_config_to_path,
+        "prepare_forma_3l_token":  prepare_forma_3l_token,
+        "prepare_revizto_tokens":  prepare_revizto_tokens,
+        "check_l4_dependency":     _check_l4_dependency,
+        "update_shard":            _update_one_shard,
+        "blob_upload_file":        Blob_Client.upload_file,
+        "blob_generate_url":       Blob_Client.generate_download_url,
+        "blob_container_for_platform": Blob_Client.container_for_platform,
+        "resolve_script_path":     resolve_script_path,
+        "stamp_l3_run":            _stamp_l3_run,
+    }
+
+
+@app.on_event("startup")
+async def _b5_boot_scheduler():
+    """Boot the cron engine after the app is fully wired up.
+    Non-fatal on failure — the cockpit still runs without scheduling."""
+    try:
+        ok = Scheduler_Engine.boot(
+            load_compilers=load_compilers,
+            load_shard_by_id=_load_shard_by_id,
+            load_runs=load_runs,
+            save_runs=save_runs,
+            run_compiler_kwargs_factory=_build_run_compiler_kwargs,
+        )
+        if not ok:
+            print("[block5] Scheduler engine did not boot — cron firing disabled", flush=True)
+    except Exception as e:
+        print(f"[block5] Boot error (non-fatal): {type(e).__name__}: {e}", flush=True)
+
+
+@app.on_event("shutdown")
+async def _b5_shutdown_scheduler():
+    """Stop the scheduler cleanly on app exit."""
+    try:
+        Scheduler_Engine.shutdown()
+    except Exception as e:
+        print(f"[block5] Shutdown error (non-fatal): {type(e).__name__}: {e}", flush=True)
+
+# ═══════════════════════════════════════════════════════════════════════════
+# BLOCK 5 END                                                                ▲
 # ═══════════════════════════════════════════════════════════════════════════
 
 try:
