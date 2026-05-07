@@ -5881,17 +5881,18 @@ async def api_exports_read(filename: str, user: str = Depends(require_user)):
 async def api_invite_log(
     project_key: str = None,
     limit: int = 50,
+    type: str = None,                          # 'invite' to apply invite-shape filter; None for raw
     user: str = Depends(require_user)
 ):
     """Return invite log entries scoped to the user's registry projects.
 
     project_key: if provided, filter to that specific project only.
     limit: max entries to return (most recent first), default 50.
-
-    Defensively filters to only entries that look like invite events
-    (mode = single/bulk, with at least one platform status field). The
-    file should only contain invites, but in case anything else got
-    written there over time, we don't show pollution to admins.
+    type:  'invite' applies a defensive shape filter that drops any entry
+           that doesn't look like a real invite event (used by the Manage
+           Users → Invite Log page). When omitted, ALL entries are
+           returned regardless of shape (used by the Home → Live Activity
+           card, which has its own client-side filter UI).
     """
     log           = load_invite_log()
     user_projects = get_user_projects(user)
@@ -5905,19 +5906,17 @@ async def api_invite_log(
     if project_key:
         log = [e for e in log if e.get("project_key") == project_key]
 
-    # Defensive shape filter — only include entries that are clearly invites.
-    # An invite log entry has a mode (single/bulk) AND at least one platform
-    # status field (morta_status/revizto_status/forma_status). Anything that
-    # looks different — debug rows, malformed entries, things written by
-    # mistake — gets dropped silently.
-    def _is_invite_entry(e: dict) -> bool:
-        if not isinstance(e, dict):
-            return False
-        if e.get("mode") not in ("single", "bulk"):
-            return False
-        return any(k in e for k in ("morta_status", "revizto_status", "forma_status"))
-
-    log = [e for e in log if _is_invite_entry(e)]
+    # Optional defensive shape filter — invite-only when the caller asks
+    # for it. Manage Users wants this, Home → Live Activity does NOT (it
+    # surfaces every event type the cockpit logs and has its own filter UI).
+    if type == "invite":
+        def _is_invite_entry(e: dict) -> bool:
+            if not isinstance(e, dict):
+                return False
+            if e.get("mode") not in ("single", "bulk"):
+                return False
+            return any(k in e for k in ("morta_status", "revizto_status", "forma_status"))
+        log = [e for e in log if _is_invite_entry(e)]
 
     # Most recent first, capped at limit
     log = log[-limit:][::-1]

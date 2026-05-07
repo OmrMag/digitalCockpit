@@ -470,6 +470,7 @@
   let allCompilers = [];
   let allRuns = [];
   let projectsData = null;     // from /api/projects
+  let activeCtx = {};          // from /api/context — used to auto-fill project picker in shard builder
   let modelsCacheByProject = {}; // { project_id: [ {item_id, name}, ... ] }
 
   let currentTab = 'shards';
@@ -523,7 +524,7 @@
     }
 
     setHeaderButton();
-    await Promise.all([loadCatalog(), loadShards(), loadCompilers(), loadRuns(), loadProjects()]);
+    await Promise.all([loadCatalog(), loadShards(), loadCompilers(), loadRuns(), loadProjects(), loadActiveCtx()]);
     renderAll();
   }
 
@@ -551,6 +552,20 @@
       allRuns = data.runs || [];
     } catch(e){ /* runs endpoint should always exist; silent */ }
   }
+  // Active context — used to auto-fill project picker in shard builder so
+  // the user doesn't have to repeat their sidebar selection. Refreshes
+  // when the sidebar fires a project-changed event.
+  async function loadActiveCtx(){
+    try {
+      const r = await fetch('/api/context');
+      if (r.ok) activeCtx = await r.json();
+    } catch(e){ /* non-fatal — picker just won't auto-fill */ }
+  }
+  // Refresh activeCtx when sidebar switches active project. The shard
+  // builder picker reads from activeCtx the next time it's opened.
+  window.addEventListener('cockpit:projectChanged', async () => {
+    await loadActiveCtx();
+  });
   async function loadProjects(){
     if (typeof smartFetch === 'function') {
       smartFetch('/api/projects', 'projects', {
@@ -1364,6 +1379,35 @@
         opt.textContent = p.title;
         sel.appendChild(opt);
       });
+    } else if (platform === 'morta' && projectsData.morta){
+      projectsData.morta.forEach(p=>{
+        const opt = document.createElement('option');
+        opt.value = p.id || p.uuid;
+        opt.textContent = p.name || p.title;
+        sel.appendChild(opt);
+      });
+    }
+
+    // Auto-fill from sidebar's active project (only on NEW shard, not edit
+    // — edit logic in fillShardBuilder sets the saved value explicitly).
+    // editingShardId === null means "creating new shard," anything else
+    // means we're editing an existing one; let it keep its own value.
+    if (editingShardId === null && activeCtx) {
+      let activeId = '';
+      if (platform === 'forma')   activeId = activeCtx.forma_project_id    || '';
+      if (platform === 'revizto') activeId = activeCtx.revizto_project_uuid || '';
+      if (platform === 'morta')   activeId = activeCtx.morta_hub_id        || '';
+      if (activeId) {
+        // Only set if the active project is actually in the dropdown
+        // (might not be if user has access to projects elsewhere). Fall
+        // through silently if not — user can pick manually.
+        const exists = Array.from(sel.options).some(o => o.value === activeId);
+        if (exists) {
+          sel.value = activeId;
+          // Trigger downstream (model picker) — same as if user picked.
+          sbProjectChange();
+        }
+      }
     }
   }
   window.sbProjectChange = async function(){
