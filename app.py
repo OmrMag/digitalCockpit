@@ -710,11 +710,35 @@ SCRIPT_CATALOG = {
         "description":      "Summary report + aggregate breakdown built from L3 output. Requires L3 to have run first.",
     },
     # Revizto
+    "Revizto_GET_License_Projects": {
+        "platform":         "revizto",
+        "display_name":     "License projects",
+        "required_context": [],
+        "description":      "All projects under the configured license. License-level (no project required).",
+    },
+    "Revizto_GET_License_Members": {
+        "platform":         "revizto",
+        "display_name":     "License members",
+        "required_context": [],
+        "description":      "All members across the license. License-level (no project required).",
+    },
+    "Revizto_GET_User_Licenses": {
+        "platform":         "revizto",
+        "display_name":     "User licenses",
+        "required_context": [],
+        "description":      "Licenses available to the authenticated user. License-level.",
+    },
     "Revizto_GET_Project_Members": {
         "platform":         "revizto",
         "display_name":     "Project members",
         "required_context": ["project_uuid"],
         "description":      "Members + roles for a single Revizto project.",
+    },
+    "Revizto_GET_Project_Roles": {
+        "platform":         "revizto",
+        "display_name":     "Project roles",
+        "required_context": ["project_uuid"],
+        "description":      "All defined roles within the selected project.",
     },
     "Revizto_GET_Project_Issues": {
         "platform":         "revizto",
@@ -728,11 +752,11 @@ SCRIPT_CATALOG = {
         "required_context": ["project_uuid"],
         "description":      "Clash test definitions + last-run statistics.",
     },
-    "Revizto_GET_License_Members": {
+    "Revizto_GET_Scenes_and_Models_with_Properties": {
         "platform":         "revizto",
-        "display_name":     "License members",
-        "required_context": [],
-        "description":      "All members across the license. License-level (no project required).",
+        "display_name":     "Scenes & models",
+        "required_context": ["project_uuid"],
+        "description":      "Scenes and models with properties for the selected project. Required input for L3 Object Tree extraction.",
     },
     # Morta
     "Morta_GET_Hub_Members": {

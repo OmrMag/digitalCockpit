@@ -1507,6 +1507,9 @@
   }
 
   // Loader for Forma model picker. Used when the script is Forma L3/L4.
+  // Same endpoint Extractions uses (POST with body), so the cache file is
+  // shared between the two pages — clicking "Fetch Models" on Extractions
+  // pre-warms this loader.
   async function loadFormaModelsForBuilder(projectId){
     const modelSel = document.getElementById('sb-model');
     if (modelsCacheByProject[projectId]){
@@ -1514,9 +1517,17 @@
       return;
     }
     try {
-      const res = await fetch('/api/forma/models?project_id='+encodeURIComponent(projectId));
+      const res = await fetch('/api/forma/models', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project_id: projectId, force_refresh: false })
+      });
       if (!res.ok) throw new Error('HTTP '+res.status);
       const data = await res.json();
+      if (data.error){
+        modelSel.innerHTML = '<option value="">— '+ (data.error || 'could not load models') +' —</option>';
+        return;
+      }
       const models = data.models || [];
       modelsCacheByProject[projectId] = models;
       fillModels(models);
