@@ -275,16 +275,21 @@
             <div class="f-help" id="sb-script-help"></div>
           </div>
           <div class="f cond" id="sb-project-row">
-            <label class="f-label" id="sb-project-label">Project</label>
-            <select class="f-select" id="sb-project" onchange="sbProjectChange()">
-              <option value="">Loading…</option>
-            </select>
+            <label class="f-label" id="sb-project-label">Project / Hub</label>
+            <div id="sb-project-display" class="f-readonly" style="padding:8px 12px; background:var(--surface-1, #f5f5f5); border:1px solid var(--border, #ddd); border-radius:6px; color:var(--text-dark); font-size:var(--fs-sm);">
+              <span id="sb-project-name">— no active project —</span>
+              <span id="sb-project-id" style="color:var(--text-dark-muted); font-size:var(--fs-xs); margin-left:8px;"></span>
+            </div>
+            <div class="f-help">Inherited from the active project in the sidebar at save time. To run this shard against a different project, change the active project before saving.</div>
+            <!-- Hidden field — keeps the snapshotted ID stamped on the shard at save time -->
+            <input type="hidden" id="sb-project" value="">
           </div>
           <div class="f cond" id="sb-model-row">
             <label class="f-label">Model</label>
             <select class="f-select" id="sb-model">
-              <option value="">— select project first —</option>
+              <option value="">— not applicable —</option>
             </select>
+            <div class="f-help" id="sb-model-help">Required for L3 and L4 scripts. Choose the model the script should run against.</div>
           </div>
         </div>
       </div>
@@ -569,8 +574,11 @@
   async function loadProjects(){
     if (typeof smartFetch === 'function') {
       smartFetch('/api/projects', 'projects', {
-        onCached: (d)=>{ projectsData = d; if (editingShardId !== null) populateProjects(); },
-        onFresh:  (d)=>{ projectsData = d; if (editingShardId !== null) populateProjects(); }
+        // Edit mode may have rendered a project ID before projectsData
+        // arrived (so the saved project name fell back to "12345678…").
+        // When data lands, re-run the name lookup if we're still editing.
+        onCached: (d)=>{ projectsData = d; refreshEditProjectName(); },
+        onFresh:  (d)=>{ projectsData = d; refreshEditProjectName(); }
       });
     } else {
       try {
@@ -578,6 +586,31 @@
         if (r.ok) projectsData = await r.json();
       } catch(e){}
     }
+  }
+  // When editing a shard, re-resolve the saved project's display name now
+  // that projectsData is available. New shards aren't affected — they
+  // pull from activeCtx which has the project name baked in.
+  function refreshEditProjectName(){
+    if (editingShardId === null || !projectsData) return;
+    const s = allShards.find(x => x.id === editingShardId);
+    if (!s) return;
+    const ctx = s.context || {};
+    const projVal = ctx.project_id || ctx.project_uuid || '';
+    if (!projVal) return;
+    let savedName = projVal.slice(0,8) + '…';
+    const platform = s.platform;
+    if (platform === 'forma' && projectsData.forma){
+      const hit = projectsData.forma.find(p => p.id === projVal);
+      if (hit) savedName = hit.name;
+    } else if (platform === 'revizto' && projectsData.revizto){
+      const hit = projectsData.revizto.find(p => p.uuid === projVal);
+      if (hit) savedName = hit.title;
+    } else if (platform === 'morta' && projectsData.morta){
+      const hit = projectsData.morta.find(p => (p.id === projVal || p.uuid === projVal));
+      if (hit) savedName = hit.name || hit.title;
+    }
+    const nameEl = document.getElementById('sb-project-name');
+    if (nameEl) nameEl.textContent = savedName;
   }
 
   // ── View switching ────────────────────────────────────────
@@ -1218,8 +1251,14 @@
     document.getElementById('sb-platform').value = '';
     document.getElementById('sb-script').innerHTML = '<option value="">— select script —</option>';
     document.getElementById('sb-script-help').textContent = '';
-    document.getElementById('sb-project').innerHTML = '<option value="">Loading…</option>';
-    document.getElementById('sb-model').innerHTML = '<option value="">— select project first —</option>';
+    // Project is now a hidden field with a separate display element
+    document.getElementById('sb-project').value = '';
+    const pname = document.getElementById('sb-project-name');
+    const pid   = document.getElementById('sb-project-id');
+    if (pname) { pname.textContent = '— no active project —'; pname.style.color = ''; }
+    if (pid)   { pid.textContent   = ''; pid.style.color = ''; }
+    document.getElementById('sb-model').innerHTML = '<option value="">— not applicable —</option>';
+    document.getElementById('sb-model').disabled = true;
     document.getElementById('sb-script-row').classList.remove('show');
     document.getElementById('sb-project-row').classList.remove('show');
     document.getElementById('sb-model-row').classList.remove('show');
@@ -1245,16 +1284,61 @@
     sbPlatChange();
     document.getElementById('sb-script').value = s.script || '';
     sbScriptChange();
-    populateProjects();
+
+    // Edit-mode project display: show the SAVED project name + ID, not
+    // the currently active sidebar project (Option 1 design — shards
+    // remember the project they were saved against). User can't change
+    // it from the builder; to retarget, delete & recreate while a
+    // different active project is set.
     setTimeout(()=>{
       const ctx = s.context || {};
       const projVal = ctx.project_id || ctx.project_uuid || '';
-      if (projVal) {
+      if (projVal){
         document.getElementById('sb-project').value = projVal;
-        sbProjectChange();
+        // Resolve saved project's display name from projectsData
+        const platform = s.platform;
+        let savedName = projVal.slice(0,8) + '…';
+        if (projectsData){
+          if (platform === 'forma' && projectsData.forma){
+            const hit = projectsData.forma.find(p => p.id === projVal);
+            if (hit) savedName = hit.name;
+          } else if (platform === 'revizto' && projectsData.revizto){
+            const hit = projectsData.revizto.find(p => p.uuid === projVal);
+            if (hit) savedName = hit.title;
+          } else if (platform === 'morta' && projectsData.morta){
+            const hit = projectsData.morta.find(p => (p.id === projVal || p.uuid === projVal));
+            if (hit) savedName = hit.name || hit.title;
+          }
+        }
+        const nameEl = document.getElementById('sb-project-name');
+        const idEl   = document.getElementById('sb-project-id');
+        if (nameEl) {
+          nameEl.textContent = savedName;
+          nameEl.style.color = '';
+        }
+        if (idEl) {
+          idEl.textContent = projVal.length > 12 ? projVal.slice(0,8) + '…' : projVal;
+          idEl.style.color = '';
+        }
       }
-      if (ctx.model_item_id) {
-        setTimeout(()=>{ document.getElementById('sb-model').value = ctx.model_item_id; }, 200);
+      // Restore saved model selection (L3/L4 only)
+      if (ctx.model_item_id){
+        setTimeout(()=>{
+          const modelSel = document.getElementById('sb-model');
+          // The model dropdown may still be loading at this point; if
+          // the saved model isn't an option, add it manually so the
+          // value sticks. fillModels will re-render with the proper
+          // list when models arrive.
+          if (modelSel.querySelector(`option[value="${ctx.model_item_id}"]`)){
+            modelSel.value = ctx.model_item_id;
+          } else {
+            const opt = document.createElement('option');
+            opt.value = ctx.model_item_id;
+            opt.textContent = ctx.model_name || ctx.model_item_id;
+            opt.selected = true;
+            modelSel.appendChild(opt);
+          }
+        }, 250);
       }
     }, 50);
     // Block 7: load formats. Supports new "formats" list AND legacy "format"
@@ -1350,76 +1434,82 @@
     }
     const needsProj = (meta.required_context||[]).some(k=>k==='project_id'||k==='project_uuid');
     const needsModel = (meta.required_context||[]).includes('model_item_id');
+
     if (needsProj){
       document.getElementById('sb-project-row').classList.add('show');
       const lbl = document.getElementById('sb-project-label');
       lbl.textContent = meta.platform === 'revizto' ? 'Project' : 'Project / Hub';
-      populateProjects();
+      populateProjectDisplay();
     } else {
       document.getElementById('sb-project-row').classList.remove('show');
-    }
-    document.getElementById('sb-model-row').classList.toggle('show', needsModel);
-  };
-  function populateProjects(){
-    const platform = document.getElementById('sb-platform').value;
-    const sel = document.getElementById('sb-project');
-    sel.innerHTML = '<option value="">— select project —</option>';
-    if (!projectsData) { sel.innerHTML = '<option value="">Loading…</option>'; return; }
-    if (platform === 'forma' && projectsData.forma){
-      projectsData.forma.forEach(p=>{
-        const opt = document.createElement('option');
-        opt.value = p.id;
-        opt.textContent = p.name + (p.platform ? ' ('+p.platform+')' : '');
-        sel.appendChild(opt);
-      });
-    } else if (platform === 'revizto' && projectsData.revizto){
-      projectsData.revizto.forEach(p=>{
-        const opt = document.createElement('option');
-        opt.value = p.uuid;
-        opt.textContent = p.title;
-        sel.appendChild(opt);
-      });
-    } else if (platform === 'morta' && projectsData.morta){
-      projectsData.morta.forEach(p=>{
-        const opt = document.createElement('option');
-        opt.value = p.id || p.uuid;
-        opt.textContent = p.name || p.title;
-        sel.appendChild(opt);
-      });
+      // Clear hidden field so save logic doesn't carry stale project
+      document.getElementById('sb-project').value = '';
     }
 
-    // Auto-fill from sidebar's active project (only on NEW shard, not edit
-    // — edit logic in fillShardBuilder sets the saved value explicitly).
-    // editingShardId === null means "creating new shard," anything else
-    // means we're editing an existing one; let it keep its own value.
-    if (editingShardId === null && activeCtx) {
-      let activeId = '';
-      if (platform === 'forma')   activeId = activeCtx.forma_project_id    || '';
-      if (platform === 'revizto') activeId = activeCtx.revizto_project_uuid || '';
-      if (platform === 'morta')   activeId = activeCtx.morta_hub_id        || '';
-      if (activeId) {
-        // Only set if the active project is actually in the dropdown
-        // (might not be if user has access to projects elsewhere). Fall
-        // through silently if not — user can pick manually.
-        const exists = Array.from(sel.options).some(o => o.value === activeId);
-        if (exists) {
-          sel.value = activeId;
-          // Trigger downstream (model picker) — same as if user picked.
-          sbProjectChange();
-        }
+    // Model row — show ALWAYS (per design), but populate based on script.
+    // - L3/L4 (needsModel): real model dropdown, fetched for the active project
+    // - L1/L2 (no model): "— not applicable —" placeholder, disabled
+    document.getElementById('sb-model-row').classList.add('show');
+    const modelSel  = document.getElementById('sb-model');
+    const modelHelp = document.getElementById('sb-model-help');
+    if (needsModel){
+      modelSel.disabled = false;
+      modelSel.innerHTML = '<option value="">Loading…</option>';
+      modelHelp.textContent = 'Required for L3 and L4 scripts. Choose the model the script should run against.';
+      // Trigger Forma model fetch (only Forma supports model picker today;
+      // Revizto L3 model picker is a separate future build).
+      const projectId = document.getElementById('sb-project').value;
+      if (meta.platform === 'forma' && projectId){
+        loadFormaModelsForBuilder(projectId);
+      } else {
+        modelSel.innerHTML = '<option value="">— no project active, set one in sidebar —</option>';
       }
+    } else {
+      modelSel.disabled = true;
+      modelSel.innerHTML = '<option value="">— not applicable —</option>';
+      modelHelp.textContent = 'Model picker only applies to L3/L4 scripts.';
     }
-  }
-  window.sbProjectChange = async function(){
-    const platform = document.getElementById('sb-platform').value;
-    const projectId = document.getElementById('sb-project').value;
-    const modelSel = document.getElementById('sb-model');
-    modelSel.innerHTML = '<option value="">Loading…</option>';
-    if (platform !== 'forma' || !projectId) {
-      modelSel.innerHTML = '<option value="">— select project first —</option>';
+  };
+
+  // Read-only project display — pulls from sidebar's active context
+  // (loaded earlier into activeCtx). Stamps the platform-appropriate ID
+  // into the hidden #sb-project field so saveShard picks it up.
+  function populateProjectDisplay(){
+    const platform     = document.getElementById('sb-platform').value;
+    const nameEl       = document.getElementById('sb-project-name');
+    const idEl         = document.getElementById('sb-project-id');
+    const hiddenIdInp  = document.getElementById('sb-project');
+
+    if (!activeCtx || !activeCtx.active_project_key){
+      nameEl.textContent = '— no active project — set one in the sidebar';
+      nameEl.style.color = 'var(--error, #c00)';
+      idEl.textContent = '';
+      hiddenIdInp.value = '';
       return;
     }
-    if (modelsCacheByProject[projectId]) {
+    nameEl.style.color = '';
+    nameEl.textContent = activeCtx.active_project_name || activeCtx.active_project_key;
+
+    let activeId = '';
+    if (platform === 'forma')   activeId = activeCtx.forma_project_id    || '';
+    if (platform === 'revizto') activeId = activeCtx.revizto_project_uuid || '';
+    if (platform === 'morta')   activeId = activeCtx.morta_hub_id        || '';
+
+    if (activeId){
+      hiddenIdInp.value = activeId;
+      // Show abbreviated ID for confidence
+      idEl.textContent = activeId.length > 12 ? activeId.slice(0,8) + '…' : activeId;
+    } else {
+      hiddenIdInp.value = '';
+      idEl.textContent = '(no ' + platform + ' project linked to this active project)';
+      idEl.style.color = 'var(--error, #c00)';
+    }
+  }
+
+  // Loader for Forma model picker. Used when the script is Forma L3/L4.
+  async function loadFormaModelsForBuilder(projectId){
+    const modelSel = document.getElementById('sb-model');
+    if (modelsCacheByProject[projectId]){
       fillModels(modelsCacheByProject[projectId]);
       return;
     }
@@ -1433,7 +1523,14 @@
     } catch(e){
       modelSel.innerHTML = '<option value="">— could not load models —</option>';
     }
-  };
+  }
+
+  // Legacy no-op — kept because the markup may have lingering inline
+  // onchange="sbProjectChange()" references after a future refactor.
+  // The project field is now a hidden input populated from activeCtx;
+  // user can't change it.
+  window.sbProjectChange = function(){};
+
   function fillModels(models){
     const sel = document.getElementById('sb-model');
     sel.innerHTML = '<option value="">— select model —</option>';
@@ -1458,11 +1555,11 @@
     const reqs = meta.required_context || [];
     const projectVal = document.getElementById('sb-project').value;
     if (reqs.includes('project_id')) {
-      if (!projectVal) return toast('Select a project.', true);
+      if (!projectVal) return toast('No active project for ' + (meta.platform || platform).toUpperCase() + '. Set one in the sidebar first, then save.', true);
       ctx.project_id = projectVal;
     }
     if (reqs.includes('project_uuid')) {
-      if (!projectVal) return toast('Select a project.', true);
+      if (!projectVal) return toast('No active project for ' + (meta.platform || platform).toUpperCase() + '. Set one in the sidebar first, then save.', true);
       ctx.project_uuid = projectVal;
     }
     if (reqs.includes('model_item_id')) {
