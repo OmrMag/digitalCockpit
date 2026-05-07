@@ -703,6 +703,12 @@ SCRIPT_CATALOG = {
         "required_context": ["project_id", "model_item_id", "model_name"],
         "description":      "Full element-level properties dump from a single model. Large output (~5GB on Wynn-scale models).",
     },
+    "Forma_GET_Model_Properties_Raw": {
+        "platform":         "forma",
+        "display_name":     "Model properties — full (no filter)",
+        "required_context": ["project_id", "model_item_id", "model_name"],
+        "description":      "Same model property data as L3 but with NO category filter and NO grouping. Single flat JSON array — every element Forma's index returned. Useful for ad-hoc analysis where you need categories the L3 drops (Views, Sheets, etc).",
+    },
     "Proccesed_Model_Properties": {
         "platform":         "forma",
         "display_name":     "Model health report (L4)",
@@ -710,35 +716,11 @@ SCRIPT_CATALOG = {
         "description":      "Summary report + aggregate breakdown built from L3 output. Requires L3 to have run first.",
     },
     # Revizto
-    "Revizto_GET_License_Projects": {
-        "platform":         "revizto",
-        "display_name":     "License projects",
-        "required_context": [],
-        "description":      "All projects under the configured license. License-level (no project required).",
-    },
-    "Revizto_GET_License_Members": {
-        "platform":         "revizto",
-        "display_name":     "License members",
-        "required_context": [],
-        "description":      "All members across the license. License-level (no project required).",
-    },
-    "Revizto_GET_User_Licenses": {
-        "platform":         "revizto",
-        "display_name":     "User licenses",
-        "required_context": [],
-        "description":      "Licenses available to the authenticated user. License-level.",
-    },
     "Revizto_GET_Project_Members": {
         "platform":         "revizto",
         "display_name":     "Project members",
         "required_context": ["project_uuid"],
         "description":      "Members + roles for a single Revizto project.",
-    },
-    "Revizto_GET_Project_Roles": {
-        "platform":         "revizto",
-        "display_name":     "Project roles",
-        "required_context": ["project_uuid"],
-        "description":      "All defined roles within the selected project.",
     },
     "Revizto_GET_Project_Issues": {
         "platform":         "revizto",
@@ -752,11 +734,11 @@ SCRIPT_CATALOG = {
         "required_context": ["project_uuid"],
         "description":      "Clash test definitions + last-run statistics.",
     },
-    "Revizto_GET_Scenes_and_Models_with_Properties": {
+    "Revizto_GET_License_Members": {
         "platform":         "revizto",
-        "display_name":     "Scenes & models",
-        "required_context": ["project_uuid"],
-        "description":      "Scenes and models with properties for the selected project. Required input for L3 Object Tree extraction.",
+        "display_name":     "License members",
+        "required_context": [],
+        "description":      "All members across the license. License-level (no project required).",
     },
     # Morta
     "Morta_GET_Hub_Members": {
@@ -1530,25 +1512,12 @@ async def api_forma_models(request: Request, user: str = Depends(require_user)):
         found_models    = []
         visited_folders = set()
 
-        def walk_folder(folder_id, folder_name, ancestors=None, depth=0):
-            """ancestors: list of folder names from the top down to (but not
-            including) folder_name. Used so each model record carries its
-            full folder breadcrumb — the frontend uses this to filter, e.g.
-            'only show models whose path passes through a folder named
-            Shared'. The cache shape thus becomes:
-              {id, name, parent_folder, path: [...], path_str: "A/B/C"}
-            Older cached entries that pre-date this field will lack `path`;
-            the frontend's filter falls back to "show everything" when
-            path is missing, so the change is backward-compatible.
-            """
-            if ancestors is None:
-                ancestors = []
+        def walk_folder(folder_id, folder_name, depth=0):
             if depth > 5 or folder_id in visited_folders:
                 return
             visited_folders.add(folder_id)
             print(f"[Forma] {'  ' * depth}Folder: {folder_name}")
             page = 0
-            current_path = ancestors + [folder_name]
             while True:
                 try:
                     r = http_requests.get(
@@ -1572,18 +1541,12 @@ async def api_forma_models(request: Request, user: str = Depends(require_user)):
                     attrs = item.get("attributes", {})
                     name  = attrs.get("displayName") or attrs.get("name", "")
                     if itype == "folders":
-                        walk_folder(item["id"], name, current_path, depth + 1)
+                        walk_folder(item["id"], name, depth + 1)
                     elif itype == "items":
                         ext = "." + name.rsplit(".", 1)[-1].lower() if "." in name else ""
                         if ext in MODEL_EXTS:
-                            found_models.append({
-                                "id":            item["id"],
-                                "name":          name,
-                                "parent_folder": folder_name,
-                                "path":          current_path,
-                                "path_str":      "/".join(current_path),
-                            })
-                            print(f"[Forma] Found model: {name} in {'/'.join(current_path)}")
+                            found_models.append({"id": item["id"], "name": name})
+                            print(f"[Forma] Found model: {name}")
                 if not data.get("links", {}).get("next"):
                     break
                 page += 1
@@ -5671,12 +5634,11 @@ async def api_invites_stats(
     """Count invites SENT and RECEIVED by the current admin, scoped to
     their registry projects, within the requested time window.
 
-    SENT     = invite events on projects this admin manages where at least
-               one platform send was attempted (i.e. NOT all-skipped).
-               The invite log doesn't track who clicked the button, so this
-               is a project-team-wide proxy.
-    RECEIVED = invite events where the invited email == this admin's email
-               (matched case-insensitively, with whitespace trimmed).
+    SENT     = entries where this admin acted as the inviter. The invite
+               log doesn't currently track who sent the invite, so we
+               approximate by counting all invite events on projects this
+               admin manages (matches what /profile uses).
+    RECEIVED = entries where the invited email == this admin's email.
 
     period: '7d', '30d', or 'all'. Anything else is treated as '30d'.
     """
@@ -5710,41 +5672,19 @@ async def api_invites_stats(
         except (ValueError, TypeError):
             return False
 
-    def is_invite_shape(entry: dict) -> bool:
-        """Defensive: only accept entries that look like real invite events.
-        Same rule applied in /api/invite/log."""
-        if not isinstance(entry, dict):
-            return False
-        if entry.get("mode") not in ("single", "bulk"):
-            return False
-        return any(k in entry for k in ("morta_status", "revizto_status", "forma_status"))
-
-    def has_real_send(entry: dict) -> bool:
-        """A 'real' invite is one where at least one platform actually got
-        an invite request (status is anything other than 'skipped' or empty).
-        This excludes log rows where the admin clicked Approve on a portal
-        submission with no platforms selected — those produce a row with
-        all three statuses as 'skipped' which inflates SENT artificially."""
-        for k in ("morta_status", "revizto_status", "forma_status"):
-            v = (entry.get(k) or "").lower()
-            if v and v != "skipped":
-                return True
-        return False
-
-    user_normalized = user.strip().lower()
     sent = 0
     received = 0
+    user_lower = user.lower()
     for e in log:
-        if not is_invite_shape(e):
-            continue
         if not in_window(e):
             continue
-        # received: the invitee email is this admin (case/whitespace insensitive)
-        if (e.get("email") or "").strip().lower() == user_normalized:
+        # received: the invitee email is this admin
+        if (e.get("email") or "").lower() == user_lower:
             received += 1
-        # sent: invite event on a project this admin manages, AND at least
-        # one platform send actually attempted (non-skipped)
-        if e.get("project_key") in scoped_keys and has_real_send(e):
+        # sent: any entry on a project this admin manages (proxy for
+        # "this admin's team sent an invite", since invite_log doesn't
+        # record who clicked the button)
+        if e.get("project_key") in scoped_keys:
             sent += 1
 
     return JSONResponse({
@@ -5924,18 +5864,12 @@ async def api_exports_read(filename: str, user: str = Depends(require_user)):
 async def api_invite_log(
     project_key: str = None,
     limit: int = 50,
-    type: str = None,                          # 'invite' to apply invite-shape filter; None for raw
     user: str = Depends(require_user)
 ):
     """Return invite log entries scoped to the user's registry projects.
 
     project_key: if provided, filter to that specific project only.
     limit: max entries to return (most recent first), default 50.
-    type:  'invite' applies a defensive shape filter that drops any entry
-           that doesn't look like a real invite event (used by the Manage
-           Users → Invite Log page). When omitted, ALL entries are
-           returned regardless of shape (used by the Home → Live Activity
-           card, which has its own client-side filter UI).
     """
     log           = load_invite_log()
     user_projects = get_user_projects(user)
@@ -5948,18 +5882,6 @@ async def api_invite_log(
     # If a specific project is selected, filter to that project only
     if project_key:
         log = [e for e in log if e.get("project_key") == project_key]
-
-    # Optional defensive shape filter — invite-only when the caller asks
-    # for it. Manage Users wants this, Home → Live Activity does NOT (it
-    # surfaces every event type the cockpit logs and has its own filter UI).
-    if type == "invite":
-        def _is_invite_entry(e: dict) -> bool:
-            if not isinstance(e, dict):
-                return False
-            if e.get("mode") not in ("single", "bulk"):
-                return False
-            return any(k in e for k in ("morta_status", "revizto_status", "forma_status"))
-        log = [e for e in log if _is_invite_entry(e)]
 
     # Most recent first, capped at limit
     log = log[-limit:][::-1]

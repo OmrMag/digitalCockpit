@@ -238,6 +238,11 @@
             <div class="ext-desc">Extracted model properties from the selected model. Large export — may take time.</div>
             <div class="ext-footer"><span class="ext-output">→ forma_model_properties.csv</span><button class="btn btn-sm btn-primary" onclick="runExtractor(this)">Run</button></div>
         </div>
+        <div class="extractor-card disabled" data-script="Forma_GET_Model_Properties_Raw" data-level="3" data-platform="forma">
+            <div class="ext-header"><div class="ext-title">Model Properties — Full</div><span class="ext-badge forma">L3</span></div>
+            <div class="ext-desc">No category filter, no grouping — flat JSON array of every element Forma's index returned. For ad-hoc analysis where the standard L3 categories aren't enough.</div>
+            <div class="ext-footer"><span class="ext-output">→ &lt;model&gt;_FullProperties.json</span><button class="btn btn-sm btn-primary" onclick="runExtractor(this)">Run</button></div>
+        </div>
     </div>
 
     <div class="ext-level-header">
