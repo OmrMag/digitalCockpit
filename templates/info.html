@@ -13,9 +13,9 @@
 
 .doc-section{margin-bottom:64px;padding-bottom:64px;border-bottom:1px solid var(--border-cream);}
 .doc-section:last-child{border-bottom:none;}
-.doc-section-inner{display:grid;grid-template-columns:160px 1fr;gap:0 40px;}
-.doc-num{font-size:10px;font-weight:700;letter-spacing:2px;color:var(--text-dark-muted);opacity:.4;padding-top:4px;text-transform:uppercase;}
-.doc-num strong{display:block;font-size:32px;font-weight:200;color:var(--navy);opacity:.6;margin-bottom:4px;letter-spacing:0;}
+.doc-section-inner{display:block;}
+.doc-num{font-size:9px;font-weight:700;letter-spacing:2px;color:var(--text-dark-muted);opacity:.5;text-transform:uppercase;margin-bottom:6px;display:flex;align-items:baseline;gap:10px;}
+.doc-num strong{font-size:13px;font-weight:700;color:var(--navy);opacity:.7;letter-spacing:1px;}
 .doc-body h2{font-size:18px;font-weight:700;color:var(--navy);margin:0 0 6px;letter-spacing:-.4px;}
 .doc-body h2 + .doc-tagline{font-size:11px;color:var(--text-dark-muted);margin-bottom:18px;font-style:italic;line-height:1.5;}
 .doc-body h3{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text-dark-muted);margin:24px 0 10px;}
@@ -94,8 +94,6 @@
 .chapter-intro p{font-size:12px;color:var(--text-dark);line-height:1.7;margin:0;}
 
 @media(max-width:960px){
-  .doc-section-inner{grid-template-columns:1fr;}
-  .doc-num{display:none;}
   .doc-grid-2,.doc-grid-3{grid-template-columns:1fr;}
 }
 </style>
