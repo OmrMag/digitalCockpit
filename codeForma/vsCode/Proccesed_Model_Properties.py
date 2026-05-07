@@ -64,7 +64,8 @@ ELEMENT_CATEGORIES = {
     "Revit Lighting Fixtures", "Revit Lighting Devices",
     "Revit Fire Alarm Devices", "Revit Communication Devices",
     "Revit Data Devices", "Revit Security Devices",
-    "Revit Cable Trays", "Revit Conduits",
+    "Revit Cable Trays", "Revit Cable Tray Fittings",
+    "Revit Conduits", "Revit Conduit Fittings",
     "Revit Furniture", "Revit Furniture Systems", "Revit Casework",
     "Revit Specialty Equipment", "Revit Assemblies", "Revit Parts",
 }
@@ -467,7 +468,7 @@ if __name__ == "__main__":
     for i, pn in enumerate(phase_names, start=1):
         report.append({"Section": "Phases", "Metric": f"Phase {i}", "Value": pn})
 
-    for cat, count in sorted(filtered_cat_count.items(), key=lambda x: -x[1]):
+    for cat, count in sorted(filtered_cat_count.items(), key=lambda x: x[1]):
         report.append({"Section": "Elements by Category", "Metric": cat.replace("Revit ", ""), "Value": count})
     for level, count in sorted(level_count.items(), key=lambda x: -x[1]):
         report.append({"Section": "Elements by Level", "Metric": level, "Value": count})
@@ -608,7 +609,7 @@ if __name__ == "__main__":
     print(f"  Worksets:                     {len(real_worksets)}")
     print("-"*70)
     print("  ELEMENTS BY CATEGORY:")
-    for cat, count in sorted(filtered_cat_count.items(), key=lambda x: -x[1]):
+    for cat, count in sorted(filtered_cat_count.items(), key=lambda x: x[1]):
         print(f"    {cat.replace('Revit ', ''):<40} {count:>10,}")
     print("-"*70)
     print("  QUALITY FLAGS:")

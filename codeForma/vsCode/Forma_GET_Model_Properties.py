@@ -65,7 +65,8 @@ KEPT_CATEGORIES = {
     "Revit Lighting Fixtures", "Revit Lighting Devices",
     "Revit Fire Alarm Devices", "Revit Communication Devices",
     "Revit Data Devices", "Revit Security Devices",
-    "Revit Cable Trays", "Revit Conduits",
+    "Revit Cable Trays", "Revit Cable Tray Fittings",
+    "Revit Conduits", "Revit Conduit Fittings",
     "Revit Furniture", "Revit Furniture Systems", "Revit Casework",
     "Revit Specialty Equipment", "Revit Assemblies", "Revit Parts",
     # Project metadata
