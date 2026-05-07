@@ -1,9 +1,9 @@
 {% extends "base.html" %}
 
-{% block title %}Agent Tokens — Digital Construction Cockpit{% endblock %}
+{% block title %}cockpitAgent — Digital Construction Cockpit{% endblock %}
 
-{% block page_title %}Agent Tokens{% endblock %}
-{% block page_subtitle %}API tokens for the cockpit-agent (laptop file delivery){% endblock %}
+{% block page_title %}cockpitAgent{% endblock %}
+{% block page_subtitle %}API tokens for cockpitAgent — the local file-delivery companion{% endblock %}
 
 {% block content %}
 <style>
@@ -60,24 +60,24 @@
 
 <div class="tok-card">
   <div class="tok-card-header">
-    <span class="tok-card-title">About agent tokens</span>
+    <span class="tok-card-title">About cockpitAgent tokens</span>
   </div>
   <div class="tok-card-body">
     <div class="tok-info">
-      Agent tokens are API credentials used by the <strong>cockpit-agent</strong> — a small
-      program that runs on your laptop and downloads scheduler outputs to local
-      folders you configure per shard. Each token is tied to your account and
-      grants the agent the ability to fetch your runs.
+      <strong>cockpitAgent</strong> is a small program that runs on your laptop and
+      downloads scheduler outputs to local folders you configure per shard.
+      Tokens listed here are the API credentials cockpitAgent uses — each one is
+      tied to your account and grants cockpitAgent the ability to fetch your runs.
     </div>
     <div class="tok-info">
       Create one token per laptop you want files delivered to. Paste the token
-      into the agent's config file once. The plaintext is shown <strong>only once</strong>
+      into cockpitAgent's config file once. The plaintext is shown <strong>only once</strong>
       after creation — store it somewhere safe.
     </div>
     <div class="tok-info-warn">
       <strong>Security:</strong> a token grants read access to your run records and
       output files. If a token is exposed, revoke it immediately — that invalidates
-      it instantly. Tokens never let an agent log in to the cockpit UI or modify
+      it instantly. Tokens never let cockpitAgent log in to the cockpit UI or modify
       anything.
     </div>
   </div>
@@ -113,7 +113,7 @@
 <div class="reveal-modal-bg" id="reveal-bg">
   <div class="reveal-modal">
     <div class="reveal-modal-title">Token created</div>
-    <div class="reveal-modal-sub">Copy this token now and paste it into your agent's config file. <strong>It will not be shown again.</strong></div>
+    <div class="reveal-modal-sub">Copy this token now and paste it into cockpitAgent's config file. <strong>It will not be shown again.</strong></div>
     <div class="reveal-token" id="reveal-token-val">—</div>
     <div class="reveal-modal-warning">
       Once you close this dialog, the token can never be viewed again. If you lose it,
@@ -163,7 +163,7 @@
       const data = await api('/api/agent-tokens');
       const tokens = (data && data.tokens) || [];
       if (!tokens.length){
-        list.innerHTML = '<div class="empty-state">No tokens yet. Create one above to set up the agent.</div>';
+        list.innerHTML = '<div class="empty-state">No tokens yet. Create one above to set up cockpitAgent.</div>';
         return;
       }
       // Sort: active first, then revoked. Within each, newest first.
@@ -213,7 +213,7 @@
   };
 
   window.revokeToken = async function(id, name){
-    if (!confirm('Revoke token "'+name+'"? The agent using this token will stop working immediately. This cannot be undone.')) return;
+    if (!confirm('Revoke token "'+name+'"? cockpitAgent using this token will stop working immediately. This cannot be undone.')) return;
     try {
       await api('/api/agent-tokens/'+id, {method:'DELETE'});
       toast('Revoked: '+name);

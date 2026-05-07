@@ -112,7 +112,7 @@
   <a href="#s-scripts">Scripts</a>
   <a href="#s-flows">Data Flows</a>
   <a href="#s-scheduler">Scheduler</a>
-  <a href="#s-agent">Agent System</a>
+  <a href="#s-agent">cockpitAgent</a>
   <a href="#s-files">File Map</a>
   <a href="#s-env">Environment</a>
   <a href="#s-perf">Performance</a>
@@ -141,7 +141,7 @@
 <div class="doc-card"><h4 class="r">Script layer</h4><p>Standalone Python modules under <code>codeRevizto/</code>, <code>codeMorta/</code>, <code>codeForma/</code>. Each script runs as a subprocess invoked by the web layer with a per-admin merged config injected via env vars.</p></div>
 <div class="doc-card"><h4>Scheduler engine</h4><p><code>codeShared/Scheduler_Engine.py</code> hosts APScheduler in-process. Reads compilers from blob, registers cron triggers, dispatches shards through the same runner the Run-Now button uses.</p></div>
 <div class="doc-card"><h4 class="bl">Active project context</h4><p>Sidebar selection persisted to <code>active_context</code> in each admin's config. Propagates in-tab via the <code>cockpit:projectChanged</code> event; cross-tab via <code>GET /api/context</code>.</p></div>
-<div class="doc-card"><h4>Laptop agent</h4><p><code>cockpit-agent.py</code> runs on a colleague's machine, polls <code>/api/agent/work</code> with a per-machine token, downloads claimed runs to a configured local path. Enables vacation continuity.</p></div>
+<div class="doc-card"><h4>cockpitAgent</h4><p><code>cockpit-agent.py</code> runs on a colleague's machine, polls <code>/api/agent/work</code> with a per-machine token, downloads claimed runs to a configured local path. Enables vacation continuity.</p></div>
 <div class="doc-card"><h4 class="b">Persistence</h4><p>Azure Blob Storage holds every runtime state object — credentials, registry, logs, token caches, scheduler state. The application process is fully stateless and restart-safe.</p></div>
 </div>
 
@@ -150,133 +150,104 @@
 
 <!-- THREE-LANE FLOW SVG -->
 <div class="diagram-wrap">
-<svg viewBox="0 0 720 380" xmlns="http://www.w3.org/2000/svg" font-family="'JetBrains Mono',monospace">
+<svg viewBox="0 0 600 320" xmlns="http://www.w3.org/2000/svg" font-family="'JetBrains Mono',monospace">
   <defs>
     <marker id="lf-d" markerWidth="5" markerHeight="5" refX="4" refY="2.5" orient="auto"><path d="M0,0 L0,5 L5,2.5 Z" fill="rgba(255,255,255,0.4)"/></marker>
-    <marker id="lf-r" markerWidth="5" markerHeight="5" refX="4" refY="2.5" orient="auto"><path d="M0,0 L0,5 L5,2.5 Z" fill="rgba(224,90,90,0.65)"/></marker>
-    <marker id="lf-b" markerWidth="5" markerHeight="5" refX="4" refY="2.5" orient="auto"><path d="M0,0 L0,5 L5,2.5 Z" fill="rgba(74,158,255,0.65)"/></marker>
     <marker id="lf-y" markerWidth="5" markerHeight="5" refX="4" refY="2.5" orient="auto"><path d="M0,0 L0,5 L5,2.5 Z" fill="rgba(251,191,36,0.65)"/></marker>
     <marker id="lf-g" markerWidth="5" markerHeight="5" refX="4" refY="2.5" orient="auto"><path d="M0,0 L0,5 L5,2.5 Z" fill="rgba(52,211,153,0.65)"/></marker>
   </defs>
 
-  <!-- Title -->
-  <text x="360" y="14" font-size="8" fill="rgba(232,237,242,0.5)" font-weight="700" text-anchor="middle" letter-spacing="1.5">THREE COMMON REQUEST FLOWS THROUGH THE COCKPIT</text>
-  <line x1="80" y1="22" x2="640" y2="22" stroke="rgba(255,255,255,0.12)"/>
+  <text x="300" y="13" font-size="7" fill="rgba(232,237,242,0.45)" font-weight="700" text-anchor="middle" letter-spacing="1">THREE COMMON REQUEST FLOWS</text>
+  <line x1="60" y1="20" x2="540" y2="20" stroke="rgba(255,255,255,0.1)"/>
 
-  <!-- ──────────── LANE 1: INVITE ──────────── -->
-  <text x="120" y="40" font-size="9" fill="#e05a5a" font-weight="700" text-anchor="middle">① ADMIN INVITES A USER</text>
-  <text x="120" y="51" font-size="6.5" fill="rgba(232,237,242,0.45)" text-anchor="middle">synchronous · direct API call</text>
+  <!-- ① Invite -->
+  <text x="100" y="36" font-size="7.5" fill="#e05a5a" font-weight="700" text-anchor="middle">① INVITE A USER</text>
+  <text x="100" y="46" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">synchronous · ~5s</text>
 
-  <!-- L1 box 1: Browser -->
-  <rect x="40" y="62" width="160" height="34" rx="4" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.18)"/>
-  <text x="120" y="76" font-size="7.5" fill="#e8edf2" font-weight="700" text-anchor="middle">Browser · manage.html</text>
-  <text x="120" y="88" font-size="6.5" fill="rgba(232,237,242,0.5)" text-anchor="middle">click "Invite" with form data</text>
-  <line x1="120" y1="96" x2="120" y2="106" stroke="rgba(255,255,255,0.4)" marker-end="url(#lf-d)"/>
+  <rect x="35" y="55" width="130" height="28" rx="3" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.18)"/>
+  <text x="100" y="67" font-size="6.5" fill="#e8edf2" font-weight="700" text-anchor="middle">Browser · manage</text>
+  <text x="100" y="77" font-size="5.5" fill="rgba(232,237,242,0.5)" text-anchor="middle">click Invite</text>
+  <line x1="100" y1="83" x2="100" y2="91" stroke="rgba(255,255,255,0.4)" marker-end="url(#lf-d)"/>
 
-  <!-- L1 box 2: Server -->
-  <rect x="40" y="108" width="160" height="44" rx="4" fill="rgba(74,158,255,0.13)" stroke="rgba(74,158,255,0.42)"/>
-  <text x="120" y="122" font-size="7.5" fill="#4a9eff" font-weight="700" text-anchor="middle">app.py</text>
-  <text x="120" y="133" font-size="6.5" fill="rgba(232,237,242,0.5)" text-anchor="middle">POST /api/invite/single</text>
-  <text x="120" y="143" font-size="6.5" fill="rgba(232,237,242,0.45)" text-anchor="middle">validates project + admin role</text>
-  <line x1="120" y1="152" x2="120" y2="162" stroke="rgba(255,255,255,0.4)" marker-end="url(#lf-d)"/>
+  <rect x="35" y="93" width="130" height="36" rx="3" fill="rgba(74,158,255,0.13)" stroke="rgba(74,158,255,0.42)"/>
+  <text x="100" y="105" font-size="6.5" fill="#4a9eff" font-weight="700" text-anchor="middle">app.py</text>
+  <text x="100" y="115" font-size="5.5" fill="rgba(232,237,242,0.5)" text-anchor="middle">forma_invite()</text>
+  <text x="100" y="124" font-size="5.5" fill="rgba(232,237,242,0.45)" text-anchor="middle">revizto_invite()  morta_invite()</text>
+  <line x1="100" y1="129" x2="100" y2="137" stroke="rgba(255,255,255,0.4)" marker-end="url(#lf-d)"/>
 
-  <!-- L1 box 3: Three platform calls -->
-  <rect x="40" y="164" width="160" height="46" rx="4" fill="rgba(74,158,255,0.08)" stroke="rgba(74,158,255,0.25)"/>
-  <text x="120" y="178" font-size="7" fill="#4a9eff" font-weight="700" text-anchor="middle">Direct REST calls</text>
-  <text x="120" y="190" font-size="6.5" fill="rgba(232,237,242,0.45)" text-anchor="middle">forma_invite() · revizto_invite()</text>
-  <text x="120" y="200" font-size="6.5" fill="rgba(232,237,242,0.45)" text-anchor="middle">morta_invite()</text>
-  <line x1="120" y1="210" x2="120" y2="220" stroke="rgba(255,255,255,0.4)" marker-end="url(#lf-d)"/>
+  <rect x="35" y="139" width="130" height="32" rx="3" fill="rgba(224,90,90,0.13)" stroke="rgba(224,90,90,0.4)"/>
+  <text x="100" y="151" font-size="6.5" fill="#e05a5a" font-weight="700" text-anchor="middle">Platform APIs</text>
+  <text x="100" y="161" font-size="5.5" fill="rgba(232,237,242,0.45)" text-anchor="middle">parallel · best-effort</text>
+  <line x1="100" y1="171" x2="100" y2="179" stroke="rgba(52,211,153,0.65)" marker-end="url(#lf-g)"/>
 
-  <!-- L1 box 4: External APIs -->
-  <rect x="40" y="222" width="160" height="44" rx="4" fill="rgba(224,90,90,0.13)" stroke="rgba(224,90,90,0.4)"/>
-  <text x="120" y="236" font-size="7.5" fill="#e05a5a" font-weight="700" text-anchor="middle">Platform APIs</text>
-  <text x="120" y="247" font-size="6.5" fill="rgba(232,237,242,0.45)" text-anchor="middle">Revizto · Morta · Forma/ACC</text>
-  <text x="120" y="257" font-size="6" fill="rgba(232,237,242,0.4)" text-anchor="middle">parallel · independent · best-effort</text>
-  <line x1="120" y1="266" x2="120" y2="276" stroke="rgba(52,211,153,0.65)" marker-end="url(#lf-g)"/>
+  <rect x="35" y="181" width="130" height="28" rx="3" fill="rgba(52,211,153,0.1)" stroke="rgba(52,211,153,0.32)"/>
+  <text x="100" y="193" font-size="6.5" fill="#34d399" font-weight="700" text-anchor="middle">invite_log.json</text>
+  <text x="100" y="203" font-size="5.5" fill="rgba(232,237,242,0.45)" text-anchor="middle">per-platform statuses</text>
 
-  <!-- L1 box 5: Result -->
-  <rect x="40" y="278" width="160" height="44" rx="4" fill="rgba(52,211,153,0.1)" stroke="rgba(52,211,153,0.32)"/>
-  <text x="120" y="292" font-size="7.5" fill="#34d399" font-weight="700" text-anchor="middle">Append to invite_log.json</text>
-  <text x="120" y="303" font-size="6.5" fill="rgba(232,237,242,0.45)" text-anchor="middle">per-platform statuses recorded</text>
-  <text x="120" y="313" font-size="6" fill="rgba(232,237,242,0.4)" text-anchor="middle">visible in Manage + Live Activity</text>
+  <!-- ② Extraction -->
+  <text x="300" y="36" font-size="7.5" fill="#4a9eff" font-weight="700" text-anchor="middle">② EXTRACTION</text>
+  <text x="300" y="46" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">subprocess · SSE stream</text>
 
-  <!-- L1 timing footer -->
-  <text x="120" y="343" font-size="7" fill="rgba(251,191,36,0.7)" text-anchor="middle" font-weight="700">~2–8 seconds end-to-end</text>
-  <text x="120" y="354" font-size="6" fill="rgba(232,237,242,0.4)" text-anchor="middle" font-style="italic">No subprocess. No agent. No queue.</text>
+  <rect x="235" y="55" width="130" height="28" rx="3" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.18)"/>
+  <text x="300" y="67" font-size="6.5" fill="#e8edf2" font-weight="700" text-anchor="middle">extractions.html</text>
+  <text x="300" y="77" font-size="5.5" fill="rgba(232,237,242,0.5)" text-anchor="middle">pick + Run</text>
+  <line x1="300" y1="83" x2="300" y2="91" stroke="rgba(255,255,255,0.4)" marker-end="url(#lf-d)"/>
 
-  <!-- ──────────── LANE 2: EXTRACTION ──────────── -->
-  <text x="360" y="40" font-size="9" fill="#4a9eff" font-weight="700" text-anchor="middle">② ADMIN RUNS AN EXTRACTION</text>
-  <text x="360" y="51" font-size="6.5" fill="rgba(232,237,242,0.45)" text-anchor="middle">subprocess · live-streamed via SSE</text>
+  <rect x="235" y="93" width="130" height="36" rx="3" fill="rgba(74,158,255,0.13)" stroke="rgba(74,158,255,0.42)"/>
+  <text x="300" y="105" font-size="6.5" fill="#4a9eff" font-weight="700" text-anchor="middle">app.py · SSE</text>
+  <text x="300" y="115" font-size="5.5" fill="rgba(232,237,242,0.5)" text-anchor="middle">build_script_config()</text>
+  <text x="300" y="124" font-size="5.5" fill="rgba(232,237,242,0.45)" text-anchor="middle">spawn subprocess</text>
+  <line x1="300" y1="129" x2="300" y2="137" stroke="rgba(255,255,255,0.4)" marker-end="url(#lf-d)"/>
 
-  <rect x="280" y="62" width="160" height="34" rx="4" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.18)"/>
-  <text x="360" y="76" font-size="7.5" fill="#e8edf2" font-weight="700" text-anchor="middle">Browser · extractions.html</text>
-  <text x="360" y="88" font-size="6.5" fill="rgba(232,237,242,0.5)" text-anchor="middle">pick script + Run</text>
-  <line x1="360" y1="96" x2="360" y2="106" stroke="rgba(255,255,255,0.4)" marker-end="url(#lf-d)"/>
+  <rect x="235" y="139" width="130" height="32" rx="3" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.15)"/>
+  <text x="300" y="151" font-size="6.5" fill="rgba(232,237,242,0.7)" font-weight="700" text-anchor="middle">Python script</text>
+  <text x="300" y="161" font-size="5.5" fill="rgba(232,237,242,0.45)" text-anchor="middle">via COCKPIT_CONFIG env</text>
+  <line x1="300" y1="171" x2="300" y2="179" stroke="rgba(52,211,153,0.65)" marker-end="url(#lf-g)"/>
 
-  <rect x="280" y="108" width="160" height="44" rx="4" fill="rgba(74,158,255,0.13)" stroke="rgba(74,158,255,0.42)"/>
-  <text x="360" y="122" font-size="7.5" fill="#4a9eff" font-weight="700" text-anchor="middle">app.py</text>
-  <text x="360" y="133" font-size="6.5" fill="rgba(232,237,242,0.5)" text-anchor="middle">POST /api/extract/stream</text>
-  <text x="360" y="143" font-size="6.5" fill="rgba(232,237,242,0.45)" text-anchor="middle">build_script_config() merges</text>
-  <line x1="360" y1="152" x2="360" y2="162" stroke="rgba(255,255,255,0.4)" marker-end="url(#lf-d)"/>
+  <rect x="235" y="181" width="130" height="28" rx="3" fill="rgba(52,211,153,0.1)" stroke="rgba(52,211,153,0.32)"/>
+  <text x="300" y="193" font-size="6.5" fill="#34d399" font-weight="700" text-anchor="middle">CSV / JSON to blob</text>
+  <text x="300" y="203" font-size="5.5" fill="rgba(232,237,242,0.45)" text-anchor="middle">15-day lifecycle</text>
 
-  <rect x="280" y="164" width="160" height="46" rx="4" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.15)"/>
-  <text x="360" y="178" font-size="7" fill="rgba(232,237,242,0.7)" font-weight="700" text-anchor="middle">Subprocess · Python script</text>
-  <text x="360" y="190" font-size="6.5" fill="rgba(232,237,242,0.45)" text-anchor="middle">env: COCKPIT_CONFIG</text>
-  <text x="360" y="200" font-size="6.5" fill="rgba(232,237,242,0.45)" text-anchor="middle">      COCKPIT_EXPORTS_DIR</text>
-  <line x1="360" y1="210" x2="360" y2="220" stroke="rgba(255,255,255,0.4)" marker-end="url(#lf-d)"/>
+  <!-- ③ Scheduled -->
+  <text x="500" y="36" font-size="7.5" fill="#fbbf24" font-weight="700" text-anchor="middle">③ SCHEDULED → LAPTOP</text>
+  <text x="500" y="46" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">cron · agent-pulled</text>
 
-  <rect x="280" y="222" width="160" height="44" rx="4" fill="rgba(122,167,224,0.13)" stroke="rgba(122,167,224,0.4)"/>
-  <text x="360" y="236" font-size="7.5" fill="#7aa7e0" font-weight="700" text-anchor="middle">Platform APIs</text>
-  <text x="360" y="247" font-size="6.5" fill="rgba(232,237,242,0.45)" text-anchor="middle">paginated · token-authenticated</text>
-  <text x="360" y="257" font-size="6" fill="rgba(232,237,242,0.4)" text-anchor="middle">stdout streamed line-by-line</text>
-  <line x1="360" y1="266" x2="360" y2="276" stroke="rgba(52,211,153,0.65)" marker-end="url(#lf-g)"/>
+  <rect x="435" y="55" width="130" height="28" rx="3" fill="rgba(74,158,255,0.13)" stroke="rgba(74,158,255,0.42)"/>
+  <text x="500" y="67" font-size="6.5" fill="#4a9eff" font-weight="700" text-anchor="middle">APScheduler fires</text>
+  <text x="500" y="77" font-size="5.5" fill="rgba(232,237,242,0.5)" text-anchor="middle">compiler dispatches shards</text>
+  <line x1="500" y1="83" x2="500" y2="91" stroke="rgba(255,255,255,0.4)" marker-end="url(#lf-d)"/>
 
-  <rect x="280" y="278" width="160" height="44" rx="4" fill="rgba(52,211,153,0.1)" stroke="rgba(52,211,153,0.32)"/>
-  <text x="360" y="292" font-size="7.5" fill="#34d399" font-weight="700" text-anchor="middle">CSV / JSON to Blob</text>
-  <text x="360" y="303" font-size="6.5" fill="rgba(232,237,242,0.45)" text-anchor="middle">{forma,morta,revizto}-exports/</text>
-  <text x="360" y="313" font-size="6" fill="rgba(232,237,242,0.4)" text-anchor="middle">15-day lifecycle policy</text>
+  <rect x="435" y="93" width="130" height="36" rx="3" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.15)"/>
+  <text x="500" y="105" font-size="6.5" fill="rgba(232,237,242,0.7)" font-weight="700" text-anchor="middle">Scheduler_Runner</text>
+  <text x="500" y="115" font-size="5.5" fill="rgba(232,237,242,0.5)" text-anchor="middle">same path as Run-Now</text>
+  <text x="500" y="124" font-size="5.5" fill="rgba(232,237,242,0.45)" text-anchor="middle">subprocess · captures files</text>
+  <line x1="500" y1="129" x2="500" y2="137" stroke="rgba(255,255,255,0.4)" marker-end="url(#lf-d)"/>
 
-  <text x="360" y="343" font-size="7" fill="rgba(251,191,36,0.7)" text-anchor="middle" font-weight="700">10s – several minutes</text>
-  <text x="360" y="354" font-size="6" fill="rgba(232,237,242,0.4)" text-anchor="middle" font-style="italic">SSE keepalive every 15s defeats proxy timeout</text>
+  <rect x="435" y="139" width="130" height="32" rx="3" fill="rgba(52,211,153,0.1)" stroke="rgba(52,211,153,0.32)"/>
+  <text x="500" y="151" font-size="6.5" fill="#34d399" font-weight="700" text-anchor="middle">scheduler-exports/</text>
+  <text x="500" y="161" font-size="5.5" fill="rgba(232,237,242,0.45)" text-anchor="middle">delivery_state: pending</text>
+  <line x1="500" y1="171" x2="500" y2="179" stroke="rgba(251,191,36,0.65)" stroke-dasharray="2,2" marker-end="url(#lf-y)"/>
 
-  <!-- ──────────── LANE 3: SCHEDULED + AGENT ──────────── -->
-  <text x="600" y="40" font-size="9" fill="#fbbf24" font-weight="700" text-anchor="middle">③ SCHEDULED RUN → LAPTOP</text>
-  <text x="600" y="51" font-size="6.5" fill="rgba(232,237,242,0.45)" text-anchor="middle">cron-fired · agent-pulled</text>
+  <rect x="435" y="181" width="130" height="28" rx="3" fill="rgba(251,191,36,0.1)" stroke="rgba(251,191,36,0.35)"/>
+  <text x="500" y="193" font-size="6.5" fill="#fbbf24" font-weight="700" text-anchor="middle">cockpitAgent pulls</text>
+  <text x="500" y="203" font-size="5.5" fill="rgba(232,237,242,0.45)" text-anchor="middle">~30s poll · writes locally</text>
 
-  <rect x="520" y="62" width="160" height="34" rx="4" fill="rgba(74,158,255,0.13)" stroke="rgba(74,158,255,0.42)"/>
-  <text x="600" y="76" font-size="7.5" fill="#4a9eff" font-weight="700" text-anchor="middle">APScheduler cron fires</text>
-  <text x="600" y="88" font-size="6.5" fill="rgba(232,237,242,0.5)" text-anchor="middle">compiler dispatches its shards</text>
-  <line x1="600" y1="96" x2="600" y2="106" stroke="rgba(255,255,255,0.4)" marker-end="url(#lf-d)"/>
+  <!-- Lane separators -->
+  <line x1="200" y1="30" x2="200" y2="220" stroke="rgba(255,255,255,0.06)" stroke-dasharray="2,3"/>
+  <line x1="400" y1="30" x2="400" y2="220" stroke="rgba(255,255,255,0.06)" stroke-dasharray="2,3"/>
 
-  <rect x="520" y="108" width="160" height="44" rx="4" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.15)"/>
-  <text x="600" y="122" font-size="7" fill="rgba(232,237,242,0.7)" font-weight="700" text-anchor="middle">Scheduler_Runner.run_shard()</text>
-  <text x="600" y="133" font-size="6.5" fill="rgba(232,237,242,0.45)" text-anchor="middle">same code path as Run-Now</text>
-  <text x="600" y="143" font-size="6.5" fill="rgba(232,237,242,0.45)" text-anchor="middle">spawns subprocess · captures files</text>
-  <line x1="600" y1="152" x2="600" y2="162" stroke="rgba(255,255,255,0.4)" marker-end="url(#lf-d)"/>
+  <!-- Footer notes -->
+  <text x="100" y="240" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle" font-style="italic">no subprocess</text>
+  <text x="100" y="250" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle" font-style="italic">no agent · no queue</text>
+  <text x="300" y="240" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle" font-style="italic">10s – several minutes</text>
+  <text x="300" y="250" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle" font-style="italic">SSE keepalive defeats proxy timeout</text>
+  <text x="500" y="240" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle" font-style="italic">unattended</text>
+  <text x="500" y="250" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle" font-style="italic">vacation continuity for colleagues</text>
 
-  <rect x="520" y="164" width="160" height="46" rx="4" fill="rgba(52,211,153,0.1)" stroke="rgba(52,211,153,0.32)"/>
-  <text x="600" y="178" font-size="7" fill="#34d399" font-weight="700" text-anchor="middle">Files → scheduler-exports/</text>
-  <text x="600" y="190" font-size="6.5" fill="rgba(232,237,242,0.45)" text-anchor="middle">run record marked</text>
-  <text x="600" y="200" font-size="6.5" fill="rgba(232,237,242,0.45)" text-anchor="middle">delivery_state: pending</text>
-  <line x1="600" y1="210" x2="600" y2="220" stroke="rgba(251,191,36,0.65)" stroke-dasharray="2,2" marker-end="url(#lf-y)"/>
-
-  <rect x="520" y="222" width="160" height="44" rx="4" fill="rgba(251,191,36,0.1)" stroke="rgba(251,191,36,0.35)"/>
-  <text x="600" y="236" font-size="7.5" fill="#fbbf24" font-weight="700" text-anchor="middle">Laptop polls /api/agent/work</text>
-  <text x="600" y="247" font-size="6.5" fill="rgba(232,237,242,0.5)" text-anchor="middle">cockpit-agent.py · ~30s loop</text>
-  <text x="600" y="257" font-size="6" fill="rgba(232,237,242,0.4)" text-anchor="middle">claims oldest pending run</text>
-  <line x1="600" y1="266" x2="600" y2="276" stroke="rgba(52,211,153,0.65)" marker-end="url(#lf-g)"/>
-
-  <rect x="520" y="278" width="160" height="44" rx="4" fill="rgba(52,211,153,0.1)" stroke="rgba(52,211,153,0.32)"/>
-  <text x="600" y="292" font-size="7.5" fill="#34d399" font-weight="700" text-anchor="middle">Files written to local disk</text>
-  <text x="600" y="303" font-size="6.5" fill="rgba(232,237,242,0.45)" text-anchor="middle">at shard.destination.local_path</text>
-  <text x="600" y="313" font-size="6" fill="rgba(232,237,242,0.4)" text-anchor="middle">delivery_state → delivered</text>
-
-  <text x="600" y="343" font-size="7" fill="rgba(251,191,36,0.7)" text-anchor="middle" font-weight="700">unattended · runs while admin sleeps</text>
-  <text x="600" y="354" font-size="6" fill="rgba(232,237,242,0.4)" text-anchor="middle" font-style="italic">Tokens enable colleague continuity during leave</text>
-
-  <!-- Vertical separators between lanes -->
-  <line x1="240" y1="32" x2="240" y2="362" stroke="rgba(255,255,255,0.06)" stroke-dasharray="2,3"/>
-  <line x1="480" y1="32" x2="480" y2="362" stroke="rgba(255,255,255,0.06)" stroke-dasharray="2,3"/>
+  <!-- Bottom panel: external -->
+  <rect x="35" y="270" width="530" height="36" rx="4" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.1)"/>
+  <text x="300" y="284" font-size="6.5" fill="rgba(232,237,242,0.55)" font-weight="700" text-anchor="middle">EXTERNAL SYSTEMS · Revizto · Morta · Forma/ACC · Azure ACS · Azure Blob · GitHub</text>
+  <text x="300" y="298" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle" font-style="italic">all flows above touch one or more of these</text>
 </svg>
 </div>
 
@@ -290,7 +261,7 @@
 <tr><td>Platform scripts</td><td><code>codeRevizto/</code> · <code>codeMorta/</code> · <code>codeForma/</code></td><td>~30 scripts</td></tr>
 <tr><td>Schedulable scripts</td><td><code>SCRIPT_CATALOG</code> in <code>app.py</code></td><td>11 entries (3 Forma · 8 Revizto · 2 Morta)</td></tr>
 <tr><td>Engine + runner</td><td><code>codeShared/Scheduler_Engine.py</code> · <code>Scheduler_Runner.py</code></td><td>~750 lines combined</td></tr>
-<tr><td>Agent</td><td><code>cockpit-agent/cockpit-agent.py</code></td><td>~250 lines · distributed separately</td></tr>
+<tr><td>cockpitAgent</td><td><code>cockpit-agent/cockpit-agent.py</code></td><td>~250 lines · distributed separately</td></tr>
 <tr><td>Blob keys</td><td><code>cockpit-data</code> container</td><td>~12 well-known keys + per-admin shards</td></tr>
 <tr><td>Export containers</td><td><code>{forma,morta,revizto}-exports</code> · <code>scheduler-exports</code></td><td>4 containers · 15-day lifecycle each</td></tr>
 </tbody>
@@ -374,52 +345,51 @@
 
 <!-- REGISTRY INFLUENCE DIAGRAM -->
 <div class="diagram-wrap">
-<svg viewBox="0 0 520 200" xmlns="http://www.w3.org/2000/svg" font-family="'JetBrains Mono',monospace">
+<svg viewBox="0 0 460 180" xmlns="http://www.w3.org/2000/svg" font-family="'JetBrains Mono',monospace">
   <defs>
-    <marker id="r2a" markerWidth="5" markerHeight="5" refX="4" refY="2.5" orient="auto"><path d="M0,0 L0,5 L5,2.5 Z" fill="rgba(255,255,255,0.25)"/></marker>
+    <marker id="r2a" markerWidth="5" markerHeight="5" refX="4" refY="2.5" orient="auto"><path d="M0,0 L0,5 L5,2.5 Z" fill="rgba(255,255,255,0.3)"/></marker>
     <marker id="r2g" markerWidth="5" markerHeight="5" refX="4" refY="2.5" orient="auto"><path d="M0,0 L0,5 L5,2.5 Z" fill="rgba(52,211,153,0.55)"/></marker>
   </defs>
-  <rect x="180" y="65" width="160" height="68" rx="6" fill="rgba(52,211,153,0.13)" stroke="rgba(52,211,153,0.5)" stroke-width="1.5"/>
-  <text x="260" y="83" font-size="8" fill="#34d399" font-weight="700" text-anchor="middle">projects_registry.json</text>
-  <text x="260" y="95" font-size="6.5" fill="rgba(232,237,242,0.5)" text-anchor="middle">blob: cockpit-data</text>
-  <text x="260" y="107" font-size="6.5" fill="rgba(232,237,242,0.35)" text-anchor="middle">admins · platform IDs</text>
-  <text x="260" y="119" font-size="6.5" fill="rgba(232,237,242,0.35)" text-anchor="middle">tags · roles · companies</text>
-  <text x="260" y="129" font-size="6.5" fill="rgba(232,237,242,0.35)" text-anchor="middle">license roles</text>
+  <rect x="160" y="56" width="140" height="60" rx="5" fill="rgba(52,211,153,0.13)" stroke="rgba(52,211,153,0.5)"/>
+  <text x="230" y="72" font-size="7" fill="#34d399" font-weight="700" text-anchor="middle">projects_registry.json</text>
+  <text x="230" y="83" font-size="5.5" fill="rgba(232,237,242,0.5)" text-anchor="middle">blob: cockpit-data</text>
+  <text x="230" y="94" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">admins · platform IDs</text>
+  <text x="230" y="105" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">tags · roles · companies</text>
 
-  <rect x="20" y="14" width="120" height="34" rx="4" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.12)"/>
-  <text x="80" y="28" font-size="7" fill="rgba(232,237,242,0.7)" font-weight="700" text-anchor="middle">Sidebar Projects</text>
-  <text x="80" y="40" font-size="6" fill="rgba(232,237,242,0.35)" text-anchor="middle">scoped to admins[]</text>
-  <line x1="140" y1="34" x2="178" y2="80" stroke="rgba(255,255,255,0.18)" marker-end="url(#r2a)"/>
+  <rect x="20" y="14" width="110" height="28" rx="4" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.12)"/>
+  <text x="75" y="26" font-size="6.5" fill="rgba(232,237,242,0.7)" font-weight="700" text-anchor="middle">Sidebar Projects</text>
+  <text x="75" y="37" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">scoped to admins[]</text>
+  <line x1="130" y1="32" x2="158" y2="68" stroke="rgba(255,255,255,0.18)" marker-end="url(#r2a)"/>
 
-  <rect x="20" y="60" width="120" height="34" rx="4" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.12)"/>
-  <text x="80" y="74" font-size="7" fill="rgba(232,237,242,0.7)" font-weight="700" text-anchor="middle">User Search</text>
-  <text x="80" y="86" font-size="6" fill="rgba(232,237,242,0.35)" text-anchor="middle">hub/project ID scope</text>
-  <line x1="140" y1="78" x2="178" y2="92" stroke="rgba(255,255,255,0.18)" marker-end="url(#r2a)"/>
+  <rect x="20" y="56" width="110" height="28" rx="4" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.12)"/>
+  <text x="75" y="68" font-size="6.5" fill="rgba(232,237,242,0.7)" font-weight="700" text-anchor="middle">User Search</text>
+  <text x="75" y="79" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">hub/project ID scope</text>
+  <line x1="130" y1="72" x2="158" y2="80" stroke="rgba(255,255,255,0.18)" marker-end="url(#r2a)"/>
 
-  <rect x="20" y="105" width="120" height="34" rx="4" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.12)"/>
-  <text x="80" y="119" font-size="7" fill="rgba(232,237,242,0.7)" font-weight="700" text-anchor="middle">Invite Dropdowns</text>
-  <text x="80" y="131" font-size="6" fill="rgba(232,237,242,0.35)" text-anchor="middle">tags · roles · companies</text>
-  <line x1="140" y1="123" x2="178" y2="110" stroke="rgba(255,255,255,0.18)" marker-end="url(#r2a)"/>
+  <rect x="20" y="98" width="110" height="28" rx="4" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.12)"/>
+  <text x="75" y="110" font-size="6.5" fill="rgba(232,237,242,0.7)" font-weight="700" text-anchor="middle">Invite dropdowns</text>
+  <text x="75" y="121" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">tags · roles · companies</text>
+  <line x1="130" y1="114" x2="158" y2="100" stroke="rgba(255,255,255,0.18)" marker-end="url(#r2a)"/>
 
-  <rect x="380" y="14" width="120" height="34" rx="4" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.12)"/>
-  <text x="440" y="28" font-size="7" fill="rgba(232,237,242,0.7)" font-weight="700" text-anchor="middle">Invite Log</text>
-  <text x="440" y="40" font-size="6" fill="rgba(232,237,242,0.35)" text-anchor="middle">scoped per project key</text>
-  <line x1="342" y1="80" x2="378" y2="34" stroke="rgba(255,255,255,0.18)" marker-end="url(#r2a)"/>
+  <rect x="330" y="14" width="110" height="28" rx="4" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.12)"/>
+  <text x="385" y="26" font-size="6.5" fill="rgba(232,237,242,0.7)" font-weight="700" text-anchor="middle">Invite log</text>
+  <text x="385" y="37" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">scoped per project key</text>
+  <line x1="302" y1="68" x2="328" y2="32" stroke="rgba(255,255,255,0.18)" marker-end="url(#r2a)"/>
 
-  <rect x="380" y="60" width="120" height="34" rx="4" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.12)"/>
-  <text x="440" y="74" font-size="7" fill="rgba(232,237,242,0.7)" font-weight="700" text-anchor="middle">Pending Submissions</text>
-  <text x="440" y="86" font-size="6" fill="rgba(232,237,242,0.35)" text-anchor="middle">scoped per active project</text>
-  <line x1="342" y1="92" x2="378" y2="78" stroke="rgba(255,255,255,0.18)" marker-end="url(#r2a)"/>
+  <rect x="330" y="56" width="110" height="28" rx="4" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.12)"/>
+  <text x="385" y="68" font-size="6.5" fill="rgba(232,237,242,0.7)" font-weight="700" text-anchor="middle">Pending submissions</text>
+  <text x="385" y="79" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">scoped per active project</text>
+  <line x1="302" y1="80" x2="328" y2="72" stroke="rgba(255,255,255,0.18)" marker-end="url(#r2a)"/>
 
-  <rect x="380" y="105" width="120" height="34" rx="4" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.12)"/>
-  <text x="440" y="119" font-size="7" fill="rgba(232,237,242,0.7)" font-weight="700" text-anchor="middle">Context Guard</text>
-  <text x="440" y="131" font-size="6" fill="rgba(232,237,242,0.35)" text-anchor="middle">validates project switch</text>
-  <line x1="342" y1="110" x2="378" y2="123" stroke="rgba(255,255,255,0.18)" marker-end="url(#r2a)"/>
+  <rect x="330" y="98" width="110" height="28" rx="4" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.12)"/>
+  <text x="385" y="110" font-size="6.5" fill="rgba(232,237,242,0.7)" font-weight="700" text-anchor="middle">Context Guard</text>
+  <text x="385" y="121" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">validates project switch</text>
+  <line x1="302" y1="100" x2="328" y2="114" stroke="rgba(255,255,255,0.18)" marker-end="url(#r2a)"/>
 
-  <rect x="160" y="160" width="200" height="30" rx="4" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.1)"/>
-  <text x="260" y="173" font-size="7" fill="rgba(232,237,242,0.5)" font-weight="700" text-anchor="middle">Registry Sync</text>
-  <text x="260" y="184" font-size="6" fill="rgba(232,237,242,0.3)" text-anchor="middle">Morta tags · Revizto roles · Forma cos/roles</text>
-  <line x1="260" y1="160" x2="260" y2="135" stroke="rgba(52,211,153,0.45)" marker-end="url(#r2g)"/>
+  <rect x="140" y="140" width="180" height="28" rx="4" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.1)"/>
+  <text x="230" y="152" font-size="6.5" fill="rgba(232,237,242,0.5)" font-weight="700" text-anchor="middle">Registry Sync</text>
+  <text x="230" y="163" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">Morta tags · Revizto roles · Forma cos/roles</text>
+  <line x1="230" y1="140" x2="230" y2="118" stroke="rgba(52,211,153,0.45)" marker-end="url(#r2g)"/>
 </svg>
 </div>
 
@@ -494,44 +464,42 @@
 
 <!-- Config merge diagram -->
 <div class="diagram-wrap">
-<svg viewBox="0 0 520 160" xmlns="http://www.w3.org/2000/svg" font-family="'JetBrains Mono',monospace">
+<svg viewBox="0 0 460 150" xmlns="http://www.w3.org/2000/svg" font-family="'JetBrains Mono',monospace">
   <defs>
     <marker id="c3a" markerWidth="5" markerHeight="5" refX="4" refY="2.5" orient="auto"><path d="M0,0 L0,5 L5,2.5 Z" fill="rgba(255,255,255,0.3)"/></marker>
     <marker id="c3m" markerWidth="5" markerHeight="5" refX="4" refY="2.5" orient="auto"><path d="M0,0 L0,5 L5,2.5 Z" fill="rgba(251,191,36,0.55)"/></marker>
   </defs>
-  <rect x="14" y="22" width="130" height="68" rx="5" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.15)" stroke-width="1.3"/>
-  <text x="79" y="36" font-size="7.5" fill="rgba(232,237,242,0.75)" font-weight="700" text-anchor="middle">config_{email}.json</text>
-  <text x="79" y="49" font-size="6" fill="rgba(232,237,242,0.35)" text-anchor="middle">morta · revizto regions</text>
-  <text x="79" y="60" font-size="6" fill="rgba(255,100,100,0.45)" text-anchor="middle">forma.* absent → fallback</text>
-  <text x="79" y="71" font-size="6" fill="rgba(232,237,242,0.35)" text-anchor="middle">projects · active_context</text>
-  <text x="79" y="82" font-size="6" fill="rgba(232,237,242,0.35)" text-anchor="middle">forma.last_runs (L4 stamps)</text>
+  <rect x="14" y="18" width="120" height="58" rx="4" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.15)"/>
+  <text x="74" y="32" font-size="6.5" fill="rgba(232,237,242,0.75)" font-weight="700" text-anchor="middle">config_{email}.json</text>
+  <text x="74" y="44" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">morta · revizto regions</text>
+  <text x="74" y="55" font-size="5.5" fill="rgba(255,100,100,0.45)" text-anchor="middle">forma.* absent → fallback</text>
+  <text x="74" y="66" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">projects · active_context</text>
 
-  <rect x="14" y="100" width="130" height="44" rx="5" fill="rgba(251,191,36,0.08)" stroke="rgba(251,191,36,0.32)" stroke-width="1.3"/>
-  <text x="79" y="114" font-size="7.5" fill="rgba(251,191,36,0.85)" font-weight="700" text-anchor="middle">Owner Forma Block</text>
-  <text x="79" y="126" font-size="6" fill="rgba(232,237,242,0.4)" text-anchor="middle">config_oawad_at_alec_ae.json</text>
-  <text x="79" y="137" font-size="6" fill="rgba(232,237,242,0.35)" text-anchor="middle">client_id · secret · account_id</text>
+  <rect x="14" y="86" width="120" height="40" rx="4" fill="rgba(251,191,36,0.08)" stroke="rgba(251,191,36,0.3)"/>
+  <text x="74" y="100" font-size="6.5" fill="#fbbf24" font-weight="700" text-anchor="middle">Owner Forma block</text>
+  <text x="74" y="111" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">config_oawad_at_alec_ae.json</text>
+  <text x="74" y="121" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">client_id · secret · account_id</text>
 
-  <rect x="195" y="50" width="135" height="60" rx="5" fill="rgba(74,158,255,0.12)" stroke="rgba(74,158,255,0.35)" stroke-width="1.3"/>
-  <text x="262" y="66" font-size="7.5" fill="#4a9eff" font-weight="700" text-anchor="middle">build_script_config()</text>
-  <text x="262" y="79" font-size="6" fill="rgba(232,237,242,0.4)" text-anchor="middle">merge personal + owner Forma</text>
-  <text x="262" y="90" font-size="6" fill="rgba(232,237,242,0.4)" text-anchor="middle">inject active_context</text>
-  <text x="262" y="101" font-size="6" fill="rgba(232,237,242,0.4)" text-anchor="middle">write → temp/{email}/_cockpit_config.json</text>
+  <rect x="170" y="42" width="120" height="56" rx="4" fill="rgba(74,158,255,0.12)" stroke="rgba(74,158,255,0.35)"/>
+  <text x="230" y="56" font-size="6.5" fill="#4a9eff" font-weight="700" text-anchor="middle">build_script_config()</text>
+  <text x="230" y="68" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">merge personal + owner</text>
+  <text x="230" y="78" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">inject active_context</text>
+  <text x="230" y="89" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">→ temp/{email}/</text>
 
-  <line x1="144" y1="56" x2="194" y2="68" stroke="rgba(255,255,255,0.25)" marker-end="url(#c3a)"/>
-  <line x1="144" y1="122" x2="194" y2="92" stroke="rgba(251,191,36,0.45)" marker-end="url(#c3m)"/>
-  <text x="166" y="105" font-size="6" fill="rgba(251,191,36,0.5)" text-anchor="middle">fallback</text>
+  <line x1="134" y1="46" x2="168" y2="58" stroke="rgba(255,255,255,0.25)" marker-end="url(#c3a)"/>
+  <line x1="134" y1="106" x2="168" y2="80" stroke="rgba(251,191,36,0.45)" marker-end="url(#c3m)"/>
+  <text x="151" y="92" font-size="5.5" fill="rgba(251,191,36,0.5)" text-anchor="middle">fallback</text>
 
-  <rect x="380" y="50" width="125" height="44" rx="5" fill="rgba(52,211,153,0.1)" stroke="rgba(52,211,153,0.33)"/>
-  <text x="442" y="66" font-size="7.5" fill="#34d399" font-weight="700" text-anchor="middle">_cockpit_config.json</text>
-  <text x="442" y="78" font-size="6" fill="rgba(232,237,242,0.4)" text-anchor="middle">temp/{safe_email}/</text>
-  <text x="442" y="89" font-size="6" fill="rgba(232,237,242,0.35)" text-anchor="middle">via COCKPIT_CONFIG env</text>
-  <line x1="330" y1="80" x2="378" y2="72" stroke="rgba(52,211,153,0.45)" marker-end="url(#c3a)"/>
+  <rect x="328" y="42" width="120" height="40" rx="4" fill="rgba(52,211,153,0.1)" stroke="rgba(52,211,153,0.32)"/>
+  <text x="388" y="56" font-size="6.5" fill="#34d399" font-weight="700" text-anchor="middle">_cockpit_config.json</text>
+  <text x="388" y="67" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">temp/{safe_email}/</text>
+  <text x="388" y="77" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">via COCKPIT_CONFIG env</text>
+  <line x1="290" y1="70" x2="326" y2="62" stroke="rgba(52,211,153,0.45)" marker-end="url(#c3a)"/>
 
-  <rect x="380" y="110" width="125" height="38" rx="5" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.1)"/>
-  <text x="442" y="124" font-size="7.5" fill="rgba(232,237,242,0.65)" font-weight="700" text-anchor="middle">Platform Scripts</text>
-  <text x="442" y="135" font-size="6" fill="rgba(232,237,242,0.35)" text-anchor="middle">*_Config.py reads</text>
-  <text x="442" y="144" font-size="6" fill="rgba(232,237,242,0.35)" text-anchor="middle">os.environ["COCKPIT_CONFIG"]</text>
-  <line x1="442" y1="110" x2="442" y2="96" stroke="rgba(255,255,255,0.25)" marker-end="url(#c3a)"/>
+  <rect x="328" y="92" width="120" height="34" rx="4" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.1)"/>
+  <text x="388" y="106" font-size="6.5" fill="rgba(232,237,242,0.65)" font-weight="700" text-anchor="middle">Platform Scripts</text>
+  <text x="388" y="117" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">read os.environ["COCKPIT_CONFIG"]</text>
+  <line x1="388" y1="92" x2="388" y2="82" stroke="rgba(255,255,255,0.25)" marker-end="url(#c3a)"/>
 </svg>
 </div>
 
@@ -618,7 +586,7 @@
 <tr><td>Scheduler — Compilers</td><td><code>GET /api/scheduler/compilers</code> <code>POST /api/scheduler/compilers</code> <code>PUT /api/scheduler/compilers/{id}</code> <code>DELETE /api/scheduler/compilers/{id}</code></td><td>require_user</td><td>CRUD over schedule wrappers (cron expression + shard list). Engine re-registers triggers on save.</td></tr>
 <tr><td>Scheduler — Runs</td><td><code>GET /api/scheduler/runs</code> <code>POST /api/scheduler/runs/now</code> <code>GET /api/scheduler/scripts</code></td><td>require_user</td><td>Run history. Run-Now triggers immediate execution outside the cron schedule. Scripts endpoint returns the schedulable catalog.</td></tr>
 <tr><td>Scheduler — Forma models</td><td><code>POST /api/forma/models</code></td><td>require_user</td><td>Walks Forma project folders and returns models with their full path. Cached per-project; force_refresh re-walks.</td></tr>
-<tr><td>Agent</td><td><code>GET /api/agent/tokens</code> <code>POST /api/agent/tokens</code> <code>DELETE /api/agent/tokens/{id}</code> <code>POST /api/agent/work</code> <code>POST /api/agent/done</code></td><td>Tokens: require_user · Work: token-auth</td><td>Issue/revoke per-machine tokens (admin UI). Agent poll + completion endpoints use token auth, not session.</td></tr></tbody>
+<tr><td>cockpitAgent</td><td><code>GET /api/agent/tokens</code> <code>POST /api/agent/tokens</code> <code>DELETE /api/agent/tokens/{id}</code> <code>POST /api/agent/work</code> <code>POST /api/agent/done</code></td><td>Tokens: require_user · Work: token-auth</td><td>Issue/revoke per-machine tokens (admin UI). cockpitAgent poll + completion endpoints use token auth, not session.</td></tr></tbody>
 </table>
 </div>
 
@@ -824,7 +792,7 @@
 <p>The scheduler turns one-off extraction runs into recurring automations. Three nested concepts make this work without coupling the data layer to cron. <strong>Shards</strong> are atomic runnable units (one script + its required context + its output config). <strong>Compilers</strong> are schedule wrappers that fire one or more shards on cron. <strong>Runs</strong> are the historical record of every fire — manual or scheduled — with status, files produced, and duration.</p>
 
 <h3>Shard — atomic runnable</h3>
-<p>A shard is everything needed to run one script in one specific way. The script + the resolved context (project ID, model ID where applicable) + the output configuration (formats, file naming, destination) + an optional local-disk pull path for the agent. Once saved, a shard's identity is immutable — to retarget it to a different project, the user deletes and recreates while a different active project is set in the sidebar.</p>
+<p>A shard is everything needed to run one script in one specific way. The script + the resolved context (project ID, model ID where applicable) + the output configuration (formats, file naming, destination) + an optional local-disk pull path for cockpitAgent. Once saved, a shard's identity is immutable — to retarget it to a different project, the user deletes and recreates while a different active project is set in the sidebar.</p>
 
 <div class="doc-code"><pre><span class="dc-w">{</span>
   <span class="dc-g">"id"</span>:        <span class="dc-d">"sh_AB12CD34"</span>,
@@ -881,20 +849,20 @@
 
 
 <!-- ═══════════════════════════════════════════════════════════════
-     AGENT SYSTEM
+     COCKPITAGENT
 ══════════════════════════════════════════════════════════════════ -->
 <div class="doc-section" id="s-agent">
 <div class="doc-section-inner">
-<div class="doc-num">18<br>Agent System</div>
+<div class="doc-num">18<br>cockpitAgent</div>
 <div class="doc-body">
-<h2>Agent System — Tokens &amp; Laptop Pull</h2>
-<p>Some scheduled extractions need to land on a specific machine — typically a BIM coordinator's laptop or a fileserver — for downstream Revit/Power BI workflows. The cockpit-agent is a small Python script that runs on that machine and polls the cockpit for outputs to download. Authentication uses a per-machine token system separate from admin sessions.</p>
+<h2>cockpitAgent — Tokens &amp; Local Pull</h2>
+<p>Some scheduled extractions need to land on a specific machine — typically a BIM coordinator's laptop or a fileserver — for downstream Revit/Power BI workflows. <strong>cockpitAgent</strong> is a small Python program that runs on that machine and polls the cockpit for outputs to download. Authentication uses a per-machine token system separate from admin sessions.</p>
 
-<h3>Why an agent and not a webhook</h3>
-<p>The target machines are often inside ALEC's corporate network behind the firewall, with no public ingress. The cockpit cannot push; the agent must pull. Polling is a deliberately simple model — the agent does not need any open ports or special routing.</p>
+<h3>Why a pull and not a push</h3>
+<p>The target machines are often inside ALEC's corporate network behind the firewall, with no public ingress. The cockpit cannot push; cockpitAgent must pull. Polling is a deliberately simple model — cockpitAgent does not need any open ports or special routing.</p>
 
-<h3>Agent tokens</h3>
-<p>Agent tokens are created in the Agent Tokens page and are scoped to the issuing admin and named for a specific machine ("Omar's laptop"). Each token has an installation date which acts as a gate: when a scheduled run finishes and is destined for a local path, the cockpit only offers the work to agents whose <code>install_date_iso</code> is earlier than the scheduled run's start time. This prevents a freshly issued token from being handed an enormous backlog of historical runs.</p>
+<h3>Tokens</h3>
+<p>Tokens are created in the <strong>cockpitAgent</strong> page and are scoped to the issuing admin and named for a specific machine ("Omar's laptop"). Each token has an installation date which acts as a gate: when a scheduled run finishes and is destined for a local path, the cockpit only offers the work to agents whose <code>install_date_iso</code> is earlier than the scheduled run's start time. This prevents a freshly issued token from being handed an enormous backlog of historical runs.</p>
 
 <div class="doc-code"><pre><span class="dc-w">{</span>
   <span class="dc-g">"token"</span>:            <span class="dc-d">"agt_5f7a3b2c..."</span>,
@@ -907,25 +875,25 @@
 <span class="dc-w">}</span></pre></div>
 
 <h3>Wire protocol — claim-based delivery</h3>
-<p>The agent loops every ~30 seconds polling <code>POST /api/agent/work</code> with its token. The endpoint returns the oldest unclaimed run that has a local-path destination, OR returns <code>{ "work": null }</code> if nothing is pending.</p>
+<p>cockpitAgent loops every ~30 seconds polling <code>POST /api/agent/work</code> with its token. The endpoint returns the oldest unclaimed run that has a local-path destination, OR returns <code>{ "work": null }</code> if nothing is pending.</p>
 
 <div class="flow-steps">
-<div class="flow-step"><div class="flow-step-left"><div class="flow-num">1</div><div class="flow-line"></div></div><div class="flow-content"><strong>Agent polls /api/agent/work</strong><span>Sends its token. Server validates token + finds the oldest run record with <code>destination.type=blob</code>, a non-empty <code>destination.local_path</code>, status <code>success</code>, and <code>delivery_state=pending</code>.</span></div></div>
-<div class="flow-step"><div class="flow-step-left"><div class="flow-num">2</div><div class="flow-line"></div></div><div class="flow-content"><strong>Server claims the run for this token</strong><span>Atomic: sets <code>delivery_state=claimed_by:{token_id}</code> with a timestamp. If two agents poll at the same instant, only one wins — the other gets <code>{work:null}</code>. This prevents both Omar's laptop and Sahil's laptop from racing to download the same export.</span></div></div>
-<div class="flow-step"><div class="flow-step-left"><div class="flow-num">3</div><div class="flow-line"></div></div><div class="flow-content"><strong>Agent downloads the files</strong><span>Server returns SAS-signed URLs for each file in the run's output. Agent fetches each, writes them to <code>destination.local_path</code> on the machine, preserving filenames.</span></div></div>
-<div class="flow-step"><div class="flow-step-left"><div class="flow-num">4</div><div class="flow-line"></div></div><div class="flow-content"><strong>Agent reports completion</strong><span><code>POST /api/agent/done</code> with the run ID and the count of bytes written. Server marks <code>delivery_state=delivered</code> with timestamp. UI shows a green delivery badge in Recent Runs.</span></div></div>
-<div class="flow-step"><div class="flow-step-left"><div class="flow-num">5</div><div class="flow-line"></div></div><div class="flow-content"><strong>Stale claim recovery</strong><span>If an agent crashes mid-download, the claim is held forever and no other agent ever picks it up. Reaper logic on each poll: if a claim is older than 10 minutes and not <code>delivered</code>, server resets <code>delivery_state=pending</code> so another agent can try.</span></div></div>
+<div class="flow-step"><div class="flow-step-left"><div class="flow-num">1</div><div class="flow-line"></div></div><div class="flow-content"><strong>cockpitAgent polls /api/agent/work</strong><span>Sends its token. Server validates token + finds the oldest run record with <code>destination.type=blob</code>, a non-empty <code>destination.local_path</code>, status <code>success</code>, and <code>delivery_state=pending</code>.</span></div></div>
+<div class="flow-step"><div class="flow-step-left"><div class="flow-num">2</div><div class="flow-line"></div></div><div class="flow-content"><strong>Server claims the run for this token</strong><span>Atomic: sets <code>delivery_state=claimed_by:{token_id}</code> with a timestamp. If two cockpitAgents poll at the same instant, only one wins — the other gets <code>{work:null}</code>. This prevents both Omar's laptop and Sahil's laptop from racing to download the same export.</span></div></div>
+<div class="flow-step"><div class="flow-step-left"><div class="flow-num">3</div><div class="flow-line"></div></div><div class="flow-content"><strong>cockpitAgent downloads the files</strong><span>Server returns SAS-signed URLs for each file in the run's output. cockpitAgent fetches each, writes them to <code>destination.local_path</code> on the machine, preserving filenames.</span></div></div>
+<div class="flow-step"><div class="flow-step-left"><div class="flow-num">4</div><div class="flow-line"></div></div><div class="flow-content"><strong>cockpitAgent reports completion</strong><span><code>POST /api/agent/done</code> with the run ID and the count of bytes written. Server marks <code>delivery_state=delivered</code> with timestamp. UI shows a green delivery badge in Recent Runs.</span></div></div>
+<div class="flow-step"><div class="flow-step-left"><div class="flow-num">5</div><div class="flow-line"></div></div><div class="flow-content"><strong>Stale claim recovery</strong><span>If a cockpitAgent crashes mid-download, the claim is held forever and no other agent ever picks it up. Reaper logic on each poll: if a claim is older than 10 minutes and not <code>delivered</code>, server resets <code>delivery_state=pending</code> so another cockpitAgent can try.</span></div></div>
 </div>
 
 <h3>Phase 1 distribution — .py source</h3>
-<p>The agent is currently distributed as a Python script (<code>cockpit-agent.py</code>) plus a <code>config.ini.example</code>. Colleagues who want to use it install Python 3, run <code>pip install requests</code>, fill in their token + URL in <code>config.ini</code>, and run the script in a terminal or as a Windows Task Scheduler entry. Phase 2 (PyInstaller .exe build, optional tray icon) is on the backlog but not blocking — the .py path works for the small group using it now.</p>
+<p>cockpitAgent is currently distributed as a Python script (<code>cockpit-agent.py</code>) plus a <code>config.ini.example</code>. Colleagues who want to use it install Python 3, run <code>pip install requests</code>, fill in their token + URL in <code>config.ini</code>, and run the script in a terminal or as a Windows Task Scheduler entry. Phase 2 (PyInstaller .exe build, optional tray icon) is on the backlog but not blocking — the .py path works for the small group using it now.</p>
 
 <h3>Compiler-only delivery rule</h3>
-<p>Manual single-shard runs do <em>not</em> trigger agent delivery, even if the shard has a <code>local_path</code> set. Only runs fired via a compiler get the delivery path. This is intentional: the agent exists for unattended automation, not for one-off downloads. If an admin wants a local copy of a manual run, they download it from the Recent Runs file list in the browser.</p>
+<p>Manual single-shard runs do <em>not</em> trigger cockpitAgent delivery, even if the shard has a <code>local_path</code> set. Only runs fired via a compiler get the delivery path. This is intentional: cockpitAgent exists for unattended automation, not for one-off downloads. If an admin wants a local copy of a manual run, they download it from the Recent Runs file list in the browser.</p>
 
 <div class="doc-note ok">
 <span class="doc-note-label ok">Vacation continuity</span>
-<span>The original motivation for the agent was straightforward: when an admin goes on leave, their scheduled extractions still need to land on the team's shared drive. Issuing a token to a colleague's machine before leaving means scheduled runs continue without intervention — the colleague doesn't need cockpit credentials, just an agent token whose <code>install_date_iso</code> is before the leave date.</span>
+<span>The original motivation for cockpitAgent was straightforward: when an admin goes on leave, their scheduled extractions still need to land on the team's shared drive. Issuing a token to a colleague's machine before leaving means scheduled runs continue without intervention — the colleague doesn't need cockpit credentials, just a token whose <code>install_date_iso</code> is before the leave date.</span>
 </div>
 
 </div>
@@ -941,13 +909,13 @@
 <div class="doc-body">
 <h2>Codebase File Map</h2>
 
-<div class="doc-code"><pre><span class="dc-w">digitalCockpit/</span>                                      <span class="dc-d">  GitHub repo root (private)</span>
+<div class="doc-code"><pre>digitalCockpit/                                      <span class="dc-d">  GitHub repo root (private)</span>
 │
-├── <span class="dc-w">app.py</span>                                           <span class="dc-d">  FastAPI server — all routes, helpers, platform logic (~7,500 lines)</span>
+├── app.py                                           <span class="dc-d">  FastAPI server — all routes, helpers, platform logic (~7,500 lines)</span>
 ├── requirements.txt                                 <span class="dc-d">  Python dependencies installed by Azure Oryx on each deploy</span>
 ├── startup.sh                                       <span class="dc-d">  uvicorn app:app --host 0.0.0.0 --port 8000</span>
 │
-├── <span class="dc-g">── Azure Blob Storage (container: cockpit-data) ─────────────────────────────────</span>
+├── ── Azure Blob Storage (container: cockpit-data) ─────────────────────────────────
 │   ├── projects_registry.json                       <span class="dc-d">  Project registry — owner-managed, shared across all admins</span>
 │   ├── invite_log.json                              <span class="dc-d">  Append-only log of every invite sent (also used by Live Activity feed)</span>
 │   ├── portal_requests.json                         <span class="dc-d">  Pending portal access submissions from subcontractors</span>
@@ -960,23 +928,23 @@
 │   ├── shards.json                                  <span class="dc-d">  Scheduler — atomic runnable units</span>
 │   ├── compilers.json                               <span class="dc-d">  Scheduler — cron schedules wrapping shards</span>
 │   ├── runs.json                                    <span class="dc-d">  Scheduler — historical execution records</span>
-│   ├── agent_tokens.json                            <span class="dc-d">  Per-machine tokens for the laptop agent</span>
+│   ├── agent_tokens.json                            <span class="dc-d">  Per-machine tokens for cockpitAgent</span>
 │   └── packages.json                                <span class="dc-d">  Bake feature — saved snapshot manifests</span>
 │
-├── <span class="dc-g">── Azure Blob Storage (other containers) ────────────────────────────────────────</span>
+├── ── Azure Blob Storage (other containers) ────────────────────────────────────────
 │   ├── scheduler-exports/                           <span class="dc-d">  Output files from scheduled runs · 15-day lifecycle</span>
 │   ├── forma-exports/                               <span class="dc-d">  Forma extraction outputs · 15-day lifecycle</span>
 │   ├── morta-exports/                               <span class="dc-d">  Morta extraction outputs · 15-day lifecycle</span>
 │   └── revizto-exports/                             <span class="dc-d">  Revizto extraction outputs · 15-day lifecycle</span>
 │
-├── <span class="dc-w">── Templates ─────────────────────────────────────────────────────────────────────</span>
+├── ── Templates ─────────────────────────────────────────────────────────────────────
 ├── templates/
 │   ├── base.html                                    <span class="dc-d">  Sidebar, nav, active project selector, cockpit:projectChanged event</span>
 │   ├── home.html                                    <span class="dc-d">  Dashboard — invite stats, live activity feed, member counts, sparklines</span>
 │   ├── manage.html                                  <span class="dc-d">  User search, invite modal, pending submissions panel, invite log</span>
 │   ├── extractions.html                             <span class="dc-d">  Script runner with live SSE terminal and per-admin download links</span>
 │   ├── scheduler.html                               <span class="dc-d">  Shards / Compilers / Recent Runs · shard builder with searchable model picker</span>
-│   ├── agent_tokens.html                            <span class="dc-d">  Issue and revoke per-machine agent tokens</span>
+│   ├── agent_tokens.html                            <span class="dc-d">  Issue and revoke per-machine cockpitAgent tokens</span>
 │   ├── registry.html                                <span class="dc-d">  Project registry CRUD (owner-only access)</span>
 │   ├── settings.html                                <span class="dc-d">  Personal credentials — Forma section locked for non-owners</span>
 │   ├── portal.html                                  <span class="dc-d">  Public access request portal — Bulk Upload and Single User modes</span>
@@ -985,60 +953,57 @@
 │   ├── info.html                                    <span class="dc-d">  This page — system architecture documentation</span>
 │   └── login.html                                   <span class="dc-d">  Login and registration — @alec.ae domain enforced</span>
 │
-├── <span class="dc-w">── Static ────────────────────────────────────────────────────────────────────────</span>
+├── ── Static ────────────────────────────────────────────────────────────────────────
 ├── static/
 │   ├── style.css                                    <span class="dc-d">  Global design system: navy + cream palette, CSS variables, all component styles</span>
 │   └── utils.js                                     <span class="dc-d">  Hacker-text scramble animation, local cache helpers, smartFetch wrapper</span>
 │
-├── <span class="dc-g">── Shared engine code (codeShared/) ─────────────────────────────────────────────</span>
+├── ── Shared engine code (codeShared/) ─────────────────────────────────────────────
 ├── codeShared/
 │   ├── Blob_Client.py                               <span class="dc-d">  Azure Blob abstraction — load/save with caching and locking</span>
 │   ├── Scheduler_Engine.py                          <span class="dc-d">  APScheduler boot · cron trigger registration · fire dispatch</span>
 │   └── Scheduler_Runner.py                          <span class="dc-d">  Shared run path: build merged config, spawn subprocess, finalise record</span>
 │
-├── <span class="dc-y">── Laptop agent (distributed separately) ────────────────────────────────────────</span>
+├── ── cockpitAgent (distributed separately) ───────────────────────────────────────
 ├── cockpit-agent/
 │   ├── cockpit-agent.py                             <span class="dc-d">  Polls /api/agent/work, downloads claimed runs, reports completion</span>
 │   ├── config.ini.example                           <span class="dc-d">  Template — admin fills in token + cockpit URL</span>
 │   └── README.txt                                   <span class="dc-d">  Plain-text 8-step setup guide</span>
 │
-├── <span class="dc-r">── Revizto Scripts (codeRevizto/) ───────────────────────────────────────────────</span>
-├── <span class="dc-r">Revizto_Config.py</span>                                <span class="dc-d">  COCKPIT_CONFIG reader — resolves region, BASE_URL, tokens file path, PROJECT_UUID</span>
-├── <span class="dc-r">Revizto_MasterScript.py</span>                          <span class="dc-d">  Token acquisition via access code, refresh, blob write namespaced by COCKPIT_USER</span>
-├── <span class="dc-r">Revizto_GET_License_Members.py</span>
-├── <span class="dc-r">Revizto_GET_License_Projects.py</span>
-├── <span class="dc-r">Revizto_GET_User_Licenses.py</span>
-├── <span class="dc-r">Revizto_GET_Project_Members.py</span>
-├── <span class="dc-r">Revizto_GET_Project_Roles.py</span>
-├── <span class="dc-r">Revizto_GET_Clash_Tests.py</span>
-├── <span class="dc-r">Revizto_GET_Scenes_and_Models_with_Properties.py</span>
-├── <span class="dc-r">Revizto_GET_Object_Tree_With_Properties.py</span>
-├── <span class="dc-r">Revizto_POST_Assign_Project_Role.py</span>
-├── <span class="dc-r">Revizto_POST_Invite.py</span>
-├── <span class="dc-r">Revizto_POST_Remove_Users_From_Project.py</span>
+├── ── Revizto Scripts (codeRevizto/) ───────────────────────────────────────────────
+├── Revizto_Config.py                                <span class="dc-d">  COCKPIT_CONFIG reader — resolves region, BASE_URL, tokens file path, PROJECT_UUID</span>
+├── Revizto_MasterScript.py                          <span class="dc-d">  Token acquisition via access code, refresh, blob write namespaced by COCKPIT_USER</span>
+├── Revizto_GET_License_Members.py
+├── Revizto_GET_License_Projects.py
+├── Revizto_GET_User_Licenses.py
+├── Revizto_GET_Project_Members.py
+├── Revizto_GET_Project_Roles.py
+├── Revizto_GET_Clash_Tests.py
+├── Revizto_GET_Scenes_and_Models_with_Properties.py
+├── Revizto_GET_Object_Tree_With_Properties.py
+│   <span class="dc-d">// POST/DELETE actions are inline in app.py (forma_invite, revizto_invite, morta_invite)</span>
+│   <span class="dc-d">// — no standalone scripts for those.</span>
 │
-├── <span class="dc-b">── Morta Scripts (codeMorta/) ───────────────────────────────────────────────────</span>
-├── <span class="dc-b">Morta_Config.py</span>                                  <span class="dc-d">  COCKPIT_CONFIG reader — API_KEY, HUB_ID from active_context, EXPORTS_DIR</span>
-├── <span class="dc-b">Morta_GET_members.py</span>
-├── <span class="dc-b">Morta_GET_Tags.py</span>
-├── <span class="dc-b">Morta_GET_Admin.py</span>
-├── <span class="dc-b">Morta_GET_User.py</span>
-├── <span class="dc-b">Morta_POST_User.py</span>
-├── <span class="dc-b">Morta_POST_Tag.py</span>
-├── <span class="dc-b">Morta_DELETE_Tag.py</span>
+├── ── Morta Scripts (codeMorta/) ───────────────────────────────────────────────────
+├── Morta_Config.py                                  <span class="dc-d">  COCKPIT_CONFIG reader — API_KEY, HUB_ID from active_context, EXPORTS_DIR</span>
+├── Morta_GET_members.py
+├── Morta_GET_Tags.py
+├── Morta_GET_Admin.py
+├── Morta_GET_User.py
 │
-└── <span class="dc-m">── Forma Scripts (codeForma/) ───────────────────────────────────────────────────</span>
-    ├── <span class="dc-m">Forma_Config.py</span>                              <span class="dc-d">  COCKPIT_CONFIG reader — CLIENT_ID/SECRET, ACCOUNT_ID, PROJECT_ID, EXPORTS_DIR</span>
-    ├── <span class="dc-m">Forma_MasterScript.py</span>                        <span class="dc-d">  2-legged token acquisition, stored to blob under COCKPIT_USER namespace</span>
-    ├── <span class="dc-m">Forma_GET_Account_Projects.py</span>
-    ├── <span class="dc-m">Forma_GET_Hub_Users.py</span>
-    ├── <span class="dc-m">Forma_GET_Projects_Users.py</span>
-    ├── <span class="dc-m">Forma_GET_Project_Files.py</span>
-    ├── <span class="dc-m">Forma_GET_Project_Models.py</span>
-    ├── <span class="dc-m">Forma_GET_Model_Properties.py</span>                <span class="dc-d">  L3 — uses 3-legged token (per-admin)</span>
-    ├── <span class="dc-m">Forma_GET_2L_Status.py</span>
-    ├── <span class="dc-m">Forma_GET_3L_Status.py</span>
-    └── <span class="dc-m">Proccesed_Model_Properties.py</span>                <span class="dc-d">  L4 — depends on L3 stamp; consumes Model Properties output</span></pre></div>
+└── ── Forma Scripts (codeForma/) ───────────────────────────────────────────────────
+    ├── Forma_Config.py                              <span class="dc-d">  COCKPIT_CONFIG reader — CLIENT_ID/SECRET, ACCOUNT_ID, PROJECT_ID, EXPORTS_DIR</span>
+    ├── Forma_MasterScript.py                        <span class="dc-d">  2-legged token acquisition, stored to blob under COCKPIT_USER namespace</span>
+    ├── Forma_GET_Account_Projects.py
+    ├── Forma_GET_Hub_Users.py
+    ├── Forma_GET_Projects_Users.py
+    ├── Forma_GET_Project_Files.py
+    ├── Forma_GET_Project_Models.py
+    ├── Forma_GET_Model_Properties.py                <span class="dc-d">  L3 — uses 3-legged token (per-admin)</span>
+    ├── Forma_GET_Model_Properties_Raw.py            <span class="dc-d">  L3 — same data, no category filter, flat JSON array</span>
+    ├── Forma_GET_2L_Status.py
+    ├── Forma_GET_3L_Status.py
+    └── Proccesed_Model_Properties.py                <span class="dc-d">  L4 — depends on L3 stamp; consumes Model Properties output</span></pre></div>
 
 </div>
 </div>
@@ -1088,69 +1053,66 @@
 <p>Each platform organises access in a hierarchy of levels. A user must have membership at the top level before they can be assigned to levels below it. The Cockpit manages membership at each level independently — the invite flow lets the admin choose which levels to provision in a single operation.</p>
 
 <div class="diagram-wrap">
-<svg viewBox="0 0 540 240" xmlns="http://www.w3.org/2000/svg" font-family="'JetBrains Mono',monospace">
+<svg viewBox="0 0 480 220" xmlns="http://www.w3.org/2000/svg" font-family="'JetBrains Mono',monospace">
   <defs>
     <marker id="h4r" markerWidth="5" markerHeight="5" refX="4" refY="2.5" orient="auto"><path d="M0,0 L0,5 L5,2.5 Z" fill="rgba(224,90,90,0.5)"/></marker>
     <marker id="h4b" markerWidth="5" markerHeight="5" refX="4" refY="2.5" orient="auto"><path d="M0,0 L0,5 L5,2.5 Z" fill="rgba(74,158,255,0.5)"/></marker>
     <marker id="h4bl" markerWidth="5" markerHeight="5" refX="4" refY="2.5" orient="auto"><path d="M0,0 L0,5 L5,2.5 Z" fill="rgba(122,167,224,0.5)"/></marker>
   </defs>
-  <text x="90" y="14" font-size="7.5" fill="#e05a5a" font-weight="700" text-anchor="middle" letter-spacing="1">REVIZTO</text>
-  <text x="270" y="14" font-size="7.5" fill="#4a9eff" font-weight="700" text-anchor="middle" letter-spacing="1">MORTA</text>
-  <text x="450" y="14" font-size="7.5" fill="#7aa7e0" font-weight="700" text-anchor="middle" letter-spacing="1">FORMA / ACC</text>
-  <line x1="20" y1="20" x2="170" y2="20" stroke="rgba(224,90,90,0.3)"/>
-  <line x1="190" y1="20" x2="350" y2="20" stroke="rgba(74,158,255,0.3)"/>
-  <line x1="370" y1="20" x2="520" y2="20" stroke="rgba(122,167,224,0.3)"/>
+  <text x="80" y="14" font-size="7" fill="#e05a5a" font-weight="700" text-anchor="middle" letter-spacing="1">REVIZTO</text>
+  <text x="240" y="14" font-size="7" fill="#4a9eff" font-weight="700" text-anchor="middle" letter-spacing="1">MORTA</text>
+  <text x="400" y="14" font-size="7" fill="#7aa7e0" font-weight="700" text-anchor="middle" letter-spacing="1">FORMA / ACC</text>
+  <line x1="20" y1="20" x2="140" y2="20" stroke="rgba(224,90,90,0.3)"/>
+  <line x1="180" y1="20" x2="300" y2="20" stroke="rgba(74,158,255,0.3)"/>
+  <line x1="340" y1="20" x2="460" y2="20" stroke="rgba(122,167,224,0.3)"/>
 
-  <rect x="20" y="32" width="140" height="46" rx="5" fill="rgba(224,90,90,0.13)" stroke="rgba(224,90,90,0.45)" stroke-width="1.3"/>
-  <text x="90" y="46" font-size="7.5" fill="#e05a5a" font-weight="700" text-anchor="middle">License Level</text>
-  <text x="90" y="58" font-size="6.5" fill="rgba(232,237,242,0.5)" text-anchor="middle">Guest · Collaborator · Creator</text>
-  <text x="90" y="69" font-size="6" fill="rgba(232,237,242,0.35)" text-anchor="middle">POST /license/{uuid}/member/invite</text>
+  <rect x="20" y="30" width="120" height="40" rx="4" fill="rgba(224,90,90,0.13)" stroke="rgba(224,90,90,0.45)"/>
+  <text x="80" y="42" font-size="6.5" fill="#e05a5a" font-weight="700" text-anchor="middle">License Level</text>
+  <text x="80" y="53" font-size="5.5" fill="rgba(232,237,242,0.5)" text-anchor="middle">Guest · Collab · Creator</text>
+  <text x="80" y="63" font-size="5.3" fill="rgba(232,237,242,0.35)" text-anchor="middle">/license/{uuid}/member/invite</text>
 
-  <line x1="90" y1="78" x2="90" y2="98" stroke="rgba(224,90,90,0.4)" stroke-dasharray="2,2" marker-end="url(#h4r)"/>
+  <line x1="80" y1="70" x2="80" y2="86" stroke="rgba(224,90,90,0.4)" stroke-dasharray="2,2" marker-end="url(#h4r)"/>
 
-  <rect x="20" y="100" width="140" height="46" rx="5" fill="rgba(224,90,90,0.1)" stroke="rgba(224,90,90,0.35)" stroke-width="1.3"/>
-  <text x="90" y="114" font-size="7.5" fill="#e05a5a" font-weight="700" text-anchor="middle">Project Level</text>
-  <text x="90" y="126" font-size="6.5" fill="rgba(232,237,242,0.5)" text-anchor="middle">project-defined roles</text>
-  <text x="90" y="137" font-size="6" fill="rgba(232,237,242,0.35)" text-anchor="middle">POST /project/{uuid}/role/member/invite</text>
+  <rect x="20" y="88" width="120" height="40" rx="4" fill="rgba(224,90,90,0.1)" stroke="rgba(224,90,90,0.35)"/>
+  <text x="80" y="100" font-size="6.5" fill="#e05a5a" font-weight="700" text-anchor="middle">Project Level</text>
+  <text x="80" y="111" font-size="5.5" fill="rgba(232,237,242,0.5)" text-anchor="middle">project-defined roles</text>
+  <text x="80" y="121" font-size="5.3" fill="rgba(232,237,242,0.35)" text-anchor="middle">/project/{uuid}/role/member/invite</text>
 
-  <rect x="20" y="170" width="140" height="46" rx="5" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.1)"/>
-  <text x="90" y="184" font-size="7" fill="rgba(232,237,242,0.55)" font-weight="700" text-anchor="middle">License Admin (id 4)</text>
-  <text x="90" y="196" font-size="6" fill="rgba(232,237,242,0.3)" text-anchor="middle">blocked across all UI</text>
-  <text x="90" y="207" font-size="6" fill="rgba(232,237,242,0.3)" text-anchor="middle">no API surface</text>
+  <rect x="20" y="148" width="120" height="36" rx="4" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.1)"/>
+  <text x="80" y="161" font-size="6" fill="rgba(232,237,242,0.55)" font-weight="700" text-anchor="middle">License Admin (id 4)</text>
+  <text x="80" y="172" font-size="5.5" fill="rgba(232,237,242,0.3)" text-anchor="middle">blocked · no API surface</text>
 
-  <rect x="200" y="32" width="140" height="46" rx="5" fill="rgba(74,158,255,0.13)" stroke="rgba(74,158,255,0.4)" stroke-width="1.3"/>
-  <text x="270" y="46" font-size="7.5" fill="#4a9eff" font-weight="700" text-anchor="middle">Hub Level</text>
-  <text x="270" y="58" font-size="6.5" fill="rgba(232,237,242,0.5)" text-anchor="middle">members invited to hub</text>
-  <text x="270" y="69" font-size="6" fill="rgba(232,237,242,0.35)" text-anchor="middle">POST /hub/{id}/member/invite</text>
+  <rect x="180" y="30" width="120" height="40" rx="4" fill="rgba(74,158,255,0.13)" stroke="rgba(74,158,255,0.4)"/>
+  <text x="240" y="42" font-size="6.5" fill="#4a9eff" font-weight="700" text-anchor="middle">Hub Level</text>
+  <text x="240" y="53" font-size="5.5" fill="rgba(232,237,242,0.5)" text-anchor="middle">members invited to hub</text>
+  <text x="240" y="63" font-size="5.3" fill="rgba(232,237,242,0.35)" text-anchor="middle">/hub/{id}/member/invite</text>
 
-  <line x1="270" y1="78" x2="270" y2="98" stroke="rgba(74,158,255,0.4)" stroke-dasharray="2,2" marker-end="url(#h4b)"/>
+  <line x1="240" y1="70" x2="240" y2="86" stroke="rgba(74,158,255,0.4)" stroke-dasharray="2,2" marker-end="url(#h4b)"/>
 
-  <rect x="200" y="100" width="140" height="46" rx="5" fill="rgba(74,158,255,0.1)" stroke="rgba(74,158,255,0.35)" stroke-width="1.3"/>
-  <text x="270" y="114" font-size="7.5" fill="#4a9eff" font-weight="700" text-anchor="middle">Tag Level</text>
-  <text x="270" y="126" font-size="6.5" fill="rgba(232,237,242,0.5)" text-anchor="middle">permission tags</text>
-  <text x="270" y="137" font-size="6" fill="rgba(232,237,242,0.35)" text-anchor="middle">tag_reference_id in invite</text>
+  <rect x="180" y="88" width="120" height="40" rx="4" fill="rgba(74,158,255,0.1)" stroke="rgba(74,158,255,0.35)"/>
+  <text x="240" y="100" font-size="6.5" fill="#4a9eff" font-weight="700" text-anchor="middle">Tag Level</text>
+  <text x="240" y="111" font-size="5.5" fill="rgba(232,237,242,0.5)" text-anchor="middle">permission tags</text>
+  <text x="240" y="121" font-size="5.3" fill="rgba(232,237,242,0.35)" text-anchor="middle">tag_reference_id in invite</text>
 
-  <rect x="380" y="32" width="140" height="46" rx="5" fill="rgba(122,167,224,0.15)" stroke="rgba(122,167,224,0.4)" stroke-width="1.3"/>
-  <text x="450" y="46" font-size="7.5" fill="#7aa7e0" font-weight="700" text-anchor="middle">Account Level</text>
-  <text x="450" y="58" font-size="6.5" fill="rgba(232,237,242,0.5)" text-anchor="middle">imported via 2-legged</text>
-  <text x="450" y="69" font-size="6" fill="rgba(232,237,242,0.35)" text-anchor="middle">POST /hq/v1/accounts/{id}/users/import</text>
+  <rect x="340" y="30" width="120" height="40" rx="4" fill="rgba(122,167,224,0.15)" stroke="rgba(122,167,224,0.4)"/>
+  <text x="400" y="42" font-size="6.5" fill="#7aa7e0" font-weight="700" text-anchor="middle">Account Level</text>
+  <text x="400" y="53" font-size="5.5" fill="rgba(232,237,242,0.5)" text-anchor="middle">2-legged import</text>
+  <text x="400" y="63" font-size="5.3" fill="rgba(232,237,242,0.35)" text-anchor="middle">/hq/v1/accounts/{id}/users/import</text>
 
-  <line x1="450" y1="78" x2="450" y2="98" stroke="rgba(122,167,224,0.4)" stroke-dasharray="2,2" marker-end="url(#h4bl)"/>
+  <line x1="400" y1="70" x2="400" y2="86" stroke="rgba(122,167,224,0.4)" stroke-dasharray="2,2" marker-end="url(#h4bl)"/>
 
-  <rect x="380" y="100" width="140" height="46" rx="5" fill="rgba(122,167,224,0.13)" stroke="rgba(122,167,224,0.35)" stroke-width="1.3"/>
-  <text x="450" y="114" font-size="7.5" fill="#7aa7e0" font-weight="700" text-anchor="middle">Project Level</text>
-  <text x="450" y="126" font-size="6.5" fill="rgba(232,237,242,0.5)" text-anchor="middle">role + company + products</text>
-  <text x="450" y="137" font-size="6" fill="rgba(232,237,242,0.35)" text-anchor="middle">POST /construction/admin/v1/.../users</text>
+  <rect x="340" y="88" width="120" height="40" rx="4" fill="rgba(122,167,224,0.13)" stroke="rgba(122,167,224,0.35)"/>
+  <text x="400" y="100" font-size="6.5" fill="#7aa7e0" font-weight="700" text-anchor="middle">Project Level</text>
+  <text x="400" y="111" font-size="5.5" fill="rgba(232,237,242,0.5)" text-anchor="middle">role + company + products</text>
+  <text x="400" y="121" font-size="5.3" fill="rgba(232,237,242,0.35)" text-anchor="middle">/construction/admin/v1/.../users</text>
 
-  <line x1="450" y1="146" x2="450" y2="166" stroke="rgba(122,167,224,0.35)" stroke-dasharray="2,2" marker-end="url(#h4bl)"/>
+  <line x1="400" y1="128" x2="400" y2="144" stroke="rgba(122,167,224,0.35)" stroke-dasharray="2,2" marker-end="url(#h4bl)"/>
 
-  <rect x="380" y="170" width="140" height="46" rx="5" fill="rgba(122,167,224,0.1)" stroke="rgba(122,167,224,0.3)" stroke-width="1.3"/>
-  <text x="450" y="184" font-size="7.5" fill="#7aa7e0" font-weight="700" text-anchor="middle">Model Level</text>
-  <text x="450" y="196" font-size="6.5" fill="rgba(232,237,242,0.5)" text-anchor="middle">3-legged OAuth required</text>
-  <text x="450" y="207" font-size="6" fill="rgba(232,237,242,0.35)" text-anchor="middle">per-user; not invited via API</text>
+  <rect x="340" y="148" width="120" height="36" rx="4" fill="rgba(122,167,224,0.1)" stroke="rgba(122,167,224,0.3)"/>
+  <text x="400" y="161" font-size="6.5" fill="#7aa7e0" font-weight="700" text-anchor="middle">Model Level</text>
+  <text x="400" y="172" font-size="5.5" fill="rgba(232,237,242,0.5)" text-anchor="middle">3-legged · per-user</text>
 
-  <text x="270" y="210" font-size="6.5" fill="rgba(232,237,242,0.4)" text-anchor="middle" font-style="italic">Cockpit invite calls execute</text>
-  <text x="270" y="222" font-size="6.5" fill="rgba(232,237,242,0.4)" text-anchor="middle" font-style="italic">in one shot per platform</text>
+  <text x="240" y="200" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle" font-style="italic">Cockpit invite calls execute one-shot per platform</text>
 </svg>
 </div>
 
@@ -1171,57 +1133,55 @@
 <p>Revizto uses an access code exchange model. Each admin generates their access code from <code>ws.revizto.com</code> and saves it in Settings. The Cockpit exchanges it for a bearer token and caches the result in blob storage, namespaced per admin and per region. Token refresh is handled automatically on expiry.</p>
 
 <div class="diagram-wrap">
-<svg viewBox="0 0 540 280" xmlns="http://www.w3.org/2000/svg" font-family="'JetBrains Mono',monospace">
+<svg viewBox="0 0 480 240" xmlns="http://www.w3.org/2000/svg" font-family="'JetBrains Mono',monospace">
   <defs>
     <marker id="r5a" markerWidth="5" markerHeight="5" refX="4" refY="2.5" orient="auto"><path d="M0,0 L0,5 L5,2.5 Z" fill="rgba(224,90,90,0.55)"/></marker>
     <marker id="r5g" markerWidth="5" markerHeight="5" refX="4" refY="2.5" orient="auto"><path d="M0,0 L0,5 L5,2.5 Z" fill="rgba(52,211,153,0.55)"/></marker>
   </defs>
-  <text x="80" y="14" font-size="7" fill="rgba(232,237,242,0.45)" font-weight="700" text-anchor="middle" letter-spacing="1">ADMIN</text>
-  <text x="270" y="14" font-size="7" fill="rgba(232,237,242,0.45)" font-weight="700" text-anchor="middle" letter-spacing="1">COCKPIT</text>
-  <text x="460" y="14" font-size="7" fill="rgba(232,237,242,0.45)" font-weight="700" text-anchor="middle" letter-spacing="1">REVIZTO API</text>
-
+  <text x="80" y="14" font-size="6.5" fill="rgba(232,237,242,0.45)" font-weight="700" text-anchor="middle" letter-spacing="1">ADMIN</text>
+  <text x="240" y="14" font-size="6.5" fill="rgba(232,237,242,0.45)" font-weight="700" text-anchor="middle" letter-spacing="1">COCKPIT</text>
+  <text x="400" y="14" font-size="6.5" fill="rgba(232,237,242,0.45)" font-weight="700" text-anchor="middle" letter-spacing="1">REVIZTO API</text>
   <line x1="40" y1="20" x2="120" y2="20" stroke="rgba(255,255,255,0.15)"/>
-  <line x1="220" y1="20" x2="320" y2="20" stroke="rgba(255,255,255,0.15)"/>
-  <line x1="400" y1="20" x2="520" y2="20" stroke="rgba(255,255,255,0.15)"/>
+  <line x1="200" y1="20" x2="280" y2="20" stroke="rgba(255,255,255,0.15)"/>
+  <line x1="360" y1="20" x2="460" y2="20" stroke="rgba(255,255,255,0.15)"/>
 
-  <rect x="20" y="32" width="120" height="36" rx="4" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.12)"/>
-  <text x="80" y="46" font-size="7" fill="rgba(232,237,242,0.7)" font-weight="700" text-anchor="middle">1. Submit access code</text>
-  <text x="80" y="58" font-size="6" fill="rgba(232,237,242,0.4)" text-anchor="middle">in Settings · region picked</text>
-  <line x1="140" y1="50" x2="218" y2="50" stroke="rgba(255,255,255,0.25)" marker-end="url(#r5a)"/>
+  <rect x="20" y="32" width="120" height="34" rx="4" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.12)"/>
+  <text x="80" y="44" font-size="6.5" fill="rgba(232,237,242,0.7)" font-weight="700" text-anchor="middle">1. Submit access code</text>
+  <text x="80" y="56" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">in Settings · region picked</text>
+  <line x1="140" y1="48" x2="198" y2="48" stroke="rgba(255,255,255,0.25)" marker-end="url(#r5a)"/>
 
-  <rect x="220" y="32" width="120" height="76" rx="4" fill="rgba(74,158,255,0.1)" stroke="rgba(74,158,255,0.32)"/>
-  <text x="280" y="46" font-size="7" fill="#4a9eff" font-weight="700" text-anchor="middle">2. POST /oauth/.../token</text>
-  <text x="280" y="58" font-size="6" fill="rgba(232,237,242,0.4)" text-anchor="middle">access code → bearer + refresh</text>
-  <text x="280" y="70" font-size="6" fill="rgba(232,237,242,0.4)" text-anchor="middle">~60 min ttl</text>
-  <text x="280" y="82" font-size="6" fill="rgba(232,237,242,0.35)" text-anchor="middle">3. Resolve license_uuid</text>
-  <text x="280" y="93" font-size="6" fill="rgba(232,237,242,0.35)" text-anchor="middle">via /user/licenses · cached</text>
-  <text x="280" y="103" font-size="6" fill="rgba(232,237,242,0.35)" text-anchor="middle">on first call</text>
+  <rect x="200" y="32" width="120" height="74" rx="4" fill="rgba(74,158,255,0.1)" stroke="rgba(74,158,255,0.32)"/>
+  <text x="260" y="44" font-size="6.5" fill="#4a9eff" font-weight="700" text-anchor="middle">2. POST /oauth/token</text>
+  <text x="260" y="55" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">code → bearer + refresh</text>
+  <text x="260" y="65" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">~60 min ttl</text>
+  <text x="260" y="78" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">3. Resolve license_uuid</text>
+  <text x="260" y="89" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">via /user/licenses</text>
+  <text x="260" y="100" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">cached on first call</text>
 
-  <line x1="340" y1="50" x2="398" y2="50" stroke="rgba(255,255,255,0.25)" marker-end="url(#r5a)"/>
-  <rect x="400" y="32" width="120" height="36" rx="4" fill="rgba(224,90,90,0.13)" stroke="rgba(224,90,90,0.4)"/>
-  <text x="460" y="46" font-size="7" fill="#e05a5a" font-weight="700" text-anchor="middle">api.{region}.revizto.com</text>
-  <text x="460" y="58" font-size="6" fill="rgba(232,237,242,0.5)" text-anchor="middle">dubai · ireland</text>
+  <line x1="320" y1="48" x2="358" y2="48" stroke="rgba(255,255,255,0.25)" marker-end="url(#r5a)"/>
+  <rect x="360" y="32" width="100" height="34" rx="4" fill="rgba(224,90,90,0.13)" stroke="rgba(224,90,90,0.4)"/>
+  <text x="410" y="44" font-size="6.5" fill="#e05a5a" font-weight="700" text-anchor="middle">api.{region}.revizto.com</text>
+  <text x="410" y="56" font-size="5.5" fill="rgba(232,237,242,0.5)" text-anchor="middle">dubai · ireland</text>
 
-  <rect x="220" y="120" width="120" height="60" rx="4" fill="rgba(52,211,153,0.1)" stroke="rgba(52,211,153,0.32)"/>
-  <text x="280" y="134" font-size="7" fill="#34d399" font-weight="700" text-anchor="middle">4. Cache to blob</text>
-  <text x="280" y="146" font-size="6" fill="rgba(232,237,242,0.4)" text-anchor="middle">revizto_tokens_{region}_</text>
-  <text x="280" y="156" font-size="6" fill="rgba(232,237,242,0.4)" text-anchor="middle">{safe_email}.json</text>
-  <text x="280" y="167" font-size="6" fill="rgba(232,237,242,0.35)" text-anchor="middle">per-admin · per-region</text>
+  <rect x="200" y="118" width="120" height="50" rx="4" fill="rgba(52,211,153,0.1)" stroke="rgba(52,211,153,0.32)"/>
+  <text x="260" y="132" font-size="6.5" fill="#34d399" font-weight="700" text-anchor="middle">4. Cache to blob</text>
+  <text x="260" y="143" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">revizto_tokens_{region}_</text>
+  <text x="260" y="153" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">{safe_email}.json</text>
+  <text x="260" y="163" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">per-admin · per-region</text>
 
-  <line x1="280" y1="108" x2="280" y2="118" stroke="rgba(52,211,153,0.45)" marker-end="url(#r5g)"/>
+  <line x1="260" y1="106" x2="260" y2="116" stroke="rgba(52,211,153,0.45)" marker-end="url(#r5g)"/>
 
-  <rect x="220" y="200" width="120" height="60" rx="4" fill="rgba(74,158,255,0.08)" stroke="rgba(74,158,255,0.28)"/>
-  <text x="280" y="214" font-size="7" fill="#4a9eff" font-weight="700" text-anchor="middle">5. Auto-refresh</text>
-  <text x="280" y="226" font-size="6" fill="rgba(232,237,242,0.4)" text-anchor="middle">on expiry · uses refresh_token</text>
-  <text x="280" y="237" font-size="6" fill="rgba(232,237,242,0.4)" text-anchor="middle">if cached refresh_token expired,</text>
-  <text x="280" y="247" font-size="6" fill="rgba(232,237,242,0.4)" text-anchor="middle">admin re-submits access code</text>
+  <rect x="200" y="180" width="120" height="50" rx="4" fill="rgba(74,158,255,0.08)" stroke="rgba(74,158,255,0.28)"/>
+  <text x="260" y="194" font-size="6.5" fill="#4a9eff" font-weight="700" text-anchor="middle">5. Auto-refresh</text>
+  <text x="260" y="205" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">on expiry · uses refresh_token</text>
+  <text x="260" y="215" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">if expired, re-submit code</text>
 
-  <line x1="280" y1="180" x2="280" y2="198" stroke="rgba(74,158,255,0.4)" stroke-dasharray="2,2" marker-end="url(#r5a)"/>
+  <line x1="260" y1="168" x2="260" y2="178" stroke="rgba(74,158,255,0.4)" stroke-dasharray="2,2" marker-end="url(#r5a)"/>
 
-  <text x="50" y="240" font-size="6.5" fill="rgba(232,237,242,0.4)" font-style="italic">Per-admin tokens</text>
-  <text x="50" y="252" font-size="6.5" fill="rgba(232,237,242,0.4)" font-style="italic">No global Revizto fallback.</text>
-  <text x="50" y="264" font-size="6.5" fill="rgba(232,237,242,0.4)" font-style="italic">Each admin must configure</text>
-  <text x="50" y="275" font-size="6.5" fill="rgba(232,237,242,0.4)" font-style="italic">an access code.</text>
+  <text x="80" y="180" font-size="5.5" fill="rgba(232,237,242,0.4)" font-style="italic" text-anchor="middle">Per-admin tokens.</text>
+  <text x="80" y="192" font-size="5.5" fill="rgba(232,237,242,0.4)" font-style="italic" text-anchor="middle">No global Revizto fallback.</text>
+  <text x="80" y="204" font-size="5.5" fill="rgba(232,237,242,0.4)" font-style="italic" text-anchor="middle">Each admin must configure</text>
+  <text x="80" y="216" font-size="5.5" fill="rgba(232,237,242,0.4)" font-style="italic" text-anchor="middle">an access code.</text>
 </svg>
 </div>
 
@@ -1242,66 +1202,62 @@
 <p>Autodesk Platform Services uses two distinct OAuth 2.0 flows depending on the operation. Two-legged (machine-to-machine) is used for all account and project administration — it does not require a user to be present. Three-legged (user-delegated) is used for operations that require a specific user's identity, such as reading model files and element properties from BIM 360/ACC.</p>
 
 <div class="diagram-wrap">
-<svg viewBox="0 0 540 280" xmlns="http://www.w3.org/2000/svg" font-family="'JetBrains Mono',monospace">
+<svg viewBox="0 0 480 240" xmlns="http://www.w3.org/2000/svg" font-family="'JetBrains Mono',monospace">
   <defs>
     <marker id="f6a" markerWidth="5" markerHeight="5" refX="4" refY="2.5" orient="auto"><path d="M0,0 L0,5 L5,2.5 Z" fill="rgba(122,167,224,0.55)"/></marker>
     <marker id="f6g" markerWidth="5" markerHeight="5" refX="4" refY="2.5" orient="auto"><path d="M0,0 L0,5 L5,2.5 Z" fill="rgba(52,211,153,0.55)"/></marker>
   </defs>
-  <text x="135" y="14" font-size="7.5" fill="#fbbf24" font-weight="700" text-anchor="middle" letter-spacing="1">2-LEGGED · CLIENT_CREDENTIALS</text>
-  <text x="405" y="14" font-size="7.5" fill="#7aa7e0" font-weight="700" text-anchor="middle" letter-spacing="1">3-LEGGED · USER OAUTH</text>
-  <line x1="20" y1="20" x2="270" y2="20" stroke="rgba(251,191,36,0.3)"/>
-  <line x1="290" y1="20" x2="520" y2="20" stroke="rgba(122,167,224,0.3)"/>
+  <text x="120" y="13" font-size="7" fill="#fbbf24" font-weight="700" text-anchor="middle" letter-spacing="1">2-LEGGED · CLIENT_CREDENTIALS</text>
+  <text x="360" y="13" font-size="7" fill="#7aa7e0" font-weight="700" text-anchor="middle" letter-spacing="1">3-LEGGED · USER OAUTH</text>
+  <line x1="20" y1="19" x2="240" y2="19" stroke="rgba(251,191,36,0.3)"/>
+  <line x1="260" y1="19" x2="460" y2="19" stroke="rgba(122,167,224,0.3)"/>
 
-  <rect x="20" y="32" width="250" height="40" rx="4" fill="rgba(251,191,36,0.1)" stroke="rgba(251,191,36,0.32)"/>
-  <text x="145" y="46" font-size="7" fill="#fbbf24" font-weight="700" text-anchor="middle">Owner Forma client_id + secret</text>
-  <text x="145" y="58" font-size="6" fill="rgba(232,237,242,0.45)" text-anchor="middle">SHARED across all admins · in owner config</text>
-  <text x="145" y="68" font-size="6" fill="rgba(232,237,242,0.4)" text-anchor="middle">build_script_config falls back if absent in admin's</text>
+  <rect x="20" y="28" width="220" height="34" rx="4" fill="rgba(251,191,36,0.1)" stroke="rgba(251,191,36,0.32)"/>
+  <text x="130" y="40" font-size="6.5" fill="#fbbf24" font-weight="700" text-anchor="middle">Owner Forma client_id + secret</text>
+  <text x="130" y="51" font-size="5.5" fill="rgba(232,237,242,0.45)" text-anchor="middle">SHARED across all admins · in owner config</text>
 
-  <rect x="20" y="80" width="250" height="46" rx="4" fill="rgba(122,167,224,0.13)" stroke="rgba(122,167,224,0.35)"/>
-  <text x="145" y="94" font-size="7" fill="#7aa7e0" font-weight="700" text-anchor="middle">POST /authentication/v2/token</text>
-  <text x="145" y="106" font-size="6" fill="rgba(232,237,242,0.45)" text-anchor="middle">grant_type=client_credentials</text>
-  <text x="145" y="118" font-size="6" fill="rgba(232,237,242,0.4)" text-anchor="middle">scope: data:read account:read user-profile:read</text>
+  <rect x="20" y="68" width="220" height="38" rx="4" fill="rgba(122,167,224,0.13)" stroke="rgba(122,167,224,0.35)"/>
+  <text x="130" y="82" font-size="6.5" fill="#7aa7e0" font-weight="700" text-anchor="middle">POST /authentication/v2/token</text>
+  <text x="130" y="93" font-size="5.5" fill="rgba(232,237,242,0.45)" text-anchor="middle">grant_type=client_credentials</text>
+  <text x="130" y="103" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">scope: data:read account:read user-profile:read</text>
 
-  <rect x="20" y="134" width="250" height="46" rx="4" fill="rgba(52,211,153,0.1)" stroke="rgba(52,211,153,0.3)"/>
-  <text x="145" y="148" font-size="7" fill="#34d399" font-weight="700" text-anchor="middle">Cache forma_tokens.json</text>
-  <text x="145" y="160" font-size="6" fill="rgba(232,237,242,0.45)" text-anchor="middle">SHARED token (one for whole cockpit)</text>
-  <text x="145" y="172" font-size="6" fill="rgba(232,237,242,0.4)" text-anchor="middle">~1h ttl · refreshed by next demand</text>
+  <rect x="20" y="112" width="220" height="38" rx="4" fill="rgba(52,211,153,0.1)" stroke="rgba(52,211,153,0.3)"/>
+  <text x="130" y="126" font-size="6.5" fill="#34d399" font-weight="700" text-anchor="middle">Cache forma_tokens.json</text>
+  <text x="130" y="137" font-size="5.5" fill="rgba(232,237,242,0.45)" text-anchor="middle">SHARED token (one for whole cockpit)</text>
+  <text x="130" y="147" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">~1h ttl</text>
 
-  <rect x="20" y="190" width="250" height="46" rx="4" fill="rgba(122,167,224,0.08)" stroke="rgba(122,167,224,0.25)"/>
-  <text x="145" y="204" font-size="7" fill="#7aa7e0" font-weight="700" text-anchor="middle">Used for: account · project mgmt</text>
-  <text x="145" y="216" font-size="6" fill="rgba(232,237,242,0.4)" text-anchor="middle">hub users · companies · roles</text>
-  <text x="145" y="227" font-size="6" fill="rgba(232,237,242,0.4)" text-anchor="middle">project list · invite import</text>
+  <rect x="20" y="156" width="220" height="34" rx="4" fill="rgba(122,167,224,0.08)" stroke="rgba(122,167,224,0.25)"/>
+  <text x="130" y="170" font-size="6.5" fill="#7aa7e0" font-weight="700" text-anchor="middle">Used for: account · project mgmt</text>
+  <text x="130" y="181" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">hub users · companies · roles · invite import</text>
 
-  <line x1="145" y1="72" x2="145" y2="78" stroke="rgba(122,167,224,0.5)" marker-end="url(#f6a)"/>
-  <line x1="145" y1="126" x2="145" y2="132" stroke="rgba(52,211,153,0.55)" marker-end="url(#f6g)"/>
-  <line x1="145" y1="180" x2="145" y2="188" stroke="rgba(122,167,224,0.4)" marker-end="url(#f6a)"/>
+  <line x1="130" y1="62" x2="130" y2="66" stroke="rgba(122,167,224,0.5)" marker-end="url(#f6a)"/>
+  <line x1="130" y1="106" x2="130" y2="110" stroke="rgba(52,211,153,0.55)" marker-end="url(#f6g)"/>
+  <line x1="130" y1="150" x2="130" y2="154" stroke="rgba(122,167,224,0.4)" marker-end="url(#f6a)"/>
 
-  <rect x="290" y="32" width="230" height="40" rx="4" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.12)"/>
-  <text x="405" y="46" font-size="7" fill="rgba(232,237,242,0.7)" font-weight="700" text-anchor="middle">Per-admin user authorisation</text>
-  <text x="405" y="58" font-size="6" fill="rgba(232,237,242,0.4)" text-anchor="middle">browser redirect · grant consent</text>
-  <text x="405" y="68" font-size="6" fill="rgba(232,237,242,0.4)" text-anchor="middle">on first model-level extraction</text>
+  <rect x="260" y="28" width="200" height="34" rx="4" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.12)"/>
+  <text x="360" y="40" font-size="6.5" fill="rgba(232,237,242,0.7)" font-weight="700" text-anchor="middle">Per-admin user authorisation</text>
+  <text x="360" y="51" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">browser redirect · grant consent</text>
 
-  <rect x="290" y="80" width="230" height="46" rx="4" fill="rgba(122,167,224,0.13)" stroke="rgba(122,167,224,0.35)"/>
-  <text x="405" y="94" font-size="7" fill="#7aa7e0" font-weight="700" text-anchor="middle">authorization_code → tokens</text>
-  <text x="405" y="106" font-size="6" fill="rgba(232,237,242,0.45)" text-anchor="middle">scope: data:read viewables:read</text>
-  <text x="405" y="118" font-size="6" fill="rgba(232,237,242,0.4)" text-anchor="middle">account:read user-profile:read</text>
+  <rect x="260" y="68" width="200" height="38" rx="4" fill="rgba(122,167,224,0.13)" stroke="rgba(122,167,224,0.35)"/>
+  <text x="360" y="82" font-size="6.5" fill="#7aa7e0" font-weight="700" text-anchor="middle">authorization_code → tokens</text>
+  <text x="360" y="93" font-size="5.5" fill="rgba(232,237,242,0.45)" text-anchor="middle">scope: data:read viewables:read</text>
+  <text x="360" y="103" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">account:read user-profile:read</text>
 
-  <rect x="290" y="134" width="230" height="46" rx="4" fill="rgba(52,211,153,0.1)" stroke="rgba(52,211,153,0.3)"/>
-  <text x="405" y="148" font-size="7" fill="#34d399" font-weight="700" text-anchor="middle">Cache forma_3l_{safe_email}.json</text>
-  <text x="405" y="160" font-size="6" fill="rgba(232,237,242,0.45)" text-anchor="middle">PER-ADMIN · separate from 2-legged</text>
-  <text x="405" y="172" font-size="6" fill="rgba(232,237,242,0.4)" text-anchor="middle">refresh_token + access_token</text>
+  <rect x="260" y="112" width="200" height="38" rx="4" fill="rgba(52,211,153,0.1)" stroke="rgba(52,211,153,0.3)"/>
+  <text x="360" y="126" font-size="6.5" fill="#34d399" font-weight="700" text-anchor="middle">Cache forma_3l_{safe_email}.json</text>
+  <text x="360" y="137" font-size="5.5" fill="rgba(232,237,242,0.45)" text-anchor="middle">PER-ADMIN · separate from 2-legged</text>
+  <text x="360" y="147" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">refresh_token + access_token</text>
 
-  <rect x="290" y="190" width="230" height="46" rx="4" fill="rgba(122,167,224,0.08)" stroke="rgba(122,167,224,0.25)"/>
-  <text x="405" y="204" font-size="7" fill="#7aa7e0" font-weight="700" text-anchor="middle">Used for: model-level access</text>
-  <text x="405" y="216" font-size="6" fill="rgba(232,237,242,0.4)" text-anchor="middle">Forma_GET_Model_Properties</text>
-  <text x="405" y="227" font-size="6" fill="rgba(232,237,242,0.4)" text-anchor="middle">scheduler injects via env var</text>
+  <rect x="260" y="156" width="200" height="34" rx="4" fill="rgba(122,167,224,0.08)" stroke="rgba(122,167,224,0.25)"/>
+  <text x="360" y="170" font-size="6.5" fill="#7aa7e0" font-weight="700" text-anchor="middle">Used for: model-level access</text>
+  <text x="360" y="181" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">Forma_GET_Model_Properties · scheduler injects</text>
 
-  <line x1="405" y1="72" x2="405" y2="78" stroke="rgba(122,167,224,0.5)" marker-end="url(#f6a)"/>
-  <line x1="405" y1="126" x2="405" y2="132" stroke="rgba(52,211,153,0.55)" marker-end="url(#f6g)"/>
-  <line x1="405" y1="180" x2="405" y2="188" stroke="rgba(122,167,224,0.4)" marker-end="url(#f6a)"/>
+  <line x1="360" y1="62" x2="360" y2="66" stroke="rgba(122,167,224,0.5)" marker-end="url(#f6a)"/>
+  <line x1="360" y1="106" x2="360" y2="110" stroke="rgba(52,211,153,0.55)" marker-end="url(#f6g)"/>
+  <line x1="360" y1="150" x2="360" y2="154" stroke="rgba(122,167,224,0.4)" marker-end="url(#f6a)"/>
 
-  <text x="270" y="262" font-size="6.5" fill="rgba(232,237,242,0.4)" text-anchor="middle" font-style="italic">2L tokens are shared (account-wide). 3L tokens are per-admin (user identity required).</text>
-  <text x="270" y="273" font-size="6.5" fill="rgba(232,237,242,0.4)" text-anchor="middle" font-style="italic">Cockpit uses 2L by default; 3L only for model-level scripts.</text>
+  <text x="240" y="218" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle" font-style="italic">2L tokens are shared (account-wide). 3L tokens are per-admin (user identity required).</text>
+  <text x="240" y="230" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle" font-style="italic">Cockpit uses 2L by default; 3L only for model-level scripts.</text>
 </svg>
 </div>
 
@@ -1320,48 +1276,46 @@
 <p>Not all credentials are created equal. Some belong to individual admins, some are shared from the owner, and some have no fallback at all. This diagram shows exactly what credential is used for each platform operation and what happens when a personal credential is absent.</p>
 
 <div class="diagram-wrap">
-<svg viewBox="0 0 540 240" xmlns="http://www.w3.org/2000/svg" font-family="'JetBrains Mono',monospace">
+<svg viewBox="0 0 480 200" xmlns="http://www.w3.org/2000/svg" font-family="'JetBrains Mono',monospace">
   <defs>
     <marker id="cr7a" markerWidth="5" markerHeight="5" refX="4" refY="2.5" orient="auto"><path d="M0,0 L0,5 L5,2.5 Z" fill="rgba(255,255,255,0.3)"/></marker>
-    <marker id="cr7m" markerWidth="5" markerHeight="5" refX="4" refY="2.5" orient="auto"><path d="M0,0 L0,5 L5,2.5 Z" fill="rgba(251,191,36,0.55)"/></marker>
   </defs>
-  <text x="270" y="14" font-size="8" fill="rgba(232,237,242,0.6)" font-weight="700" text-anchor="middle" letter-spacing="1.2">CREDENTIAL RESOLUTION ORDER</text>
-  <line x1="60" y1="22" x2="480" y2="22" stroke="rgba(255,255,255,0.18)"/>
+  <text x="240" y="13" font-size="7" fill="rgba(232,237,242,0.6)" font-weight="700" text-anchor="middle" letter-spacing="1">CREDENTIAL RESOLUTION ORDER</text>
+  <line x1="60" y1="20" x2="420" y2="20" stroke="rgba(255,255,255,0.18)"/>
 
-  <rect x="170" y="30" width="200" height="34" rx="5" fill="rgba(74,158,255,0.12)" stroke="rgba(74,158,255,0.4)" stroke-width="1.3"/>
-  <text x="270" y="44" font-size="7.5" fill="#4a9eff" font-weight="700" text-anchor="middle">build_script_config(user)</text>
-  <text x="270" y="56" font-size="6.5" fill="rgba(232,237,242,0.45)" text-anchor="middle">for each platform → resolve credentials</text>
+  <rect x="150" y="28" width="180" height="30" rx="4" fill="rgba(74,158,255,0.12)" stroke="rgba(74,158,255,0.4)"/>
+  <text x="240" y="40" font-size="6.5" fill="#4a9eff" font-weight="700" text-anchor="middle">build_script_config(user)</text>
+  <text x="240" y="51" font-size="5.5" fill="rgba(232,237,242,0.45)" text-anchor="middle">for each platform → resolve credentials</text>
 
-  <line x1="270" y1="64" x2="270" y2="74" stroke="rgba(255,255,255,0.3)" marker-end="url(#cr7a)"/>
+  <line x1="240" y1="58" x2="240" y2="68" stroke="rgba(255,255,255,0.3)" marker-end="url(#cr7a)"/>
 
-  <rect x="20" y="80" width="155" height="58" rx="5" fill="rgba(224,90,90,0.12)" stroke="rgba(224,90,90,0.4)"/>
-  <text x="97" y="94" font-size="7" fill="#e05a5a" font-weight="700" text-anchor="middle">Revizto</text>
-  <text x="97" y="106" font-size="6" fill="rgba(232,237,242,0.45)" text-anchor="middle">1. user's access_code</text>
-  <text x="97" y="116" font-size="6" fill="rgba(255,100,100,0.5)" text-anchor="middle">2. NO FALLBACK</text>
-  <text x="97" y="127" font-size="6" fill="rgba(232,237,242,0.4)" text-anchor="middle">if missing → block extraction</text>
+  <rect x="20" y="74" width="135" height="52" rx="4" fill="rgba(224,90,90,0.12)" stroke="rgba(224,90,90,0.4)"/>
+  <text x="87" y="86" font-size="6.5" fill="#e05a5a" font-weight="700" text-anchor="middle">Revizto</text>
+  <text x="87" y="97" font-size="5.5" fill="rgba(232,237,242,0.45)" text-anchor="middle">1. user's access_code</text>
+  <text x="87" y="107" font-size="5.5" fill="rgba(255,100,100,0.5)" text-anchor="middle">2. NO FALLBACK</text>
+  <text x="87" y="117" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">missing → block extraction</text>
 
-  <rect x="190" y="80" width="155" height="58" rx="5" fill="rgba(74,158,255,0.12)" stroke="rgba(74,158,255,0.4)"/>
-  <text x="267" y="94" font-size="7" fill="#4a9eff" font-weight="700" text-anchor="middle">Morta</text>
-  <text x="267" y="106" font-size="6" fill="rgba(232,237,242,0.45)" text-anchor="middle">1. user's api_key</text>
-  <text x="267" y="116" font-size="6" fill="rgba(255,100,100,0.5)" text-anchor="middle">2. NO FALLBACK</text>
-  <text x="267" y="127" font-size="6" fill="rgba(232,237,242,0.4)" text-anchor="middle">strictly personal credential</text>
+  <rect x="172" y="74" width="135" height="52" rx="4" fill="rgba(74,158,255,0.12)" stroke="rgba(74,158,255,0.4)"/>
+  <text x="240" y="86" font-size="6.5" fill="#4a9eff" font-weight="700" text-anchor="middle">Morta</text>
+  <text x="240" y="97" font-size="5.5" fill="rgba(232,237,242,0.45)" text-anchor="middle">1. user's api_key</text>
+  <text x="240" y="107" font-size="5.5" fill="rgba(255,100,100,0.5)" text-anchor="middle">2. NO FALLBACK</text>
+  <text x="240" y="117" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">strictly personal</text>
 
-  <rect x="360" y="80" width="155" height="58" rx="5" fill="rgba(122,167,224,0.13)" stroke="rgba(122,167,224,0.4)"/>
-  <text x="437" y="94" font-size="7" fill="#7aa7e0" font-weight="700" text-anchor="middle">Forma / ACC</text>
-  <text x="437" y="106" font-size="6" fill="rgba(232,237,242,0.45)" text-anchor="middle">1. user's forma block</text>
-  <text x="437" y="116" font-size="6" fill="rgba(251,191,36,0.6)" text-anchor="middle">2. owner config fallback</text>
-  <text x="437" y="127" font-size="6" fill="rgba(232,237,242,0.4)" text-anchor="middle">automatic — most admins use this</text>
+  <rect x="324" y="74" width="135" height="52" rx="4" fill="rgba(122,167,224,0.13)" stroke="rgba(122,167,224,0.4)"/>
+  <text x="392" y="86" font-size="6.5" fill="#7aa7e0" font-weight="700" text-anchor="middle">Forma / ACC</text>
+  <text x="392" y="97" font-size="5.5" fill="rgba(232,237,242,0.45)" text-anchor="middle">1. user's forma block</text>
+  <text x="392" y="107" font-size="5.5" fill="rgba(251,191,36,0.6)" text-anchor="middle">2. owner config fallback</text>
+  <text x="392" y="117" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">most admins use this</text>
 
-  <line x1="97" y1="138" x2="97" y2="158" stroke="rgba(224,90,90,0.4)" marker-end="url(#cr7a)"/>
-  <line x1="267" y1="138" x2="267" y2="158" stroke="rgba(74,158,255,0.4)" marker-end="url(#cr7a)"/>
-  <line x1="437" y1="138" x2="437" y2="158" stroke="rgba(122,167,224,0.4)" marker-end="url(#cr7a)"/>
+  <line x1="87" y1="126" x2="87" y2="142" stroke="rgba(224,90,90,0.4)" marker-end="url(#cr7a)"/>
+  <line x1="240" y1="126" x2="240" y2="142" stroke="rgba(74,158,255,0.4)" marker-end="url(#cr7a)"/>
+  <line x1="392" y1="126" x2="392" y2="142" stroke="rgba(122,167,224,0.4)" marker-end="url(#cr7a)"/>
 
-  <rect x="20" y="160" width="495" height="36" rx="5" fill="rgba(52,211,153,0.1)" stroke="rgba(52,211,153,0.32)"/>
-  <text x="267" y="174" font-size="7.5" fill="#34d399" font-weight="700" text-anchor="middle">Merged config → temp/{safe_email}/_cockpit_config.json</text>
-  <text x="267" y="186" font-size="6.5" fill="rgba(232,237,242,0.45)" text-anchor="middle">passed to script via COCKPIT_CONFIG env var · script never reads owner config directly</text>
+  <rect x="20" y="144" width="439" height="32" rx="4" fill="rgba(52,211,153,0.1)" stroke="rgba(52,211,153,0.32)"/>
+  <text x="240" y="156" font-size="6.5" fill="#34d399" font-weight="700" text-anchor="middle">Merged config → temp/{safe_email}/_cockpit_config.json</text>
+  <text x="240" y="167" font-size="5.5" fill="rgba(232,237,242,0.45)" text-anchor="middle">passed to script via COCKPIT_CONFIG env var · script never reads owner config directly</text>
 
-  <text x="270" y="220" font-size="6.5" fill="rgba(232,237,242,0.4)" text-anchor="middle" font-style="italic">Owner can revoke any admin's platform access by clearing the relevant block in their config_*.json file.</text>
-  <text x="270" y="232" font-size="6.5" fill="rgba(232,237,242,0.4)" text-anchor="middle" font-style="italic">Forma fallback means owner credentials are the ultimate failsafe — guard them carefully.</text>
+  <text x="240" y="190" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle" font-style="italic">Owner can revoke any admin's platform access by clearing the relevant block in their config.</text>
 </svg>
 </div>
 
@@ -1380,60 +1334,59 @@
 <p>The frontend is server-rendered HTML with progressive JavaScript enhancement. There is no build step, bundler, or frontend framework. Pages are full page loads from Jinja2 templates. Within a page, dynamic updates are driven by a custom browser event system centred on the sidebar project selector in <code>base.html</code>.</p>
 
 <div class="diagram-wrap">
-<svg viewBox="0 0 540 230" xmlns="http://www.w3.org/2000/svg" font-family="'JetBrains Mono',monospace">
+<svg viewBox="0 0 480 200" xmlns="http://www.w3.org/2000/svg" font-family="'JetBrains Mono',monospace">
   <defs>
     <marker id="ev8a" markerWidth="5" markerHeight="5" refX="4" refY="2.5" orient="auto"><path d="M0,0 L0,5 L5,2.5 Z" fill="rgba(251,191,36,0.55)"/></marker>
   </defs>
-  <text x="80" y="14" font-size="7.5" fill="rgba(232,237,242,0.55)" font-weight="700" text-anchor="middle" letter-spacing="1">EMITTER</text>
-  <text x="270" y="14" font-size="7.5" fill="#fbbf24" font-weight="700" text-anchor="middle" letter-spacing="1">EVENT BUS · window</text>
-  <text x="450" y="14" font-size="7.5" fill="rgba(232,237,242,0.55)" font-weight="700" text-anchor="middle" letter-spacing="1">LISTENERS</text>
-  <line x1="20" y1="22" x2="160" y2="22" stroke="rgba(255,255,255,0.15)"/>
-  <line x1="180" y1="22" x2="360" y2="22" stroke="rgba(251,191,36,0.3)"/>
-  <line x1="380" y1="22" x2="520" y2="22" stroke="rgba(255,255,255,0.15)"/>
+  <text x="70" y="13" font-size="6.5" fill="rgba(232,237,242,0.55)" font-weight="700" text-anchor="middle" letter-spacing="1">EMITTER</text>
+  <text x="240" y="13" font-size="6.5" fill="#fbbf24" font-weight="700" text-anchor="middle" letter-spacing="1">EVENT BUS · window</text>
+  <text x="410" y="13" font-size="6.5" fill="rgba(232,237,242,0.55)" font-weight="700" text-anchor="middle" letter-spacing="1">LISTENERS</text>
+  <line x1="20" y1="19" x2="140" y2="19" stroke="rgba(255,255,255,0.15)"/>
+  <line x1="160" y1="19" x2="320" y2="19" stroke="rgba(251,191,36,0.3)"/>
+  <line x1="340" y1="19" x2="460" y2="19" stroke="rgba(255,255,255,0.15)"/>
 
-  <rect x="20" y="34" width="140" height="36" rx="4" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.12)"/>
-  <text x="90" y="48" font-size="7" fill="rgba(232,237,242,0.7)" font-weight="700" text-anchor="middle">Sidebar (base.html)</text>
-  <text x="90" y="60" font-size="6" fill="rgba(232,237,242,0.4)" text-anchor="middle">user picks active project</text>
+  <rect x="20" y="28" width="120" height="32" rx="4" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.12)"/>
+  <text x="80" y="40" font-size="6.5" fill="rgba(232,237,242,0.7)" font-weight="700" text-anchor="middle">Sidebar (base.html)</text>
+  <text x="80" y="51" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">user picks active project</text>
 
-  <rect x="180" y="34" width="180" height="36" rx="4" fill="rgba(251,191,36,0.1)" stroke="rgba(251,191,36,0.32)"/>
-  <text x="270" y="46" font-size="7" fill="#fbbf24" font-weight="700" text-anchor="middle">cockpit:projectChanged</text>
-  <text x="270" y="58" font-size="6" fill="rgba(232,237,242,0.45)" text-anchor="middle">detail: { key, name, revizto_uuid,</text>
-  <text x="270" y="68" font-size="6" fill="rgba(232,237,242,0.45)" text-anchor="middle">morta_hub_id, forma_id }</text>
+  <rect x="160" y="28" width="160" height="32" rx="4" fill="rgba(251,191,36,0.1)" stroke="rgba(251,191,36,0.32)"/>
+  <text x="240" y="40" font-size="6.5" fill="#fbbf24" font-weight="700" text-anchor="middle">cockpit:projectChanged</text>
+  <text x="240" y="51" font-size="5.5" fill="rgba(232,237,242,0.45)" text-anchor="middle">{ key, name, platform IDs }</text>
 
-  <line x1="160" y1="52" x2="178" y2="52" stroke="rgba(251,191,36,0.5)" marker-end="url(#ev8a)"/>
+  <line x1="140" y1="44" x2="158" y2="44" stroke="rgba(251,191,36,0.5)" marker-end="url(#ev8a)"/>
 
-  <rect x="380" y="28" width="140" height="22" rx="3" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.1)"/>
-  <text x="450" y="42" font-size="7" fill="rgba(232,237,242,0.65)" text-anchor="middle">manage.html</text>
-  <line x1="360" y1="48" x2="378" y2="38" stroke="rgba(251,191,36,0.5)" marker-end="url(#ev8a)"/>
+  <rect x="340" y="22" width="120" height="20" rx="3" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.1)"/>
+  <text x="400" y="35" font-size="6" fill="rgba(232,237,242,0.65)" text-anchor="middle">manage.html</text>
+  <line x1="320" y1="40" x2="338" y2="32" stroke="rgba(251,191,36,0.5)" marker-end="url(#ev8a)"/>
 
-  <rect x="380" y="54" width="140" height="22" rx="3" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.1)"/>
-  <text x="450" y="68" font-size="7" fill="rgba(232,237,242,0.65)" text-anchor="middle">extractions.html</text>
-  <line x1="360" y1="58" x2="378" y2="64" stroke="rgba(251,191,36,0.5)" marker-end="url(#ev8a)"/>
+  <rect x="340" y="46" width="120" height="20" rx="3" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.1)"/>
+  <text x="400" y="59" font-size="6" fill="rgba(232,237,242,0.65)" text-anchor="middle">extractions.html</text>
+  <line x1="320" y1="46" x2="338" y2="56" stroke="rgba(251,191,36,0.5)" marker-end="url(#ev8a)"/>
 
-  <rect x="380" y="80" width="140" height="22" rx="3" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.1)"/>
-  <text x="450" y="94" font-size="7" fill="rgba(232,237,242,0.65)" text-anchor="middle">scheduler.html</text>
-  <line x1="360" y1="62" x2="378" y2="90" stroke="rgba(251,191,36,0.5)" marker-end="url(#ev8a)"/>
+  <rect x="340" y="70" width="120" height="20" rx="3" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.1)"/>
+  <text x="400" y="83" font-size="6" fill="rgba(232,237,242,0.65)" text-anchor="middle">scheduler.html</text>
+  <line x1="320" y1="50" x2="338" y2="80" stroke="rgba(251,191,36,0.5)" marker-end="url(#ev8a)"/>
 
-  <rect x="380" y="106" width="140" height="22" rx="3" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.1)"/>
-  <text x="450" y="120" font-size="7" fill="rgba(232,237,242,0.65)" text-anchor="middle">home.html (live activity)</text>
-  <line x1="360" y1="68" x2="378" y2="116" stroke="rgba(251,191,36,0.5)" marker-end="url(#ev8a)"/>
+  <rect x="340" y="94" width="120" height="20" rx="3" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.1)"/>
+  <text x="400" y="107" font-size="6" fill="rgba(232,237,242,0.65)" text-anchor="middle">home.html</text>
+  <line x1="320" y1="56" x2="338" y2="104" stroke="rgba(251,191,36,0.5)" marker-end="url(#ev8a)"/>
 
-  <rect x="20" y="100" width="140" height="34" rx="4" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.12)"/>
-  <text x="90" y="114" font-size="7" fill="rgba(232,237,242,0.7)" font-weight="700" text-anchor="middle">Model picker</text>
-  <text x="90" y="126" font-size="6" fill="rgba(232,237,242,0.4)" text-anchor="middle">extractions / scheduler</text>
+  <rect x="20" y="80" width="120" height="32" rx="4" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.12)"/>
+  <text x="80" y="92" font-size="6.5" fill="rgba(232,237,242,0.7)" font-weight="700" text-anchor="middle">Model picker</text>
+  <text x="80" y="103" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">extractions / scheduler</text>
 
-  <rect x="180" y="100" width="180" height="34" rx="4" fill="rgba(251,191,36,0.1)" stroke="rgba(251,191,36,0.32)"/>
-  <text x="270" y="114" font-size="7" fill="#fbbf24" font-weight="700" text-anchor="middle">cockpit:modelChanged</text>
-  <text x="270" y="126" font-size="6" fill="rgba(232,237,242,0.45)" text-anchor="middle">detail: { id, name }</text>
-  <line x1="160" y1="116" x2="178" y2="116" stroke="rgba(251,191,36,0.5)" marker-end="url(#ev8a)"/>
-  <line x1="360" y1="120" x2="378" y2="125" stroke="rgba(251,191,36,0.5)" marker-end="url(#ev8a)"/>
+  <rect x="160" y="80" width="160" height="32" rx="4" fill="rgba(251,191,36,0.1)" stroke="rgba(251,191,36,0.32)"/>
+  <text x="240" y="92" font-size="6.5" fill="#fbbf24" font-weight="700" text-anchor="middle">cockpit:modelChanged</text>
+  <text x="240" y="103" font-size="5.5" fill="rgba(232,237,242,0.45)" text-anchor="middle">{ id, name }</text>
+  <line x1="140" y1="96" x2="158" y2="96" stroke="rgba(251,191,36,0.5)" marker-end="url(#ev8a)"/>
+  <line x1="320" y1="100" x2="338" y2="105" stroke="rgba(251,191,36,0.5)" marker-end="url(#ev8a)"/>
 
-  <text x="270" y="172" font-size="7" fill="rgba(232,237,242,0.55)" font-weight="700" text-anchor="middle">PERSISTENCE PATH</text>
-  <line x1="60" y1="180" x2="480" y2="180" stroke="rgba(255,255,255,0.15)"/>
+  <text x="240" y="140" font-size="6.5" fill="rgba(232,237,242,0.55)" font-weight="700" text-anchor="middle">PERSISTENCE PATH</text>
+  <line x1="80" y1="146" x2="400" y2="146" stroke="rgba(255,255,255,0.15)"/>
 
-  <text x="270" y="198" font-size="6.5" fill="rgba(232,237,242,0.5)" text-anchor="middle">Sidebar also writes via POST /api/context — so context survives page reloads.</text>
-  <text x="270" y="210" font-size="6.5" fill="rgba(232,237,242,0.5)" text-anchor="middle">Each child page calls GET /api/context on init to populate activeCtx state.</text>
-  <text x="270" y="222" font-size="6.5" fill="rgba(232,237,242,0.4)" text-anchor="middle" font-style="italic">Event = in-session refresh. /api/context = cross-session truth.</text>
+  <text x="240" y="162" font-size="5.5" fill="rgba(232,237,242,0.5)" text-anchor="middle">Sidebar also writes via POST /api/context — context survives page reloads.</text>
+  <text x="240" y="173" font-size="5.5" fill="rgba(232,237,242,0.5)" text-anchor="middle">Each child page calls GET /api/context on init.</text>
+  <text x="240" y="188" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle" font-style="italic">Event = in-session refresh.   /api/context = cross-session truth.</text>
 </svg>
 </div>
 
