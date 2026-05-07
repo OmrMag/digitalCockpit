@@ -5628,11 +5628,12 @@ async def api_invites_stats(
     """Count invites SENT and RECEIVED by the current admin, scoped to
     their registry projects, within the requested time window.
 
-    SENT     = entries where this admin acted as the inviter. The invite
-               log doesn't currently track who sent the invite, so we
-               approximate by counting all invite events on projects this
-               admin manages (matches what /profile uses).
-    RECEIVED = entries where the invited email == this admin's email.
+    SENT     = invite events on projects this admin manages where at least
+               one platform send was attempted (i.e. NOT all-skipped).
+               The invite log doesn't track who clicked the button, so this
+               is a project-team-wide proxy.
+    RECEIVED = invite events where the invited email == this admin's email
+               (matched case-insensitively, with whitespace trimmed).
 
     period: '7d', '30d', or 'all'. Anything else is treated as '30d'.
     """
@@ -5666,19 +5667,41 @@ async def api_invites_stats(
         except (ValueError, TypeError):
             return False
 
+    def is_invite_shape(entry: dict) -> bool:
+        """Defensive: only accept entries that look like real invite events.
+        Same rule applied in /api/invite/log."""
+        if not isinstance(entry, dict):
+            return False
+        if entry.get("mode") not in ("single", "bulk"):
+            return False
+        return any(k in entry for k in ("morta_status", "revizto_status", "forma_status"))
+
+    def has_real_send(entry: dict) -> bool:
+        """A 'real' invite is one where at least one platform actually got
+        an invite request (status is anything other than 'skipped' or empty).
+        This excludes log rows where the admin clicked Approve on a portal
+        submission with no platforms selected — those produce a row with
+        all three statuses as 'skipped' which inflates SENT artificially."""
+        for k in ("morta_status", "revizto_status", "forma_status"):
+            v = (entry.get(k) or "").lower()
+            if v and v != "skipped":
+                return True
+        return False
+
+    user_normalized = user.strip().lower()
     sent = 0
     received = 0
-    user_lower = user.lower()
     for e in log:
+        if not is_invite_shape(e):
+            continue
         if not in_window(e):
             continue
-        # received: the invitee email is this admin
-        if (e.get("email") or "").lower() == user_lower:
+        # received: the invitee email is this admin (case/whitespace insensitive)
+        if (e.get("email") or "").strip().lower() == user_normalized:
             received += 1
-        # sent: any entry on a project this admin manages (proxy for
-        # "this admin's team sent an invite", since invite_log doesn't
-        # record who clicked the button)
-        if e.get("project_key") in scoped_keys:
+        # sent: invite event on a project this admin manages, AND at least
+        # one platform send actually attempted (non-skipped)
+        if e.get("project_key") in scoped_keys and has_real_send(e):
             sent += 1
 
     return JSONResponse({
@@ -5864,6 +5887,11 @@ async def api_invite_log(
 
     project_key: if provided, filter to that specific project only.
     limit: max entries to return (most recent first), default 50.
+
+    Defensively filters to only entries that look like invite events
+    (mode = single/bulk, with at least one platform status field). The
+    file should only contain invites, but in case anything else got
+    written there over time, we don't show pollution to admins.
     """
     log           = load_invite_log()
     user_projects = get_user_projects(user)
@@ -5876,6 +5904,20 @@ async def api_invite_log(
     # If a specific project is selected, filter to that project only
     if project_key:
         log = [e for e in log if e.get("project_key") == project_key]
+
+    # Defensive shape filter — only include entries that are clearly invites.
+    # An invite log entry has a mode (single/bulk) AND at least one platform
+    # status field (morta_status/revizto_status/forma_status). Anything that
+    # looks different — debug rows, malformed entries, things written by
+    # mistake — gets dropped silently.
+    def _is_invite_entry(e: dict) -> bool:
+        if not isinstance(e, dict):
+            return False
+        if e.get("mode") not in ("single", "bulk"):
+            return False
+        return any(k in e for k in ("morta_status", "revizto_status", "forma_status"))
+
+    log = [e for e in log if _is_invite_entry(e)]
 
     # Most recent first, capped at limit
     log = log[-limit:][::-1]

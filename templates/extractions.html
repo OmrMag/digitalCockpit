@@ -96,17 +96,25 @@
         <span class="ext-level-badge l3">L3</span>
         Model Level — requires active project + model from Scenes &amp; Models
     </div>
-    <div class="ext-model-bar" id="revizto-model-bar" style="display:none;">
+    <div class="ext-model-bar" id="revizto-model-bar">
         <span class="ctx-bar-label">Active Model</span>
-        <div class="searchable-select" id="reviztoModelSearchable">
-            <input type="text" class="ss-input" id="reviztoModelInput"
-                   placeholder="— select a model —" autocomplete="off"
-                   data-selected-id="" data-selected-name="">
-            <button type="button" class="ss-clear" id="reviztoModelClear" title="Clear" tabindex="-1">×</button>
-            <div class="ss-panel" id="reviztoModelPanel"></div>
+        <div style="display:flex; align-items:center; gap:8px; flex:1;">
+            <div class="searchable-select" id="reviztoModelSearchable" style="flex:1;">
+                <input type="text" class="ss-input" id="reviztoModelInput"
+                       placeholder="— fetch models first —" autocomplete="off"
+                       data-selected-id="" data-selected-name="" disabled>
+                <button type="button" class="ss-clear" id="reviztoModelClear" title="Clear" tabindex="-1">×</button>
+                <div class="ss-panel" id="reviztoModelPanel"></div>
+            </div>
+            <!-- legacy hidden select kept so saveReviztoModel can still read scene/model JSON -->
+            <select id="reviztoModelSelect" style="display:none;" onchange="saveReviztoModel()"></select>
+            <button class="btn btn-sm btn-secondary" onclick="fetchReviztoModels()">
+                <svg id="fetchReviztoModelsIcon" xmlns="http://www.w3.org/2000/svg" width="11" height="11" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                </svg>
+                Fetch Models
+            </button>
         </div>
-        <!-- legacy hidden select kept so saveReviztoModel can still read scene/model JSON -->
-        <select id="reviztoModelSelect" style="display:none;" onchange="saveReviztoModel()"></select>
     </div>
     <div class="ext-grid">
         <div class="extractor-card disabled" data-script="Revizto_GET_Object_Tree_With_Properties" data-level="3" data-platform="revizto">
@@ -739,6 +747,83 @@ function saveReviztoModel() {
     window.dispatchEvent(new CustomEvent('cockpit:modelChanged', { detail: { val } }));
 }
 
+// ── Revizto model fetch ──────────────────────────────────────────────────
+// Mirrors the Forma "Fetch Models" UX. Triggers the L2 Scenes & Models
+// extraction silently (no terminal spam), then loads the resulting export
+// into the dropdown. Same effect as clicking Run on the L2 card, but
+// scoped to "I just want models, don't show me the script log."
+async function fetchReviztoModels() {
+    if (!activeCtx.revizto_project_uuid) {
+        alert('Select an active project first.');
+        return;
+    }
+    const icon  = document.getElementById('fetchReviztoModelsIcon');
+    const ss    = getReviztoSS();
+    const input = document.getElementById('reviztoModelInput');
+
+    icon.style.animation = 'spin 0.8s linear infinite';
+    ss.setEnabled(false);
+    input.placeholder = 'Fetching…';
+    ss.setItems([]);
+    ss.clear();
+
+    try {
+        // Same endpoint the L2 card uses. The response is an SSE stream.
+        // We drain it but discard everything — we only care about success.
+        const res = await fetch('/api/extract/stream', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                script:       'Revizto_GET_Scenes_and_Models_with_Properties',
+                project_uuid: activeCtx.revizto_project_uuid,
+                project_name: activeCtx.revizto_project_name || null,
+            })
+        });
+        if (!res.ok || !res.body) {
+            input.placeholder = `Fetch failed (HTTP ${res.status})`;
+            return;
+        }
+        // Drain the stream to completion. The export file is written
+        // server-side once the script finishes, so we just need to know
+        // when the SSE stream ends.
+        const reader  = res.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let succeeded = false;
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            // Look for the 'done' SSE event with success status, but
+            // we don't strictly need to parse — completion implies the
+            // export was written. Still, capture status for nicer errors.
+            const chunk = decoder.decode(value, { stream: true });
+            if (chunk.includes('"status": "success"') || chunk.includes('"status":"success"')) {
+                succeeded = true;
+            }
+        }
+        if (!succeeded) {
+            input.placeholder = 'Fetch returned no models — check Settings or run L2 manually for details';
+            return;
+        }
+        // Load the export into the dropdown
+        await loadReviztoModelsFromExport();
+        const items = ss.getItems ? ss.getItems() : null;
+        // setItems was called inside populateReviztoModels via load helper;
+        // if the dropdown still has no items, the export was empty.
+        if (input.dataset.selectedId === '' && document.getElementById('reviztoModelSelect').options.length === 0) {
+            input.placeholder = 'No models found in this project';
+        } else {
+            input.placeholder = '— select or type to search —';
+            ss.setEnabled(true);
+        }
+    } catch (e) {
+        console.error(e);
+        input.placeholder = 'Failed to fetch';
+    } finally {
+        icon.style.animation = '';
+    }
+}
+
 // ── Forma model fetch & select ────────────────────────────────────────────
 async function fetchFormaModels(force = false) {
     const icon = document.getElementById('fetchModelsIcon');
@@ -1265,7 +1350,23 @@ async function refreshOneL4Status(card) {
 // Hook into the project-change event the sidebar fires when the user
 // switches active project. Same event also fires when the active model
 // changes (saveModelToConfig publishes one). We listen to both.
-window.addEventListener('cockpit:projectChanged', () => refreshL4Statuses());
+window.addEventListener('cockpit:projectChanged', async () => {
+    // Reload context so activeCtx reflects the new project's IDs/names.
+    await loadActiveContext();
+    // Clear the Revizto model dropdown — last project's models don't
+    // apply to the new project. User clicks Fetch Models to populate
+    // for the newly active project. Forma auto-fetches in
+    // loadActiveContext, so it's already taken care of.
+    const revSS = getReviztoSS();
+    revSS.setEnabled(false);
+    revSS.setItems([]);
+    revSS.clear();
+    document.getElementById('reviztoModelInput').placeholder = '— fetch models first —';
+    document.querySelectorAll('#tab-revizto .extractor-card[data-level="3"]').forEach(c => {
+        c.classList.add('disabled');
+    });
+    refreshL4Statuses();
+});
 window.addEventListener('cockpit:modelChanged',   () => refreshL4Statuses());
 
 loadActiveContext();
