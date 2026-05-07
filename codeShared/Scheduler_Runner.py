@@ -167,20 +167,43 @@ def run_shard(
                                  status="failed",
                                  error="Shard is auto-disabled after repeated failures.")
 
-        # ── Step 2: enforce dependency stamps for L4 scripts ───────────
+        # ── Step 2: enforce / auto-satisfy L4 dependencies ─────────────
+        # For L4 scripts (those listed in L4_DEPENDENCIES) we don't fail
+        # outright if the prerequisite L3 hasn't run; instead we either
+        # reuse a recent L3 cache (≤24h, same model) OR run L3 inline first.
+        # See _ensure_l3_prerequisite() docstring for the full rule.
         script_name = shard.get("script", "")
         platform    = shard.get("platform", "")
         if not script_name or not platform:
             return _finalize_run(run_record, started, append_run,
                                  status="failed", error="Shard has no script or platform.")
 
-        dep_check = _check_l4_dependency_for_shard(
-            shard, triggering_user, check_l4_dependency,
+        prereq_outcome = _ensure_l3_prerequisite(
+            shard=shard,
+            triggering_user=triggering_user,
+            run_temp=run_temp,
+            run_id=run_id,
+            build_config_for_user=build_config_for_user,
+            write_config_to_path=write_config_to_path,
+            prepare_forma_3l_token=prepare_forma_3l_token,
+            prepare_revizto_tokens=prepare_revizto_tokens,
+            check_l4_dependency=check_l4_dependency,
+            stamp_l3_run=stamp_l3_run,
+            resolve_script_path=resolve_script_path,
         )
-        if dep_check is not None and not dep_check.get("ready", True):
-            return _finalize_run(run_record, started, append_run,
-                                 status="failed",
-                                 error=f"Dependency not satisfied: {dep_check.get('message', 'unknown')}")
+        if prereq_outcome.get("status") == "failed":
+            return _finalize_run(
+                run_record, started, append_run,
+                status="failed",
+                error=prereq_outcome.get("error", "L3 prerequisite failed."),
+                stdout_tail=prereq_outcome.get("stdout_tail") or [],
+            )
+        # Append a one-line breadcrumb to the run's stdout_tail describing
+        # what happened with the prereq, so the run detail UI shows it.
+        if prereq_outcome.get("note"):
+            run_record["stdout_tail"] = list(run_record.get("stdout_tail") or []) + [
+                f"[prereq] {prereq_outcome['note']}"
+            ]
 
         # ── Step 3: resolve the script file ────────────────────────────
         try:
@@ -228,6 +251,17 @@ def run_shard(
             print(f"[scheduler] revizto tokens prep failed (non-fatal): {e}", flush=True)
 
         # ── Step 6: spawn the subprocess ───────────────────────────────
+        # Snapshot the file set in run_temp NOW so we can later identify
+        # which files this subprocess produced vs which files were already
+        # present (e.g., from an inline L3 prerequisite that ran in step 2).
+        # Without this, the L4 run would upload the L3 outputs as part of
+        # its own output, polluting the run record.
+        files_before = set()
+        try:
+            files_before = {p.name for p in run_temp.iterdir() if p.is_file()}
+        except Exception:
+            pass
+
         try:
             result = subprocess.run(
                 [sys.executable, str(script_path)],
@@ -262,7 +296,11 @@ def run_shard(
         run_record["stdout_tail"] = stdout_tail
 
         # ── Step 7: collect output files ───────────────────────────────
-        output_files = _collect_output_files(run_temp)
+        # Restrict to files that didn't exist before the subprocess fired.
+        # This excludes any L3 prerequisite outputs — they're inputs to L4,
+        # not part of L4's own output set.
+        all_output_files = _collect_output_files(run_temp)
+        output_files = [f for f in all_output_files if f.name not in files_before]
         if ok and not output_files:
             # Script claimed success but produced no files. Treat as partial:
             # don't block the shard from running again, but flag it.
@@ -593,6 +631,373 @@ def _check_l4_dependency_for_shard(
     if result.get("reason") == "unknown_script":
         return None
     return result
+
+
+# Cache window for L3 reuse: how recent must a prior L3 stamp be to skip
+# running L3 again? 24h matches the user's design intent — running 15 reports
+# against the same model in one day shouldn't trigger 15 L3 fetches.
+L3_CACHE_WINDOW_SEC = 24 * 60 * 60
+
+
+def _read_dotted_path(d: dict, path: str):
+    """Walk a dict by 'a.b.c' path. Returns '' on miss. Mirror of app.py's
+    helper of the same name. We duplicate it here to avoid coupling the
+    runner module to app.py's internals."""
+    cur = d
+    for part in path.split("."):
+        if not isinstance(cur, dict):
+            return ""
+        cur = cur.get(part, "")
+    return cur if isinstance(cur, str) else (str(cur) if cur else "")
+
+
+def _shard_context_value_for_dep(shard: dict, dep_meta: dict) -> str:
+    """Extract the context value (e.g., the model_item_id) from THIS SHARD'S
+    saved context, not from the user's current sidebar selection. This is
+    the key to scheduler correctness: a shard targets a specific model,
+    and we must check the cache against THAT model.
+
+    `dep_meta` is the L4_DEPENDENCIES entry. It has e.g.
+        context_path: "forma.model_item_id"
+    Translate that path into a lookup against shard["context"] which uses
+    flat keys like "model_item_id" (not nested under "forma")."""
+    path = (dep_meta.get("context_path") or "").lower()
+    sc   = shard.get("context") or {}
+    # Map known dotted paths to the shard.context flat keys
+    if "forma.model_item_id" in path:
+        return str(sc.get("model_item_id") or "")
+    if "forma.model_name" in path:
+        return str(sc.get("model_name") or "")
+    if "forma.project_id" in path:
+        return str(sc.get("project_id") or "")
+    if "revizto.project_uuid" in path:
+        return str(sc.get("project_uuid") or "")
+    if "morta.hub_id" in path:
+        return str(sc.get("hub_id") or "")
+    return ""
+
+
+def _ensure_l3_prerequisite(
+    *,
+    shard: dict,
+    triggering_user: str,
+    run_temp: Path,
+    run_id: str,
+    build_config_for_user: Callable[[str], dict],
+    write_config_to_path: Callable[[dict, Path], None],
+    prepare_forma_3l_token: Callable[[str, Path], Optional[Path]],
+    prepare_revizto_tokens: Callable[[str, Path], Optional[Path]],
+    check_l4_dependency: Callable[[str, str], dict],
+    stamp_l3_run: Callable[[str, str, list], None],
+    resolve_script_path: Callable[[str, str], Path],
+) -> dict:
+    """For an L4 shard, decide whether to skip (cache hit) or run L3 inline.
+
+    Returns one of:
+      {"status": "noop",      "note": ""}                 — script has no L4 dependency
+      {"status": "cache_hit", "note": "..."}              — L3 was run within 24h for this model
+      {"status": "ran_l3",    "note": "..."}              — L3 ran successfully here
+      {"status": "failed",    "error": "...",
+                              "stdout_tail": [...]}        — L3 was needed but failed
+
+    Side effect on success-with-run: the L3 outputs land in run_temp so the
+    L4 subprocess (which runs immediately after, sharing the same temp dir)
+    will find them via COCKPIT_EXPORTS_DIR. We also call stamp_l3_run() so
+    a subsequent run within 24h will cache-hit.
+
+    Why we don't reuse _check_l4_dependency_for_shard: that helper relies on
+    the user's CURRENT config context which is wrong for scheduled runs —
+    the shard might target a different model than the user's sidebar shows.
+    We do our own shard-aware lookup here."""
+    # Late import to avoid coupling runner to app.py at module load time.
+    # app.py is the source of truth for L4_DEPENDENCIES.
+    try:
+        from app import L4_DEPENDENCIES, load_config
+    except Exception as e:
+        # Without the dependency map we can't know what's an L4 — best we
+        # can do is skip the check entirely. Same as the old behaviour.
+        print(f"[scheduler] L4_DEPENDENCIES lookup unavailable: {e}", flush=True)
+        return {"status": "noop", "note": ""}
+
+    script_name = shard.get("script", "")
+    dep = L4_DEPENDENCIES.get(script_name)
+    if not dep:
+        # This script has no L4 prerequisite — nothing to check
+        return {"status": "noop", "note": ""}
+
+    # We have an L4 script. Identify the prerequisite + the model the shard
+    # is targeting (NOT the user's current sidebar selection).
+    prereq_script = dep.get("requires", "")
+    if not prereq_script:
+        return {"status": "noop", "note": ""}
+
+    model_id = _shard_context_value_for_dep(shard, dep)
+    if not model_id:
+        return {
+            "status": "failed",
+            "error":  f"Shard has no {dep.get('human_thing','model')} selected; "
+                      f"required for {dep.get('human_prereq','prerequisite')}.",
+        }
+
+    # Look up the user's last L3 stamp for THIS prereq script. The stamp
+    # structure (set by _stamp_l3_run in app.py) is:
+    #   forma.last_runs[prereq_script] = {
+    #       context_value, context_label, ran_at, files
+    #   }
+    try:
+        cfg = build_config_for_user(triggering_user)
+    except Exception as e:
+        return {"status": "failed",
+                "error": f"Could not load user config: {e}"}
+
+    # build_config_for_user returns the merged config. The stamps live in
+    # the user's personal config, which gets merged in. last_runs is under
+    # the platform namespace.
+    platform_block = cfg.get(dep.get("platform", "forma"), {}) or {}
+    last_runs      = platform_block.get("last_runs", {}) or {}
+    prev           = last_runs.get(prereq_script) or {}
+
+    now = int(time.time())
+    fresh = (
+        prev
+        and str(prev.get("context_value") or "") == model_id
+        and isinstance(prev.get("ran_at"), (int, float))
+        and (now - int(prev.get("ran_at"))) < L3_CACHE_WINDOW_SEC
+    )
+
+    if fresh:
+        age_hours = (now - int(prev.get("ran_at"))) / 3600.0
+        # Cache hit — L4 will read whatever L3 wrote previously. But since
+        # the runner uses a per-run temp dir (run_temp), the previous L3's
+        # output files live elsewhere. We need to make those files visible
+        # to L4 by copying them into run_temp.
+        copied = _copy_cached_l3_files_into_run_temp(prev.get("files") or [], run_temp)
+        if copied < 1:
+            # The cache stamp said files existed but we couldn't find them
+            # locally (cleaned up, restarted, etc.). Fall through to run L3
+            # again rather than fail with a confusing message.
+            print(f"[scheduler] L3 cache stamp for '{prereq_script}' lacks accessible files; re-running L3.", flush=True)
+        else:
+            return {
+                "status": "cache_hit",
+                "note":   f"Reused L3 ({prereq_script}) from {age_hours:.1f}h ago "
+                          f"({copied} cached files).",
+            }
+
+    # Cache miss → run L3 inline, in the same temp dir L4 will use
+    print(f"[scheduler] Auto-running L3 prerequisite '{prereq_script}' for shard '{shard.get('name','')}'", flush=True)
+    l3_outcome = _run_subprocess_for_l3(
+        l3_script_name=prereq_script,
+        platform=dep.get("platform", "forma"),
+        shard=shard,
+        triggering_user=triggering_user,
+        run_temp=run_temp,
+        run_id=run_id,
+        build_config_for_user=build_config_for_user,
+        write_config_to_path=write_config_to_path,
+        prepare_forma_3l_token=prepare_forma_3l_token,
+        prepare_revizto_tokens=prepare_revizto_tokens,
+        resolve_script_path=resolve_script_path,
+    )
+    if not l3_outcome.get("ok"):
+        return {
+            "status":      "failed",
+            "error":       f"L3 prerequisite ({prereq_script}) failed: {l3_outcome.get('error','unknown')}",
+            "stdout_tail": l3_outcome.get("stdout_tail") or [],
+        }
+
+    # Stamp the success so future runs within 24h cache-hit. Use the
+    # actual files L3 produced (the L4 will then run against these).
+    try:
+        produced = [str(p.name) for p in l3_outcome.get("files") or []]
+        stamp_l3_run(triggering_user, prereq_script, produced)
+    except Exception as e:
+        # Non-fatal: L4 can still proceed since the files are in run_temp.
+        # Future runs just won't cache-hit.
+        print(f"[scheduler] Stamp after auto-L3 failed (non-fatal): {e}", flush=True)
+
+    return {
+        "status": "ran_l3",
+        "note":   f"Auto-ran L3 ({prereq_script}); L4 will use its output.",
+    }
+
+
+def _copy_cached_l3_files_into_run_temp(filenames: list, run_temp: Path) -> int:
+    """A previous L3 run stamped its output filenames in the user's config.
+    Find those files on the local filesystem and copy them into run_temp so
+    the L4 subprocess (whose EXPORTS_DIR points at run_temp) can read them.
+
+    We search a few likely locations: the scheduler temp roots from the
+    last 30 days. If we can't find a file we just skip it — the caller
+    will re-run L3 if too few files were recovered.
+
+    Returns: number of files successfully copied."""
+    if not filenames:
+        return 0
+    copied = 0
+    # Search common roots for cached L3 output files
+    search_roots = [SCHEDULER_TEMP_ROOT]
+    # Per-admin temp dirs from manual extractions: /tmp/{safe_email}/
+    tmp_root = Path("/tmp")
+    if tmp_root.exists():
+        for child in tmp_root.iterdir():
+            if child.is_dir() and child.name not in ("_scheduler",):
+                search_roots.append(child)
+
+    for fname in filenames:
+        # Try to find this filename anywhere under the search roots
+        for root in search_roots:
+            if not root.exists():
+                continue
+            # rglob is fine here — these dirs are small (per-run temp)
+            try:
+                matches = list(root.rglob(fname))
+            except Exception:
+                continue
+            if matches:
+                # Pick the most recent one
+                matches.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+                src = matches[0]
+                dst = run_temp / fname
+                try:
+                    if src.resolve() != dst.resolve():
+                        shutil.copy2(src, dst)
+                    copied += 1
+                    break
+                except Exception as e:
+                    print(f"[scheduler] Could not copy cached L3 file {src}: {e}", flush=True)
+                    continue
+    return copied
+
+
+def _run_subprocess_for_l3(
+    *,
+    l3_script_name: str,
+    platform: str,
+    shard: dict,
+    triggering_user: str,
+    run_temp: Path,
+    run_id: str,
+    build_config_for_user: Callable[[str], dict],
+    write_config_to_path: Callable[[dict, Path], None],
+    prepare_forma_3l_token: Callable[[str, Path], Optional[Path]],
+    prepare_revizto_tokens: Callable[[str, Path], Optional[Path]],
+    resolve_script_path: Callable[[str, str], Path],
+) -> dict:
+    """Run an L3 prerequisite script inline, writing its output into the
+    same `run_temp` the subsequent L4 subprocess will use.
+
+    This is a STRIPPED-DOWN version of the main run pipeline:
+      - No run record (the parent shard's record covers both)
+      - No blob upload (L3 outputs are intermediate, kept only in temp)
+      - No stamp here (the caller handles that on success)
+
+    Returns:
+      {"ok": True,  "files": [Path, ...],  "stdout_tail": [...]}
+      {"ok": False, "error": "...",        "stdout_tail": [...]}"""
+    try:
+        script_path = resolve_script_path(platform, l3_script_name)
+    except Exception as e:
+        return {"ok": False, "error": f"Could not resolve L3 script path: {e}",
+                "stdout_tail": []}
+    if not script_path.exists():
+        return {"ok": False, "error": f"L3 script file not found: {script_path}",
+                "stdout_tail": []}
+
+    # Build merged config + override active_context with the shard's. Same
+    # as the main run does, but we write to a separate config file so the
+    # L4 step gets a fresh config write afterwards.
+    try:
+        cfg = build_config_for_user(triggering_user)
+        cfg = _override_context_from_shard(cfg, shard)
+        l3_config_path = run_temp / "_cockpit_config_l3.json"
+        write_config_to_path(cfg, l3_config_path)
+    except Exception as e:
+        return {"ok": False, "error": f"L3 config preparation failed: {e}",
+                "stdout_tail": []}
+
+    # Snapshot the temp dir's existing files so we can identify what L3
+    # newly produced (used to re-fingerprint the stamp).
+    before_files = set()
+    try:
+        before_files = {p.name for p in run_temp.iterdir() if p.is_file()}
+    except Exception:
+        pass
+
+    # Build the env for the subprocess
+    script_env = os.environ.copy()
+    script_env["COCKPIT_USER"]        = triggering_user
+    script_env["COCKPIT_EXPORTS_DIR"] = str(run_temp)
+    script_env["COCKPIT_CONFIG"]      = str(l3_config_path)
+    script_env["PYTHONUNBUFFERED"]    = "1"
+    script_env["COCKPIT_RUN_ID"]      = run_id
+    script_env["COCKPIT_RUN_KIND"]    = "scheduler-l3-prereq"
+
+    # Best-effort: same token prep as the main path
+    try:
+        f3l = prepare_forma_3l_token(triggering_user, run_temp)
+        if f3l:
+            script_env["COCKPIT_FORMA_3L_TOKEN_FILE"] = str(f3l)
+    except Exception:
+        pass
+    try:
+        rev_dir = prepare_revizto_tokens(triggering_user, run_temp)
+        if rev_dir:
+            script_env["COCKPIT_REVIZTO_TOKENS_DIR"] = str(rev_dir)
+    except Exception:
+        pass
+
+    # Spawn the L3 subprocess
+    try:
+        result = subprocess.run(
+            [sys.executable, str(script_path)],
+            capture_output=True, text=True,
+            timeout=SUBPROCESS_TIMEOUT_SEC,
+            cwd=str(script_path.parent),
+            env=script_env,
+        )
+    except subprocess.TimeoutExpired:
+        return {"ok": False,
+                "error": f"L3 timed out after {SUBPROCESS_TIMEOUT_SEC // 60} minutes.",
+                "stdout_tail": []}
+    except Exception as e:
+        return {"ok": False, "error": f"Failed to launch L3 subprocess: {e}",
+                "stdout_tail": []}
+
+    all_lines = (result.stdout + "\n" + result.stderr).strip().splitlines()
+    all_lines = [l for l in all_lines if l.strip()]
+    stdout_tail = all_lines[-50:]
+
+    had_save_marker = any(
+        ("saved" in l.lower() or "exported" in l.lower())
+        for l in all_lines
+    )
+    ok = result.returncode == 0 or had_save_marker
+    if not ok:
+        return {"ok": False,
+                "error": f"L3 exited with code {result.returncode}. "
+                         f"Last lines: {stdout_tail[-3:] if stdout_tail else 'no output'}",
+                "stdout_tail": stdout_tail}
+
+    # Identify the new files L3 produced (everything in run_temp that
+    # wasn't there before). Skip internal files (leading underscore).
+    new_files = []
+    try:
+        for p in run_temp.iterdir():
+            if p.is_file() and p.name not in before_files and not p.name.startswith("_"):
+                new_files.append(p)
+    except Exception:
+        pass
+
+    if not new_files:
+        # L3 said "ok" but produced no usable output files. Treat as a
+        # failure — otherwise we'd stamp success with empty files and the
+        # next run would think it's cached but find nothing to copy in.
+        return {"ok": False,
+                "error": "L3 ran without error but produced no output files.",
+                "stdout_tail": stdout_tail}
+
+    return {"ok": True, "files": new_files, "stdout_tail": stdout_tail}
 
 
 def _collect_output_files(run_temp: Path) -> list[Path]:
