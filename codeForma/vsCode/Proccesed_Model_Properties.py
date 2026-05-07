@@ -96,6 +96,17 @@ def _safe_filename(name: str) -> str:
     return name.strip(" _.") or "model"
 
 
+def _fmt_coord(v):
+    """Round a numeric coordinate to 2 decimal places. Leave non-numeric values
+    (e.g. the string "N/A") untouched so the report shape is consistent whether
+    or not the source had a real value."""
+    if isinstance(v, bool):           # bool is a subclass of int — skip it
+        return v
+    if isinstance(v, (int, float)):
+        return round(v, 2)
+    return v
+
+
 def is_suspicious(obj):
     rfn = (obj.get("_RFN") or obj.get("Type Name") or obj.get("name") or "").lower()
     return any(kw in rfn for kw in QUALITY_FLAG_KEYWORDS)
@@ -391,11 +402,11 @@ if __name__ == "__main__":
     # If a model doesn't have them (some Forma exports omit them), we
     # still emit "N/A" rows so the report has a consistent shape.
     if survey_point:
-        report.append({"Section": "Project Info", "Metric": "Survey Point E/W",       "Value": survey_point.get("E/W",  "N/A")})
-        report.append({"Section": "Project Info", "Metric": "Survey Point N/S",       "Value": survey_point.get("N/S",  "N/A")})
-        report.append({"Section": "Project Info", "Metric": "Survey Point Elevation", "Value": survey_point.get("Elev", "N/A")})
-        report.append({"Section": "Project Info", "Metric": "Survey Point Latitude",  "Value": survey_point.get("Lat",  "N/A")})
-        report.append({"Section": "Project Info", "Metric": "Survey Point Longitude", "Value": survey_point.get("Lon",  "N/A")})
+        report.append({"Section": "Project Info", "Metric": "Survey Point E/W",       "Value": _fmt_coord(survey_point.get("E/W",  "N/A"))})
+        report.append({"Section": "Project Info", "Metric": "Survey Point N/S",       "Value": _fmt_coord(survey_point.get("N/S",  "N/A"))})
+        report.append({"Section": "Project Info", "Metric": "Survey Point Elevation", "Value": _fmt_coord(survey_point.get("Elev", "N/A"))})
+        report.append({"Section": "Project Info", "Metric": "Survey Point Latitude",  "Value": _fmt_coord(survey_point.get("Lat",  "N/A"))})
+        report.append({"Section": "Project Info", "Metric": "Survey Point Longitude", "Value": _fmt_coord(survey_point.get("Lon",  "N/A"))})
     else:
         for m in ("Survey Point E/W", "Survey Point N/S", "Survey Point Elevation",
                   "Survey Point Latitude", "Survey Point Longitude"):
@@ -403,13 +414,13 @@ if __name__ == "__main__":
 
     if project_base_point:
         report.append({"Section": "Project Info", "Metric": "Project Base Point E/W",
-                       "Value": project_base_point.get("E/W", "N/A")})
+                       "Value": _fmt_coord(project_base_point.get("E/W", "N/A"))})
         report.append({"Section": "Project Info", "Metric": "Project Base Point N/S",
-                       "Value": project_base_point.get("N/S", "N/A")})
+                       "Value": _fmt_coord(project_base_point.get("N/S", "N/A"))})
         report.append({"Section": "Project Info", "Metric": "Project Base Point Elevation",
-                       "Value": project_base_point.get("Elev", "N/A")})
+                       "Value": _fmt_coord(project_base_point.get("Elev", "N/A"))})
         report.append({"Section": "Project Info", "Metric": "Angle to True North",
-                       "Value": project_base_point.get("Angle to True North", "N/A")})
+                       "Value": _fmt_coord(project_base_point.get("Angle to True North", "N/A"))})
     else:
         for m in ("Project Base Point E/W", "Project Base Point N/S",
                   "Project Base Point Elevation", "Angle to True North"):
@@ -561,14 +572,14 @@ if __name__ == "__main__":
     if project_info.get('Building Name'):
         print(f"  Building Name:                {project_info.get('Building Name')}")
     if survey_point:
-        print(f"  Survey Point E/W:             {survey_point.get('E/W', 'N/A')}")
-        print(f"  Survey Point N/S:             {survey_point.get('N/S', 'N/A')}")
-        print(f"  Survey Point Elev:            {survey_point.get('Elev', 'N/A')}")
+        print(f"  Survey Point E/W:             {_fmt_coord(survey_point.get('E/W', 'N/A'))}")
+        print(f"  Survey Point N/S:             {_fmt_coord(survey_point.get('N/S', 'N/A'))}")
+        print(f"  Survey Point Elev:            {_fmt_coord(survey_point.get('Elev', 'N/A'))}")
     if project_base_point:
-        print(f"  Project Base Point E/W:       {project_base_point.get('E/W', 'N/A')}")
-        print(f"  Project Base Point N/S:       {project_base_point.get('N/S', 'N/A')}")
-        print(f"  Project Base Point Elev:      {project_base_point.get('Elev', 'N/A')}")
-        print(f"  Angle to True North:          {project_base_point.get('Angle to True North', 'N/A')}")
+        print(f"  Project Base Point E/W:       {_fmt_coord(project_base_point.get('E/W', 'N/A'))}")
+        print(f"  Project Base Point N/S:       {_fmt_coord(project_base_point.get('N/S', 'N/A'))}")
+        print(f"  Project Base Point Elev:      {_fmt_coord(project_base_point.get('Elev', 'N/A'))}")
+        print(f"  Angle to True North:          {_fmt_coord(project_base_point.get('Angle to True North', 'N/A'))}")
     print(f"  Total Element Count (raw):    {raw_counts.get('total_objects', 0):,}")
     print(f"  Total Elements:               {elements_count:,}")
     print(f"  Family Types in Library:      {family_type_count:,}")
