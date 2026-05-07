@@ -68,6 +68,15 @@
 .builder-name-input::placeholder{color:var(--text-dark-muted);font-weight:400}
 .builder-name-input:focus{border-color:var(--accent)}
 .b-block{border:1px solid var(--border-cream);border-radius:var(--radius);overflow:hidden}
+/* Override for blocks containing a searchable-select dropdown. The dropdown
+   panel is position:absolute and would otherwise be clipped by the block's
+   overflow:hidden. We add a class hook (.b-block-overflow-ok) that's set on
+   any block containing a searchable-select; modern browsers also get the
+   :has() fallback automatically. */
+.b-block.b-block-overflow-ok,
+.b-block:has(.searchable-select){overflow:visible}
+.b-block.b-block-overflow-ok .b-body,
+.b-block:has(.searchable-select) .b-body{overflow:visible}
 .b-block-head{display:flex;align-items:center;gap:8px;padding:9px 14px;background:rgba(0,0,0,.018);border-bottom:1px solid var(--border-cream)}
 .b-num{width:20px;height:20px;border-radius:50%;background:rgba(74,158,255,.08);border:1px solid rgba(74,158,255,.2);display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;color:var(--accent);flex-shrink:0}
 .b-title{font-size:var(--fs-xs);font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--text-dark-muted)}
@@ -294,7 +303,7 @@
         <input class="builder-name-input" id="sb-name" type="text" placeholder="Shard name…" maxlength="100"/>
       </div>
 
-      <div class="b-block">
+      <div class="b-block b-block-overflow-ok">
         <div class="b-block-head"><div class="b-num">1</div><span class="b-title">Source</span></div>
         <div class="b-body">
           <div class="f"><label class="f-label">Platform</label>
@@ -1739,10 +1748,30 @@
     return _sbModelSS;
   }
 
+  // Filter Forma models to only those whose folder path passes through a
+  // folder containing "shared" (case-insensitive). Applied to both the
+  // shard-builder picker and any other consumer of /api/forma/models.
+  // Backward-compat: old cached entries lack path/parent_folder fields
+  // — those are returned UNFILTERED so the UI doesn't go empty after a
+  // schema bump (force_refresh once and they get the new shape).
+  function filterToSharedFolderModels(models){
+    return (models || []).filter(m => {
+      if (Array.isArray(m.path) && m.path.length > 0){
+        return m.path.some(seg => String(seg).toLowerCase().includes('shared'));
+      }
+      if (typeof m.parent_folder === 'string' && m.parent_folder){
+        return m.parent_folder.toLowerCase().includes('shared');
+      }
+      // Legacy cache entry — no path info. Show it (don't silently drop).
+      return true;
+    });
+  }
+
   async function loadFormaModelsForBuilder(projectId){
     const ss = getSbModelSS();
     if (modelsCacheByProject[projectId]){
-      ss.setItems(modelsCacheByProject[projectId].map(m => ({
+      const filtered = filterToSharedFolderModels(modelsCacheByProject[projectId]);
+      ss.setItems(filtered.map(m => ({
         id:   m.item_id || m.id || m.urn,
         name: m.name || m.title || (m.item_id || m.id || m.urn),
       })));
@@ -1764,12 +1793,20 @@
         return;
       }
       const models = data.models || [];
-      modelsCacheByProject[projectId] = models;
-      ss.setItems(models.map(m => ({
+      modelsCacheByProject[projectId] = models;     // raw, unfiltered cache
+      const filtered = filterToSharedFolderModels(models);
+      ss.setItems(filtered.map(m => ({
         id:   m.item_id || m.id || m.urn,
         name: m.name || m.title || (m.item_id || m.id || m.urn),
       })));
       ss.setEnabled(true);
+      if (filtered.length === 0 && models.length > 0){
+        // We had models but the Shared filter ate all of them. Tell the
+        // user — common cause is a project that doesn't follow the
+        // Shared/ folder convention.
+        document.getElementById('sbModelInput').placeholder =
+          '— no models in a "Shared" folder for this project —';
+      }
     } catch(e){
       ss.setItems([]);
       ss.setEnabled(false);
@@ -1783,12 +1820,13 @@
   // user can't change it.
   window.sbProjectChange = function(){};
 
-  // Fills the legacy hidden select directly (for backward compat with any
-  // edit-path code that pre-existed the searchable widget). The widget's
-  // own internal logic now handles the visible side.
+  // Fills the model widget for any caller that already has the model list.
+  // Applies the same Shared-folder filter so visible items are consistent
+  // with what loadFormaModelsForBuilder produces.
   function fillModels(models){
     const ss = getSbModelSS();
-    ss.setItems((models || []).map(m => ({
+    const filtered = filterToSharedFolderModels(models);
+    ss.setItems(filtered.map(m => ({
       id:   m.item_id || m.id || m.urn,
       name: m.name || m.title || (m.item_id || m.id || m.urn),
     })));

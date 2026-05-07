@@ -1530,12 +1530,25 @@ async def api_forma_models(request: Request, user: str = Depends(require_user)):
         found_models    = []
         visited_folders = set()
 
-        def walk_folder(folder_id, folder_name, depth=0):
+        def walk_folder(folder_id, folder_name, ancestors=None, depth=0):
+            """ancestors: list of folder names from the top down to (but not
+            including) folder_name. Used so each model record carries its
+            full folder breadcrumb — the frontend uses this to filter, e.g.
+            'only show models whose path passes through a folder named
+            Shared'. The cache shape thus becomes:
+              {id, name, parent_folder, path: [...], path_str: "A/B/C"}
+            Older cached entries that pre-date this field will lack `path`;
+            the frontend's filter falls back to "show everything" when
+            path is missing, so the change is backward-compatible.
+            """
+            if ancestors is None:
+                ancestors = []
             if depth > 5 or folder_id in visited_folders:
                 return
             visited_folders.add(folder_id)
             print(f"[Forma] {'  ' * depth}Folder: {folder_name}")
             page = 0
+            current_path = ancestors + [folder_name]
             while True:
                 try:
                     r = http_requests.get(
@@ -1559,12 +1572,18 @@ async def api_forma_models(request: Request, user: str = Depends(require_user)):
                     attrs = item.get("attributes", {})
                     name  = attrs.get("displayName") or attrs.get("name", "")
                     if itype == "folders":
-                        walk_folder(item["id"], name, depth + 1)
+                        walk_folder(item["id"], name, current_path, depth + 1)
                     elif itype == "items":
                         ext = "." + name.rsplit(".", 1)[-1].lower() if "." in name else ""
                         if ext in MODEL_EXTS:
-                            found_models.append({"id": item["id"], "name": name})
-                            print(f"[Forma] Found model: {name}")
+                            found_models.append({
+                                "id":            item["id"],
+                                "name":          name,
+                                "parent_folder": folder_name,
+                                "path":          current_path,
+                                "path_str":      "/".join(current_path),
+                            })
+                            print(f"[Forma] Found model: {name} in {'/'.join(current_path)}")
                 if not data.get("links", {}).get("next"):
                     break
                 page += 1

@@ -849,9 +849,26 @@ async function fetchFormaModels(force = false) {
             input.placeholder = data.error;
             return;
         }
-        const models = data.models || [];
-        if (!models.length) {
+        const allModels = data.models || [];
+        if (!allModels.length) {
             input.placeholder = 'No models found';
+            return;
+        }
+        // Filter to only models inside a folder named "Shared" (case-
+        // insensitive). Old cached entries that lack path/parent_folder
+        // metadata fall through unfiltered (backward compat — force_refresh
+        // once and the next fetch gets the new shape).
+        const models = allModels.filter(m => {
+            if (Array.isArray(m.path) && m.path.length > 0){
+                return m.path.some(seg => String(seg).toLowerCase().includes('shared'));
+            }
+            if (typeof m.parent_folder === 'string' && m.parent_folder){
+                return m.parent_folder.toLowerCase().includes('shared');
+            }
+            return true;   // legacy entry — show
+        });
+        if (!models.length) {
+            input.placeholder = 'No models in a "Shared" folder';
             return;
         }
         ss.setEnabled(true);
