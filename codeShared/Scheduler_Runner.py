@@ -308,21 +308,31 @@ def run_shard(
                                  status="failed",
                                  error="Script succeeded but produced no output files.")
 
-        # ── Step 7b: apply user output preferences (Block 7) ───────────
-        # Filter to requested formats + apply custom_name rename, both
-        # honored from the shard's output config. _apply_output_filters_and_rename
-        # supports the new `formats` list and the legacy single `format` string.
+        # ── Step 7b: apply user output preferences ─────────────────────
+        # Filter to requested formats + apply custom_name rename + apply
+        # prefix and naming flags (append_date, append_time, include_project_name,
+        # overwrite_latest). The helper supports the new `formats` list and
+        # the legacy single `format` string.
         out_cfg = shard.get("output") or {}
         formats_pref = out_cfg.get("formats")
         if not formats_pref and out_cfg.get("format"):
             # legacy compat
             formats_pref = [out_cfg["format"]]
-        custom_name = out_cfg.get("custom_name")
+        custom_name   = out_cfg.get("custom_name")
+        prefix        = out_cfg.get("prefix")
+        naming_flags  = out_cfg.get("naming") or []
+        # Project name is snapshotted into shard.context at save time (so
+        # renaming the project later doesn't change historical filenames)
+        project_name  = (shard.get("context") or {}).get("project_name", "")
 
-        if ok and (formats_pref or custom_name):
+        if ok and (formats_pref or custom_name or prefix or naming_flags):
             try:
                 output_files, filter_msg = _apply_output_filters_and_rename(
                     output_files, formats_pref, custom_name,
+                    prefix=prefix,
+                    naming_flags=naming_flags,
+                    project_name=project_name,
+                    run_started_at=started,
                 )
                 if filter_msg:
                     print(f"[scheduler] {filter_msg}", flush=True)
@@ -1020,6 +1030,11 @@ def _apply_output_filters_and_rename(
     files: list[Path],
     formats: list[str] | None,
     custom_name: str | None,
+    *,
+    prefix: str | None = None,
+    naming_flags: list[str] | None = None,
+    project_name: str | None = None,
+    run_started_at: float | None = None,
 ) -> tuple[list[Path], str]:
     """Apply user's output preferences from the shard config:
 
@@ -1028,18 +1043,32 @@ def _apply_output_filters_and_rename(
       2. CUSTOM RENAME: if custom_name is set, rename each kept file to
          <custom_name>.<original-ext>. Preserves extensions so callers
          downstream can still tell which is which.
+      3. PREFIX + NAMING FLAGS: prefix string and naming_flags list (chips
+         from the UI) are applied AFTER the custom_name step so the order
+         in the final filename is:
+             {prefix}{base}{_project_name}{_YYYYMMDD}{_HHMMSS}.{ext}
+         where `base` is custom_name (if set) or the original stem.
+         Recognised flags:
+             - "append_date"          → append _YYYYMMDD
+             - "append_time"          → append _HHMMSS
+             - "include_project_name" → append _ProjectName (sanitized)
+             - "overwrite_latest"     → also write a copy without timestamps
+                                        (the "latest" version) alongside the
+                                        timestamped file. Returns BOTH paths.
 
     Returns (kept_files, message). kept_files is the post-filter list of
-    Path objects (renamed on disk if custom_name applied). message is a
-    human-readable summary of what changed — empty string if nothing did.
+    Path objects (renamed on disk). message is a human-readable summary of
+    what changed — empty string if nothing did.
 
-    Side effect: renames files in place when custom_name is set. Original
-    paths in `files` become invalid for renamed entries.
+    Side effect: renames files in place. Original paths in `files` become
+    invalid for renamed entries. Also writes the "latest" copies if that
+    flag is set.
     """
     if not files:
         return [], ""
 
     notes = []
+    naming_flags = naming_flags or []
 
     # ── 1. Format filter ────────────────────────────────────────────────
     if formats:
@@ -1058,24 +1087,44 @@ def _apply_output_filters_and_rename(
             notes.append("no files matched the requested formats")
             return [], "; ".join(notes)
 
-    # ── 2. Custom rename ────────────────────────────────────────────────
-    cn = (custom_name or "").strip()
-    if cn:
-        # If multiple files share an extension after rename, they'd
-        # collide. e.g. two CSVs both named "foo.csv". To keep things
-        # predictable, first one wins; subsequent collisions get
-        # "_2", "_3" suffixes. Should be rare in practice (most scripts
-        # produce one file per format), but worth handling.
+    # ── 2. Compose the new base name from custom_name + prefix + flags ──
+    # We build the "decorated" base for each file, then rename in one pass.
+    # If no decoration is requested, files keep their original names.
+    pre = (prefix or "").strip()
+    cn  = (custom_name or "").strip()
+    decorate = bool(pre or cn or naming_flags)
+
+    if decorate:
+        # Build the timestamp suffix(es) and project-name suffix once
+        ts = run_started_at or time.time()
+        from datetime import datetime as _dt
+        run_dt = _dt.fromtimestamp(ts)
+        date_part = "_" + run_dt.strftime("%Y%m%d") if "append_date" in naming_flags else ""
+        time_part = "_" + run_dt.strftime("%H%M%S") if "append_time" in naming_flags else ""
+
+        proj_part = ""
+        if "include_project_name" in naming_flags and (project_name or "").strip():
+            # Sanitize: keep alphanumerics, dash, underscore; collapse spaces to underscore
+            import re as _re
+            safe_proj = _re.sub(r"[^A-Za-z0-9_\-]+", "_", project_name.strip()).strip("_")
+            if safe_proj:
+                proj_part = "_" + safe_proj
+
+        want_latest = "overwrite_latest" in naming_flags
+
         seen_targets: set = set()
         renamed: list[Path] = []
         for f in files:
             ext = f.suffix
-            target_name = f"{cn}{ext}"
+            base = cn if cn else f.stem  # stem = filename without extension
+            target_stem = f"{pre}{base}{proj_part}{date_part}{time_part}"
+            target_name = f"{target_stem}{ext}"
+
             if target_name in seen_targets:
                 # Collision — find a free numbered name
                 i = 2
                 while True:
-                    candidate = f"{cn}_{i}{ext}"
+                    candidate = f"{target_stem}_{i}{ext}"
                     if candidate not in seen_targets:
                         target_name = candidate
                         break
@@ -1083,15 +1132,38 @@ def _apply_output_filters_and_rename(
             seen_targets.add(target_name)
             new_path = f.parent / target_name
             try:
-                f.rename(new_path)
+                if new_path != f:
+                    f.rename(new_path)
                 renamed.append(new_path)
             except OSError as e:
                 # If rename fails (e.g. permission), keep original. Don't
                 # abort the run — better to deliver with original names.
                 notes.append(f"rename of {f.name} → {target_name} failed: {e}")
                 renamed.append(f)
+
+            # If overwrite_latest is set, ALSO write a non-timestamped copy
+            # alongside (e.g. "wynn_latest.csv"). This is the "stable" name
+            # for downstream consumers that always want "the latest" without
+            # parsing dates from filenames.
+            if want_latest:
+                latest_stem = f"{pre}{base}{proj_part}_latest" if (date_part or time_part) \
+                              else f"{pre}{base}{proj_part}"
+                latest_name = f"{latest_stem}{ext}"
+                if latest_name != target_name:
+                    latest_path = f.parent / latest_name
+                    try:
+                        # Use copy (not rename) so the timestamped file stays put
+                        shutil.copy2(new_path, latest_path)
+                        renamed.append(latest_path)
+                    except OSError as e:
+                        notes.append(f"latest copy {latest_name} failed: {e}")
+
         files = renamed
-        notes.append(f"renamed to '{cn}'")
+        bits = []
+        if cn: bits.append(f"renamed to '{cn}'")
+        if pre: bits.append(f"prefix '{pre}'")
+        if naming_flags: bits.append(f"flags {naming_flags}")
+        if bits: notes.append(", ".join(bits))
 
     return files, "; ".join(notes)
 

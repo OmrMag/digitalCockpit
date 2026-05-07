@@ -1862,6 +1862,13 @@
       ctx.model_name    = selected.name;
     }
 
+    // Snapshot the project name for filename generation (include_project_name
+    // naming flag). Read from activeCtx since that's what was displayed in
+    // the read-only project box. Snapshotted so renaming the project later
+    // doesn't change historical run filenames.
+    const projectName = (activeCtx && (activeCtx.active_project_name || activeCtx.active_project_key)) || '';
+    if (projectName) ctx.project_name = projectName;
+
     const naming = [];
     document.querySelectorAll('#view-shard-builder .chip.on').forEach(c=>naming.push(c.dataset.naming));
 
