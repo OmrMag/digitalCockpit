@@ -207,6 +207,44 @@
 #s-toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%) translateY(50px);background:var(--navy);color:var(--success);border-radius:var(--radius);padding:9px 18px;font-size:var(--fs-sm);font-weight:600;opacity:0;transition:all .25s ease;z-index:9999;pointer-events:none;white-space:nowrap;max-width:90vw;text-align:center}
 #s-toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 #s-toast.error{color:#ff8a80}
+
+/* Searchable select — same widget the Extractions page uses for Forma/Revizto
+   model pickers. Type to filter, arrow keys to navigate, enter to select.
+   The hidden #sb-model <select> mirrors the chosen value so existing
+   saveShard logic that reads from it keeps working. */
+.searchable-select { position:relative; width:100%; }
+.ss-input {
+    width:100%; padding:8px 28px 8px 12px; border:1px solid var(--border-cream);
+    border-radius:var(--radius); font-family:var(--font); font-size:var(--fs-sm);
+    color:var(--text-dark); background:white; box-sizing:border-box;
+    transition:border-color .12s, box-shadow .12s;
+}
+.ss-input:focus { outline:none; border-color:var(--navy); box-shadow:0 0 0 2px rgba(11,37,69,0.08); }
+.ss-input:disabled { background:var(--cream-mid); color:var(--text-dark-muted); cursor:not-allowed; }
+.ss-clear {
+    position:absolute; top:50%; right:6px; transform:translateY(-50%);
+    background:none; border:none; cursor:pointer; padding:0 6px; line-height:1;
+    color:var(--text-dark-muted); font-size:14px; display:none;
+}
+.ss-clear:hover { color:var(--navy); }
+.searchable-select.has-value .ss-clear { display:block; }
+.ss-panel {
+    display:none; position:absolute; top:calc(100% + 4px); left:0; right:0;
+    z-index:30; background:white; border:1px solid var(--border-cream);
+    border-radius:var(--radius); box-shadow:0 6px 18px rgba(0,0,0,0.08);
+    max-height:280px; overflow-y:auto;
+}
+.searchable-select.open .ss-panel { display:block; }
+.ss-option {
+    padding:6px 10px; font-size:var(--fs-xs); color:var(--text-dark);
+    cursor:pointer; border-bottom:1px solid var(--border-cream);
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.ss-option:last-child { border-bottom:none; }
+.ss-option:hover, .ss-option.active { background:var(--cream-mid); color:var(--navy); }
+.ss-option.selected { background:rgba(11,37,69,0.06); font-weight:600; }
+.ss-empty { padding:10px; font-size:var(--fs-xs); color:var(--text-dark-muted); font-style:italic; text-align:center; }
+.ss-count { padding:5px 10px; font-size:9px; color:var(--text-dark-muted); text-transform:uppercase; letter-spacing:0.5px; border-bottom:1px solid var(--border-cream); background:var(--cream-mid); position:sticky; top:0; }
 </style>
 
 <div class="sched-card">
@@ -286,7 +324,15 @@
           </div>
           <div class="f cond" id="sb-model-row">
             <label class="f-label">Model</label>
-            <select class="f-select" id="sb-model">
+            <div class="searchable-select" id="sbModelSearchable">
+              <input type="text" class="ss-input" id="sbModelInput"
+                     placeholder="— not applicable —" autocomplete="off"
+                     data-selected-id="" data-selected-name="" disabled>
+              <button type="button" class="ss-clear" id="sbModelClear" title="Clear" tabindex="-1">×</button>
+              <div class="ss-panel" id="sbModelPanel"></div>
+            </div>
+            <!-- Legacy hidden select kept so saveShard can still read .value -->
+            <select id="sb-model" style="display:none;">
               <option value="">— not applicable —</option>
             </select>
             <div class="f-help" id="sb-model-help">Required for L3 and L4 scripts. Choose the model the script should run against.</div>
@@ -1257,8 +1303,12 @@
     const pid   = document.getElementById('sb-project-id');
     if (pname) { pname.textContent = '— no active project —'; pname.style.color = ''; }
     if (pid)   { pid.textContent   = ''; pid.style.color = ''; }
-    document.getElementById('sb-model').innerHTML = '<option value="">— not applicable —</option>';
-    document.getElementById('sb-model').disabled = true;
+    // Reset model widget (clears items + resets placeholder + disables input)
+    const ssReset = getSbModelSS();
+    ssReset.clear();
+    ssReset.setItems([]);
+    ssReset.setEnabled(false);
+    document.getElementById('sbModelInput').placeholder = '— not applicable —';
     document.getElementById('sb-script-row').classList.remove('show');
     document.getElementById('sb-project-row').classList.remove('show');
     document.getElementById('sb-model-row').classList.remove('show');
@@ -1321,23 +1371,25 @@
           idEl.style.color = '';
         }
       }
-      // Restore saved model selection (L3/L4 only)
+      // Restore saved model selection (L3/L4 only). The widget may still
+      // be loading models at this point; we always inject the saved id
+      // into its items list so the displayed name is correct, then
+      // select it. When real models arrive the widget will re-render
+      // and the saved one will resolve to a real entry.
       if (ctx.model_item_id){
         setTimeout(()=>{
-          const modelSel = document.getElementById('sb-model');
-          // The model dropdown may still be loading at this point; if
-          // the saved model isn't an option, add it manually so the
-          // value sticks. fillModels will re-render with the proper
-          // list when models arrive.
-          if (modelSel.querySelector(`option[value="${ctx.model_item_id}"]`)){
-            modelSel.value = ctx.model_item_id;
-          } else {
-            const opt = document.createElement('option');
-            opt.value = ctx.model_item_id;
-            opt.textContent = ctx.model_name || ctx.model_item_id;
-            opt.selected = true;
-            modelSel.appendChild(opt);
+          const ss = getSbModelSS();
+          // If the model is not yet in the widget's items, seed it so the
+          // save can still happen with the right id+name. setItems
+          // replaces, so we read current items first.
+          const savedName = ctx.model_name || ctx.model_item_id;
+          if (!ss.hasItem(ctx.model_item_id)){
+            // Add JUST the saved one as a single-item list — better than
+            // nothing. Loader will replace with the full list when ready.
+            ss.setItems([{ id: ctx.model_item_id, name: savedName }]);
+            ss.setEnabled(true);
           }
+          ss.select(ctx.model_item_id);
         }, 250);
       }
     }, 50);
@@ -1450,23 +1502,28 @@
     // - L3/L4 (needsModel): real model dropdown, fetched for the active project
     // - L1/L2 (no model): "— not applicable —" placeholder, disabled
     document.getElementById('sb-model-row').classList.add('show');
-    const modelSel  = document.getElementById('sb-model');
+    const ssBuilder = getSbModelSS();
     const modelHelp = document.getElementById('sb-model-help');
     if (needsModel){
-      modelSel.disabled = false;
-      modelSel.innerHTML = '<option value="">Loading…</option>';
       modelHelp.textContent = 'Required for L3 and L4 scripts. Choose the model the script should run against.';
       // Trigger Forma model fetch (only Forma supports model picker today;
       // Revizto L3 model picker is a separate future build).
       const projectId = document.getElementById('sb-project').value;
       if (meta.platform === 'forma' && projectId){
+        ssBuilder.setItems([]);
+        ssBuilder.setEnabled(false);
+        document.getElementById('sbModelInput').placeholder = 'Loading models…';
         loadFormaModelsForBuilder(projectId);
       } else {
-        modelSel.innerHTML = '<option value="">— no project active, set one in sidebar —</option>';
+        ssBuilder.setItems([]);
+        ssBuilder.setEnabled(false);
+        document.getElementById('sbModelInput').placeholder = '— no project active, set one in sidebar —';
       }
     } else {
-      modelSel.disabled = true;
-      modelSel.innerHTML = '<option value="">— not applicable —</option>';
+      ssBuilder.clear();
+      ssBuilder.setItems([]);
+      ssBuilder.setEnabled(false);
+      document.getElementById('sbModelInput').placeholder = '— not applicable —';
       modelHelp.textContent = 'Model picker only applies to L3/L4 scripts.';
     }
   };
@@ -1510,10 +1567,186 @@
   // Same endpoint Extractions uses (POST with body), so the cache file is
   // shared between the two pages — clicking "Fetch Models" on Extractions
   // pre-warms this loader.
+  // ── Searchable model selector ─────────────────────────────────────────
+  // Lifted from extractions.html. Same widget used for Forma/Revizto model
+  // pickers there. Type to filter, arrow keys to navigate, enter to select.
+  // Mirrors the chosen value into a hidden <select id="sb-model"> so the
+  // existing saveShard logic that reads from .value still works.
+  function makeSearchableSelect(opts) {
+    const root         = document.getElementById(opts.rootId);
+    const input        = document.getElementById(opts.inputId);
+    const panel        = document.getElementById(opts.panelId);
+    const clearBtn     = document.getElementById(opts.clearBtnId);
+    const legacySelect = document.getElementById(opts.legacySelectId);
+    const onSelect     = opts.onSelect || function(){};
+
+    let items = [];
+    let activeIdx = -1;
+
+    function sortItems(arr) {
+      return [...arr].sort((a, b) =>
+        a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+      );
+    }
+    function filterItems(query) {
+      const q = (query || '').trim().toLowerCase();
+      if (!q) return items;
+      const startsWith = [];
+      const contains   = [];
+      items.forEach(it => {
+        const n = it.name.toLowerCase();
+        if (n.startsWith(q)) startsWith.push(it);
+        else if (n.includes(q)) contains.push(it);
+      });
+      return [...startsWith, ...contains];
+    }
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, c => ({
+        '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+      }[c]));
+    }
+    function renderPanel(query) {
+      const filtered = filterItems(query);
+      activeIdx = -1;
+      if (filtered.length === 0) {
+        panel.innerHTML = `<div class="ss-empty">No matches</div>`;
+        return;
+      }
+      const selectedId = input.dataset.selectedId || '';
+      const head = `<div class="ss-count">${filtered.length} of ${items.length}</div>`;
+      const rows = filtered.map(it => `
+        <div class="ss-option ${it.id === selectedId ? 'selected' : ''}"
+             data-id="${escapeHtml(it.id)}"
+             data-name="${escapeHtml(it.name)}">${escapeHtml(it.name)}</div>
+      `).join('');
+      panel.innerHTML = head + rows;
+    }
+    function setSelected(id, name, fireCallback) {
+      input.dataset.selectedId   = id || '';
+      input.dataset.selectedName = name || '';
+      input.value                = name || '';
+      root.classList.toggle('has-value', !!id);
+      if (legacySelect) {
+        legacySelect.innerHTML = '';
+        if (id) {
+          const opt = document.createElement('option');
+          opt.value = id;
+          opt.textContent = name;
+          opt.dataset.name = name;
+          opt.selected = true;
+          legacySelect.appendChild(opt);
+        }
+      }
+      if (fireCallback) onSelect({ id, name });
+    }
+    function open()  { renderPanel(input.value); root.classList.add('open'); }
+    function close() { root.classList.remove('open'); }
+
+    input.addEventListener('input', () => {
+      if (input.dataset.selectedId) {
+        input.dataset.selectedId   = '';
+        input.dataset.selectedName = '';
+        root.classList.remove('has-value');
+        if (legacySelect) legacySelect.innerHTML = '';
+        onSelect({ id: '', name: '' });
+      }
+      renderPanel(input.value);
+      if (!root.classList.contains('open')) root.classList.add('open');
+    });
+    input.addEventListener('focus', () => { if (items.length > 0) open(); });
+    panel.addEventListener('mousedown', (ev) => {
+      const opt = ev.target.closest('.ss-option');
+      if (!opt) return;
+      ev.preventDefault();
+      setSelected(opt.dataset.id, opt.dataset.name, true);
+      close();
+    });
+    input.addEventListener('keydown', (ev) => {
+      const o = panel.querySelectorAll('.ss-option');
+      if (ev.key === 'ArrowDown') {
+        ev.preventDefault();
+        if (!root.classList.contains('open')) open();
+        activeIdx = Math.min(activeIdx + 1, o.length - 1);
+      } else if (ev.key === 'ArrowUp') {
+        ev.preventDefault();
+        activeIdx = Math.max(activeIdx - 1, 0);
+      } else if (ev.key === 'Enter') {
+        ev.preventDefault();
+        if (activeIdx >= 0 && o[activeIdx]) {
+          setSelected(o[activeIdx].dataset.id, o[activeIdx].dataset.name, true);
+          close();
+        }
+      } else if (ev.key === 'Escape') {
+        close();
+      } else {
+        return;
+      }
+      o.forEach((el, i) => el.classList.toggle('active', i === activeIdx));
+      if (activeIdx >= 0 && o[activeIdx]) {
+        o[activeIdx].scrollIntoView({ block: 'nearest' });
+      }
+    });
+    document.addEventListener('mousedown', (ev) => {
+      if (!root.contains(ev.target)) close();
+    });
+    if (clearBtn) {
+      clearBtn.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        setSelected('', '', true);
+        input.focus();
+        renderPanel('');
+        open();
+      });
+    }
+    return {
+      setItems(rawItems) {
+        items = sortItems((rawItems || []).map(r => ({ id: r.id, name: r.name, raw: r })));
+        if (root.classList.contains('open')) renderPanel(input.value);
+      },
+      setEnabled(enabled) {
+        input.disabled = !enabled;
+        if (!enabled) input.placeholder = '— not applicable —';
+        else          input.placeholder = '— select or type to search —';
+      },
+      select(id) {
+        const item = items.find(it => it.id === id);
+        if (item) setSelected(item.id, item.name, false);
+        else      setSelected('', '', false);
+      },
+      getSelected() {
+        return {
+          id:   input.dataset.selectedId   || '',
+          name: input.dataset.selectedName || '',
+        };
+      },
+      clear() { setSelected('', '', false); },
+      hasItem(id) { return items.some(it => it.id === id); },
+    };
+  }
+
+  // Lazy-instantiate the shard-builder model picker the first time we need it.
+  let _sbModelSS = null;
+  function getSbModelSS() {
+    if (!_sbModelSS) {
+      _sbModelSS = makeSearchableSelect({
+        rootId:         'sbModelSearchable',
+        inputId:        'sbModelInput',
+        panelId:        'sbModelPanel',
+        clearBtnId:     'sbModelClear',
+        legacySelectId: 'sb-model',
+      });
+    }
+    return _sbModelSS;
+  }
+
   async function loadFormaModelsForBuilder(projectId){
-    const modelSel = document.getElementById('sb-model');
+    const ss = getSbModelSS();
     if (modelsCacheByProject[projectId]){
-      fillModels(modelsCacheByProject[projectId]);
+      ss.setItems(modelsCacheByProject[projectId].map(m => ({
+        id:   m.item_id || m.id || m.urn,
+        name: m.name || m.title || (m.item_id || m.id || m.urn),
+      })));
+      ss.setEnabled(true);
       return;
     }
     try {
@@ -1525,14 +1758,22 @@
       if (!res.ok) throw new Error('HTTP '+res.status);
       const data = await res.json();
       if (data.error){
-        modelSel.innerHTML = '<option value="">— '+ (data.error || 'could not load models') +' —</option>';
+        ss.setItems([]);
+        ss.setEnabled(false);
+        document.getElementById('sbModelInput').placeholder = '— ' + (data.error || 'could not load models') + ' —';
         return;
       }
       const models = data.models || [];
       modelsCacheByProject[projectId] = models;
-      fillModels(models);
+      ss.setItems(models.map(m => ({
+        id:   m.item_id || m.id || m.urn,
+        name: m.name || m.title || (m.item_id || m.id || m.urn),
+      })));
+      ss.setEnabled(true);
     } catch(e){
-      modelSel.innerHTML = '<option value="">— could not load models —</option>';
+      ss.setItems([]);
+      ss.setEnabled(false);
+      document.getElementById('sbModelInput').placeholder = '— could not load models —';
     }
   }
 
@@ -1542,16 +1783,16 @@
   // user can't change it.
   window.sbProjectChange = function(){};
 
+  // Fills the legacy hidden select directly (for backward compat with any
+  // edit-path code that pre-existed the searchable widget). The widget's
+  // own internal logic now handles the visible side.
   function fillModels(models){
-    const sel = document.getElementById('sb-model');
-    sel.innerHTML = '<option value="">— select model —</option>';
-    models.forEach(m=>{
-      const opt = document.createElement('option');
-      opt.value = m.item_id || m.id || m.urn;
-      opt.dataset.name = m.name || m.title || '';
-      opt.textContent = m.name || m.title || opt.value;
-      sel.appendChild(opt);
-    });
+    const ss = getSbModelSS();
+    ss.setItems((models || []).map(m => ({
+      id:   m.item_id || m.id || m.urn,
+      name: m.name || m.title || (m.item_id || m.id || m.urn),
+    })));
+    ss.setEnabled(true);
   }
   window.saveShard = async function(){
     const name = document.getElementById('sb-name').value.trim();
@@ -1574,12 +1815,13 @@
       ctx.project_uuid = projectVal;
     }
     if (reqs.includes('model_item_id')) {
-      const modelEl = document.getElementById('sb-model');
-      const modelVal = modelEl.value;
-      if (!modelVal) return toast('Select a model.', true);
-      ctx.model_item_id = modelVal;
-      const opt = modelEl.options[modelEl.selectedIndex];
-      ctx.model_name = (opt && opt.dataset.name) || modelEl.options[modelEl.selectedIndex].textContent;
+      // Read from the searchable widget — the legacy hidden <select> is
+      // kept in sync but the widget API is the cleaner read path.
+      const ssSave   = getSbModelSS();
+      const selected = ssSave.getSelected();
+      if (!selected.id) return toast('Select a model.', true);
+      ctx.model_item_id = selected.id;
+      ctx.model_name    = selected.name;
     }
 
     const naming = [];
