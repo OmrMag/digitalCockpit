@@ -45,8 +45,12 @@
 .compiler-card{border:1px solid var(--border-cream);border-radius:var(--radius);padding:13px 16px;margin-bottom:10px;transition:border-color .13s}
 .compiler-card:last-child{margin-bottom:0}
 .compiler-card:hover{border-color:var(--accent)}
-.compiler-head{display:flex;align-items:center;gap:12px}
-.compiler-shards{margin-top:11px;padding-top:11px;border-top:1px dashed var(--border-cream)}
+/* Expand/collapse — mirror the run-row pattern */
+.compiler-head{display:flex;align-items:center;gap:12px;cursor:pointer}
+.compiler-caret{display:inline-block;width:10px;font-size:10px;color:var(--text-dark-muted);margin-right:0;transition:transform .15s;flex-shrink:0;transform:rotate(0deg)}
+.compiler-card.is-open .compiler-caret{transform:rotate(90deg)}
+.compiler-shards{display:none;margin-top:11px;padding-top:11px;border-top:1px dashed var(--border-cream)}
+.compiler-shards.show{display:block}
 .compiler-shards-title{font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--text-dark-muted);margin-bottom:8px}
 .cs-item{display:flex;align-items:center;gap:10px;padding:7px 11px;background:rgba(248,250,252,.7);border-radius:var(--radius);margin-bottom:5px;font-size:var(--fs-xs)}
 .cs-item:last-child{margin-bottom:0}
@@ -853,26 +857,46 @@
       }).join('');
     }
     return ''
-      + '<div class="compiler-card">'
-      +   '<div class="compiler-head">'
+      + '<div class="compiler-card" data-compiler-id="'+escAttr(c.id)+'">'
+      +   '<div class="compiler-head" onclick="toggleCompilerDetail(\''+escAttr(c.id)+'\')">'
+      +     '<span class="compiler-caret">▶</span>'
       +     '<div class="auto-dot '+dot+'"></div>'
       +     '<div class="auto-row-main">'
       +       '<div class="auto-row-name">'+escHtml(c.name)+'</div>'
       +       '<div class="auto-row-meta">'+escHtml(scheduleSummary(c.schedule))+' · '+(c.shard_ids||[]).length+' shard(s)</div>'
       +     '</div>'
-      +     '<div class="auto-row-actions">'
+      +     '<div class="auto-row-actions" onclick="event.stopPropagation()">'
       +       '<button class="icon-btn" title="Run now" onclick="runCompiler(\''+c.id+'\')"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z"/></svg></button>'
       +       '<button class="icon-btn" title="'+(c.active?'Pause':'Resume')+'" onclick="toggleCompiler(\''+c.id+'\')">'+(c.active?'<svg xmlns=\"http://www.w3.org/2000/svg\" fill=\"none\" viewBox=\"0 0 24 24\" stroke-width=\"2\" stroke=\"currentColor\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" d=\"M15.75 5.25v13.5m-7.5-13.5v13.5\"/></svg>':'<svg xmlns=\"http://www.w3.org/2000/svg\" fill=\"none\" viewBox=\"0 0 24 24\" stroke-width=\"2\" stroke=\"currentColor\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" d=\"M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z\"/></svg>')+'</button>'
       +       '<button class="icon-btn" title="Edit" onclick="openCompilerBuilder(\''+c.id+'\')"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z"/></svg></button>'
       +       '<button class="icon-btn del" title="Delete compiler" onclick="deleteCompiler(\''+c.id+'\')"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg></button>'
       +     '</div>'
       +   '</div>'
-      +   '<div class="compiler-shards">'
+      +   '<div class="compiler-shards" id="compiler-shards-'+escAttr(c.id)+'">'
       +     '<div class="compiler-shards-title">Shards ('+(c.shard_ids||[]).length+')</div>'
       +     shardsBlock
       +   '</div>'
       + '</div>';
   }
+
+  // Toggle a compiler card's expand. Mirrors toggleRunDetail in Recent Runs:
+  // opening one closes any other open compiler card so the list stays compact.
+  // The action buttons in the header (Run / Pause / Edit / Delete) have
+  // event.stopPropagation() so clicking them doesn't accidentally toggle.
+  window.toggleCompilerDetail = function(compilerId){
+    const allCards   = document.querySelectorAll('.compiler-card');
+    const allShards  = document.querySelectorAll('.compiler-shards');
+    const targetCard = document.querySelector('.compiler-card[data-compiler-id="'+compilerId.replace(/"/g,'\\"')+'"]');
+    const targetSh   = document.getElementById('compiler-shards-'+compilerId);
+    if (!targetCard || !targetSh) return;
+    const wasOpen = targetCard.classList.contains('is-open');
+    allCards.forEach(el => el.classList.remove('is-open'));
+    allShards.forEach(el => el.classList.remove('show'));
+    if (!wasOpen){
+      targetCard.classList.add('is-open');
+      targetSh.classList.add('show');
+    }
+  };
 
   function fmtTime(ms){
     if (!ms) return '—';
