@@ -2,7 +2,7 @@
 
 {% block title %}Browse Users — Digital Construction Cockpit{% endblock %}
 {% block page_title %}Browse Users{% endblock %}
-{% block page_subtitle %}One row per (user, project). Pick a platform tab to swap the columns on the right.{% endblock %}
+{% block page_subtitle %}One row per (user, project). Each platform's column expands inline — click a header to swap which one is open.{% endblock %}
 
 {% block header_actions %}
 <a href="/manage" class="cc-btn cc-btn--secondary" title="Back to manage users">
@@ -15,7 +15,7 @@
 
 {% block head %}
 <style>
-/* ── Filter bar (Aconex chip multi-selects) ─────────────────────── */
+/* ── Filter bar (Aconex chip multi-selects) — unchanged from prior phase ─ */
 .bu-filter-bar{
     display:grid;grid-template-columns:repeat(3,1fr) auto;gap:14px;align-items:end;
     padding:14px 0;margin-bottom:14px;border-bottom:1px solid var(--border-cream)
@@ -50,31 +50,10 @@
 /* ── Meta line ──────────────────────────────────────────────────── */
 .bu-meta{display:flex;justify-content:space-between;align-items:baseline;margin:4px 0 10px;font-size:var(--fs-xs);color:var(--text-dark-muted)}
 
-/* ── Section tab bar ────────────────────────────────────────────── */
-/* The tab bar lives just above the table. Section A (User Personal Details)
-   on the left is always shown; Morta / Revizto / Forma on the right are
-   mutually exclusive — picking one swaps the right-hand columns. */
-.bu-tabs{
-    display:flex;align-items:end;gap:0;border-bottom:1px solid var(--border-cream);
-    margin-bottom:0
-}
-.bu-tab-static{
-    padding:8px 14px;font-size:9px;color:var(--text-dark-muted);
-    text-transform:uppercase;letter-spacing:.5px;font-weight:600;
-    border-bottom:2px solid transparent;display:flex;align-items:center;gap:6px
-}
-.bu-tab-static .bu-tab-lock{font-size:11px}
-.bu-tab-spacer{flex:1}
-.bu-tab{
-    padding:8px 16px;font-size:11px;color:var(--text-dark-muted);
-    background:transparent;border:none;cursor:pointer;
-    border-bottom:2px solid transparent;font-family:inherit;font-weight:500;
-    transition:color .12s, border-color .12s
-}
-.bu-tab:hover{color:var(--text-dark)}
-.bu-tab.active{color:var(--navy);border-bottom-color:var(--navy);font-weight:600}
+/* ── Phase banner ───────────────────────────────────────────────── */
+.bu-phase-banner{padding:8px 12px;background:#fff8e1;border:1px solid #f5c842;border-radius:4px;font-size:var(--fs-xs);color:#8a6d00;margin-bottom:14px;display:flex;gap:8px;align-items:center}
 
-/* ── Table — minimal ────────────────────────────────────────────── */
+/* ── Table chrome ───────────────────────────────────────────────── */
 .bu-table-wrap{overflow-x:auto;width:100%}
 .bu-table{
     width:100%;border-collapse:collapse;font-size:11px;
@@ -84,15 +63,14 @@
 .bu-table thead th{
     text-align:left;padding:8px 10px;border-bottom:1px solid var(--navy);
     font-size:9px;color:var(--text-dark-muted);text-transform:uppercase;
-    letter-spacing:.5px;font-weight:600;white-space:nowrap;background:transparent
+    letter-spacing:.5px;font-weight:600;white-space:nowrap;background:transparent;
+    vertical-align:bottom
 }
-.bu-table thead th.divider{border-left:1px solid var(--border-cream);padding-left:14px}
 .bu-table tbody td{
     padding:7px 10px;border-bottom:1px solid var(--border-cream);
-    vertical-align:middle;white-space:nowrap;max-width:200px;
+    vertical-align:middle;white-space:nowrap;
     overflow:hidden;text-overflow:ellipsis
 }
-.bu-table tbody td.divider{border-left:1px solid var(--border-cream);padding-left:14px}
 .bu-table tbody tr:hover td{background:var(--cream-mid)}
 .bu-table tbody td.muted{color:var(--text-dark-muted);font-style:italic}
 
@@ -101,8 +79,7 @@
 .bu-user-name{font-weight:500;color:var(--navy);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .bu-user-email{font-size:10px;color:var(--text-dark-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
-/* Lock toggle — clickable per-row gate. In phase 2 the click only
-   toggles visual state; phase 3 will use it as the edit gate. */
+/* ── Lock toggle (row-level edit gate) ─────────────────────────── */
 .bu-lock{
     cursor:pointer;display:inline-flex;align-items:center;justify-content:center;
     width:24px;height:24px;border-radius:3px;color:var(--text-dark-muted);
@@ -112,17 +89,113 @@
 .bu-lock.unlocked{color:#c47a00}
 .bu-lock svg{display:block}
 
-/* Access flag (✓ / ·) for "user is on this platform here" */
-.bu-flag{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;color:var(--navy);font-weight:600;font-size:12px;line-height:1}
-.bu-flag.off{color:var(--text-dark-muted);font-style:normal}
+/* ── Platform header (clickable, drives expansion) ─────────────── */
+/* The clickable header is a flex container with the platform label on the
+   left and an expand chevron on the right. The whole <th> is clickable.
+   When that platform is expanded, the chevron rotates 90deg and a thin
+   navy underline appears beneath the label. */
+.bu-plat-th{
+    cursor:pointer;user-select:none;padding:8px 12px;
+    border-left:1px solid var(--border-cream);
+    transition:background .12s
+}
+.bu-plat-th:hover{background:var(--cream-mid)}
+.bu-plat-th-inner{
+    display:flex;align-items:center;gap:6px;
+    color:var(--text-dark-muted);font-size:9px;letter-spacing:.5px;
+    text-transform:uppercase;font-weight:600
+}
+.bu-plat-th.expanded .bu-plat-th-inner{color:var(--navy)}
+.bu-plat-th .bu-plat-th-chev{
+    width:10px;height:10px;flex-shrink:0;
+    transition:transform .2s ease;
+    color:currentColor
+}
+.bu-plat-th.expanded .bu-plat-th-chev{transform:rotate(90deg)}
+.bu-plat-th.expanded{border-bottom-color:var(--navy)}
 
-/* L/P read-only checkbox */
-.bu-cb{width:14px;height:14px;cursor:not-allowed;accent-color:var(--navy);opacity:.55}
+/* Property-column headers — only visible when their platform is expanded.
+   Same uppercase styling as the platform header itself but lighter. */
+.bu-prop-th{
+    padding:8px 8px 8px 0;font-size:9px;color:var(--text-dark-muted);
+    text-transform:uppercase;letter-spacing:.5px;font-weight:600;
+    white-space:nowrap
+}
+.bu-prop-th-first{padding-left:6px}
 
+/* ── Platform cell (collapsed/expanded) ────────────────────────── */
+/* A single <td> hosts each platform's content. When collapsed, it shows
+   just the toggle. When expanded, the toggle stays in its left slot and
+   property cells appear to its right via a flex layout. The width
+   transition gives the "fan out" feel without absolute positioning. */
+.bu-plat-cell{
+    border-left:1px solid var(--border-cream);
+    padding:6px 8px 6px 6px !important;
+    vertical-align:middle;
+    transition:background .12s
+}
+.bu-plat-cell-inner{
+    display:flex;align-items:center;gap:10px;
+    min-width:0
+}
+/* When the platform is the expanded one, that column gets a faint cream
+   stripe so the eye groups all of it together top-to-bottom. */
+.bu-plat-cell.expanded{background:rgba(245,240,232,.4)}
+.bu-table tbody tr:hover td.bu-plat-cell.expanded{background:rgba(245,240,232,.7)}
+
+/* Property cells inside an expanded platform cell */
+.bu-prop{
+    font-size:11px;color:var(--text-dark);
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+    padding-right:10px;min-width:60px
+}
+.bu-prop.muted{color:var(--text-dark-muted);font-style:italic}
+.bu-prop.flag{color:var(--navy);font-weight:600;font-size:12px;min-width:18px;text-align:center}
+.bu-prop.flag.off{color:var(--text-dark-muted);font-style:normal}
+.bu-prop-cb{
+    width:14px;height:14px;cursor:not-allowed;
+    accent-color:var(--navy);opacity:.55;display:block
+}
+
+/* ── Apple-style toggle ────────────────────────────────────────── */
+/* Three states:
+   - on:       navy fill, knob right
+   - off:      grey fill, knob left  (interactive — was on, flipped)
+   - faded:    grey fill, knob left, 30% opacity, no hover, not-allowed
+   The 'faded' state is for rows where the user isn't on that platform at
+   all. It matches OFF visually but signals "you can't toggle this on
+   because they don't exist here yet". Phase 3 will reconsider this if
+   we add a flow for inviting from the browse view. */
+.bu-toggle{
+    flex-shrink:0;
+    width:30px;height:17px;border-radius:9px;
+    background:#c8c8c8;
+    position:relative;
+    cursor:pointer;
+    transition:background .18s ease;
+    border:none;padding:0;
+    display:inline-block
+}
+.bu-toggle::before{
+    content:"";
+    position:absolute;
+    top:2px;left:2px;
+    width:13px;height:13px;
+    border-radius:50%;
+    background:white;
+    transition:transform .18s ease;
+    box-shadow:0 1px 2px rgba(0,0,0,.18)
+}
+.bu-toggle.on{background:var(--navy)}
+.bu-toggle.on::before{transform:translateX(13px)}
+.bu-toggle.faded{opacity:.28;cursor:not-allowed}
+.bu-toggle.locked{cursor:not-allowed;opacity:.55}
+.bu-toggle:not(.faded):not(.locked):hover{filter:brightness(.95)}
+
+/* ── Empty / loading states ────────────────────────────────────── */
 .bu-empty{padding:40px 16px;text-align:center;color:var(--text-dark-muted);font-size:var(--fs-sm)}
 .bu-error{padding:16px;color:#9b3a3a;font-size:var(--fs-sm);background:#fdf3f3;border-radius:4px}
 .bu-loading{padding:60px;text-align:center;color:var(--text-dark-muted);font-size:var(--fs-sm)}
-.bu-phase-banner{padding:8px 12px;background:#fff8e1;border:1px solid #f5c842;border-radius:4px;font-size:var(--fs-xs);color:#8a6d00;margin-bottom:14px;display:flex;gap:8px;align-items:center}
 </style>
 {% endblock %}
 
@@ -132,7 +205,7 @@
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
     </svg>
-    <span>Phase 2: read-only. Lock toggle and L/P checkboxes show state but don't write back yet.</span>
+    <span>Phase 2: read-only. Lock unlocks the row visually; toggles flip but don't write back yet. Faded toggles mean the user isn't on that platform — you can't add them from this view.</span>
 </div>
 
 <div class="bu-filter-bar">
@@ -159,18 +232,6 @@
     <span id="bu-source"></span>
 </div>
 
-<!-- Section tabs: A on the left (locked, always-on); B/C/D on the right -->
-<div class="bu-tabs" role="tablist">
-    <div class="bu-tab-static" title="User Personal Details — always visible">
-        <span class="bu-tab-lock">🔒</span>
-        <span>User Details</span>
-    </div>
-    <div class="bu-tab-spacer"></div>
-    <button class="bu-tab"        data-section="morta"   type="button" role="tab">Morta</button>
-    <button class="bu-tab active" data-section="revizto" type="button" role="tab">Revizto</button>
-    <button class="bu-tab"        data-section="forma"   type="button" role="tab">Forma</button>
-</div>
-
 <div id="bu-results">
     <div class="bu-loading">Click <strong>Apply</strong> to load users.</div>
 </div>
@@ -182,7 +243,11 @@
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
     ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
-/* ── ChipSelect (Aconex-style) ──────────────────────────────────── */
+/* ─────────────────────────────────────────────────────────────────
+   ChipSelect — Aconex-style multi-select. Unchanged from prior phase.
+   Kept inline rather than imported because base.html doesn't ship it
+   as a shared component yet.
+   ───────────────────────────────────────────────────────────────── */
 class ChipSelect {
     constructor(rootEl, options, opts={}){
         this.root = rootEl; this.opts = opts; this.options = options || [];
@@ -263,15 +328,36 @@ class ChipSelect {
     }
 }
 
-/* ── Page state ─────────────────────────────────────────────────── */
-let lastRows   = [];
-let activeTab  = 'revizto';   // default per spec
-const unlocked = new Set();   // composite-keys (email|project_key) of unlocked rows
+/* ─────────────────────────────────────────────────────────────────
+   Page state
+   ───────────────────────────────────────────────────────────────── */
+
+let lastRows           = [];
+/* expandedPlatform tracks which platform's column is fanned out. Single-
+   expand: setting this collapses the previously-open one. Default is
+   'revizto' per spec. Allowed values: 'revizto' | 'forma' | 'morta'. */
+let expandedPlatform   = 'revizto';
+/* unlocked is the set of row keys whose Lock has been clicked open. Phase
+   2 uses this only as the gate for whether toggles in that row are
+   interactive. Phase 3 will use the same set as the gate for write-back. */
+const unlocked         = new Set();
+/* pendingToggles tracks rows where the admin has flipped a toggle but the
+   change hasn't been committed (phase 3 will commit on Save / on lock).
+   Key shape: `${rowKey}|${platform}`. Value isn't used yet — Set semantics
+   are enough to know "this toggle is in a pending state vs. the data". */
+const pendingToggles   = new Set();
 let csPlatforms, csProjects;
 
-function rowKey(r){ return `${r.email.toLowerCase()}|${r.project_key}`; }
+const PLATFORMS = ['revizto', 'forma', 'morta'];
+const PLATFORM_LABELS = { revizto: 'Revizto', forma: 'Forma', morta: 'Morta' };
 
-/* ── Init ───────────────────────────────────────────────────────── */
+function rowKey(r){ return `${r.email.toLowerCase()}|${r.project_key}`; }
+function toggleKey(r, plat){ return `${rowKey(r)}|${plat}`; }
+
+/* ─────────────────────────────────────────────────────────────────
+   Init
+   ───────────────────────────────────────────────────────────────── */
+
 function initFilters(){
     csPlatforms = new ChipSelect(document.getElementById('cs-platforms'), [
         { value: 'revizto', label: 'Revizto' },
@@ -320,76 +406,197 @@ async function apply(){
     }
 }
 
-/* ── Cell helpers ───────────────────────────────────────────────── */
-const blankCell = () => `<td class="muted">—</td>`;
-const cell      = v => v ? `<td title="${esc(v)}">${esc(v)}</td>` : blankCell();
-const flagCell  = b => b ? `<td class="bu-flag">✓</td>` : `<td class="bu-flag off">·</td>`;
-const cbCell    = (state, label) => `<td><input type="checkbox" class="bu-cb" ${state ? 'checked' : ''} disabled title="${esc(label)} — read-only in phase 2"></td>`;
+/* ─────────────────────────────────────────────────────────────────
+   Cell helpers — same primitives as before, now used inside expanded
+   platform cells rather than dedicated <td>s
+   ───────────────────────────────────────────────────────────────── */
+
+const propCell      = (v) => v
+    ? `<span class="bu-prop" title="${esc(v)}">${esc(v)}</span>`
+    : `<span class="bu-prop muted">—</span>`;
+const propFlag      = (b) => b
+    ? `<span class="bu-prop flag">✓</span>`
+    : `<span class="bu-prop flag off">·</span>`;
+const propCheckbox  = (state, label) =>
+    `<span class="bu-prop"><input type="checkbox" class="bu-prop-cb" ${state ? 'checked' : ''} disabled title="${esc(label)} — read-only in phase 2"></span>`;
 
 const lockSvgClosed = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`;
 const lockSvgOpen   = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>`;
+const chevronSvg    = `<svg class="bu-plat-th-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>`;
 
 function fmtLastActive(ts, days){
-    if (days == null) return '<span class="muted">—</span>';
-    if (days === 0) return 'Today';
-    if (days === 1) return 'Yesterday';
-    if (days < 30)  return `${days} days ago`;
-    if (days < 365) return `${Math.floor(days/30)} months ago`;
-    return `${Math.floor(days/365)}y ago`;
+    if (days == null) return '<span class="bu-prop muted">—</span>';
+    if (days === 0) return '<span class="bu-prop">Today</span>';
+    if (days === 1) return '<span class="bu-prop">Yesterday</span>';
+    if (days < 30)  return `<span class="bu-prop">${days} days ago</span>`;
+    if (days < 365) return `<span class="bu-prop">${Math.floor(days/30)} months ago</span>`;
+    return `<span class="bu-prop">${Math.floor(days/365)}y ago</span>`;
 }
 
-/* ── Per-section column builders ───────────────────────────────── */
-function sectionHeader(){
-    if (activeTab === 'morta') return `
-        <th class="divider">Morta</th><th>Tag</th><th>Last Active</th>`;
-    if (activeTab === 'forma') return `
-        <th class="divider">Forma</th><th>Company</th><th>Role</th>
-        <th>Docs</th><th>Design</th><th>Model</th><th>Last Active</th>`;
-    // default: revizto
-    return `
-        <th class="divider">Revizto</th><th>Company</th><th>Department</th>
-        <th>Location</th><th>License Role</th><th>Project Role</th>
-        <th title="On license">L</th><th title="On project">P</th>
-        <th>Last Active</th>`;
+/* ─────────────────────────────────────────────────────────────────
+   Toggle state logic
+
+   For each row × platform, we derive three pieces of state:
+     - exists:      true if the user is on that platform's project at all.
+                    Determined by whether row[platform] is non-null.
+     - currentlyOn: whether the toggle should display as ON. In phase 2
+                    this is just `exists XOR pendingFlip` — a faded toggle
+                    can never be ON, and an existing membership is ON
+                    unless the admin has flipped it.
+     - faded:       toggle is non-interactive and visually faded. True
+                    when the user isn't on that platform.
+   ───────────────────────────────────────────────────────────────── */
+
+function toggleState(row, plat){
+    const exists       = row[plat] != null;
+    const pendingFlip  = pendingToggles.has(toggleKey(row, plat));
+    const currentlyOn  = exists ? !pendingFlip : false;   // faded rows are never on
+    return { exists, currentlyOn, faded: !exists };
 }
 
-function sectionCells(row){
-    if (activeTab === 'morta'){
-        const m = row.morta;
-        return [
-            flagCell(!!m) + (m ? '' : ''),  // first cell is the flag w/ divider class
-            cell(m && m.tag),
-            `<td title="${esc((m && m.last_active) || '')}">${m ? fmtLastActive(m.last_active, row.last_active_days) : '<span class="muted">—</span>'}</td>`,
-        ].join('').replace(/^<td class="bu-flag/, '<td class="bu-flag divider');
-    }
-    if (activeTab === 'forma'){
-        const f = row.forma;
-        return [
-            (f ? `<td class="bu-flag divider">✓</td>` : `<td class="bu-flag off divider">·</td>`),
-            cell(f && f.company),
-            cell(f && f.role),
-            cell(f && f.docs),
-            cell(f && f.design),
-            cell(f && f.model),
-            `<td>${f ? fmtLastActive(f.last_active, row.last_active_days) : '<span class="muted">—</span>'}</td>`,
-        ].join('');
-    }
-    // revizto
+function renderToggle(row, plat, isUnlocked){
+    const { currentlyOn, faded } = toggleState(row, plat);
+    const cls = ['bu-toggle'];
+    if (currentlyOn)         cls.push('on');
+    if (faded)               cls.push('faded');
+    if (!isUnlocked && !faded) cls.push('locked');
+    const title = faded
+        ? 'User is not on this platform — cannot be added from this view'
+        : (isUnlocked
+            ? (currentlyOn ? 'Click to deactivate' : 'Click to reactivate')
+            : 'Unlock the row first to edit');
+    return `<button class="${cls.join(' ')}" data-row="${esc(rowKey(row))}" data-plat="${plat}" title="${esc(title)}" type="button" tabindex="${(faded||!isUnlocked) ? -1 : 0}"></button>`;
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   Per-platform property renderers — produce the inner HTML that lives
+   to the right of the toggle when that platform is expanded.
+
+   Each returns a string of `<span class="bu-prop">…</span>` siblings.
+   The widths are governed by min-width on .bu-prop, not by a grid —
+   we want the row to remain a regular flex line so things wrap
+   gracefully on narrow viewports.
+   ───────────────────────────────────────────────────────────────── */
+
+function reviztoProps(row){
     const r = row.revizto;
+    if (!r) return ''; // toggle is faded, no props to show
     return [
-        (r ? `<td class="bu-flag divider">✓</td>` : `<td class="bu-flag off divider">·</td>`),
-        cell(r && r.company),
-        cell(r && r.department),
-        cell(r && r.location),
-        cell(r && r.license_role),
-        cell(r && r.role),
-        cbCell(r && r.on_license, 'On license'),
-        cbCell(r && r.on_project, 'On project'),
-        `<td>${r ? fmtLastActive(r.last_active, row.last_active_days) : '<span class="muted">—</span>'}</td>`,
+        propCell(r.company),
+        propCell(r.department),
+        propCell(r.location),
+        propCell(r.license_role),
+        propCell(r.role),
+        propCheckbox(r.on_license, 'On license'),
+        propCheckbox(r.on_project, 'On project'),
+        fmtLastActive(r.last_active, row.last_active_days),
     ].join('');
 }
 
-/* ── Table render ───────────────────────────────────────────────── */
+function formaProps(row){
+    const f = row.forma;
+    if (!f) return '';
+    return [
+        propCell(f.company),
+        propCell(f.role),
+        propCell(f.docs),
+        propCell(f.design),
+        propCell(f.model),
+        fmtLastActive(f.last_active, row.last_active_days),
+    ].join('');
+}
+
+function mortaProps(row){
+    const m = row.morta;
+    if (!m) return '';
+    return [
+        propCell(m.tag),
+        fmtLastActive(m.last_active, row.last_active_days),
+    ].join('');
+}
+
+const PROP_HEADERS = {
+    revizto: ['Company', 'Department', 'Location', 'License Role', 'Project Role', 'L', 'P', 'Last Active'],
+    forma:   ['Company', 'Role', 'Docs', 'Design', 'Model', 'Last Active'],
+    morta:   ['Tag', 'Last Active'],
+};
+const PROP_RENDERERS = { revizto: reviztoProps, forma: formaProps, morta: mortaProps };
+
+/* ─────────────────────────────────────────────────────────────────
+   Header row construction
+
+   Three platform headers always render. The expanded one gets the
+   property-column headers tacked onto its <th colspan>. The collapsed
+   ones get a single narrow <th> showing just label + chevron.
+
+   We use one <th> per platform regardless of expansion state. Property
+   header labels live INSIDE the same <th> as a small flex row beneath
+   the platform label — that keeps colspan-arithmetic simple and avoids
+   needing two header rows.
+   ───────────────────────────────────────────────────────────────── */
+
+function platformHeaderHtml(plat){
+    const isExp  = (expandedPlatform === plat);
+    const cls    = ['bu-plat-th'];
+    if (isExp) cls.push('expanded');
+    const label  = PLATFORM_LABELS[plat];
+
+    if (!isExp){
+        // Collapsed: just label + chevron
+        return `<th class="${cls.join(' ')}" data-plat="${plat}">
+            <div class="bu-plat-th-inner">
+                <span>${esc(label)}</span>
+                ${chevronSvg}
+            </div>
+        </th>`;
+    }
+
+    // Expanded: label + chevron, then a sub-row of property names. We
+    // render that sub-row as a flex line spanning the same width. Toggle
+    // sits in the leftmost slot in the body, so we add a placeholder gap
+    // matching the toggle's width (30px + 10px gap = 40px) so the
+    // property-name labels line up with the property cells in the body.
+    const propLabels = PROP_HEADERS[plat]
+        .map(h => `<span class="bu-prop-th">${esc(h)}</span>`)
+        .join('');
+    return `<th class="${cls.join(' ')}" data-plat="${plat}">
+        <div class="bu-plat-th-inner" style="margin-bottom:6px">
+            <span>${esc(label)}</span>
+            ${chevronSvg}
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;color:var(--text-dark-muted);font-weight:500;font-size:9px">
+            <span style="width:30px;flex-shrink:0"></span>
+            ${propLabels}
+        </div>
+    </th>`;
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   Body cell construction
+
+   Each row gets one <td> per platform. The toggle is always present.
+   When this platform is the expanded one, its property cells are
+   rendered to the right of the toggle inside the same <td>.
+   ───────────────────────────────────────────────────────────────── */
+
+function platformBodyCellHtml(row, plat, isUnlocked){
+    const isExp    = (expandedPlatform === plat);
+    const cls      = ['bu-plat-cell'];
+    if (isExp) cls.push('expanded');
+    const toggleEl = renderToggle(row, plat, isUnlocked);
+    const propsEl  = isExp ? PROP_RENDERERS[plat](row) : '';
+    return `<td class="${cls.join(' ')}">
+        <div class="bu-plat-cell-inner">
+            ${toggleEl}
+            ${propsEl}
+        </div>
+    </td>`;
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   Table render
+   ───────────────────────────────────────────────────────────────── */
+
 function renderTable(){
     document.getElementById('bu-count').textContent =
         lastRows.length === 1 ? '1 row' : `${lastRows.length} rows`;
@@ -401,6 +608,7 @@ function renderTable(){
     const rowsHtml = lastRows.map(r => {
         const isUnlocked = unlocked.has(rowKey(r));
         const lockHtml = `<span class="bu-lock ${isUnlocked ? 'unlocked' : ''}" data-row="${esc(rowKey(r))}" title="${isUnlocked ? 'Click to lock (cancel edit)' : 'Click to unlock for editing'}">${isUnlocked ? lockSvgOpen : lockSvgClosed}</span>`;
+        const platCells = PLATFORMS.map(p => platformBodyCellHtml(r, p, isUnlocked)).join('');
         return `<tr>
             <td style="width:32px">${lockHtml}</td>
             <td class="user-cell">
@@ -408,24 +616,24 @@ function renderTable(){
                 <div class="bu-user-email">${esc(r.email)}</div>
             </td>
             <td>${esc(r.project_name||r.project_key)}</td>
-            ${sectionCells(r)}
+            ${platCells}
         </tr>`;
     }).join('');
+    const headerHtml = PLATFORMS.map(p => platformHeaderHtml(p)).join('');
     out.innerHTML = `<div class="bu-table-wrap"><table class="bu-table">
         <thead>
             <tr>
                 <th></th>
                 <th>User</th>
                 <th>Project</th>
-                ${sectionHeader()}
+                ${headerHtml}
             </tr>
         </thead>
         <tbody>${rowsHtml}</tbody>
     </table></div>`;
 
-    // Wire up lock toggles. Phase 2: visual state only — no edit affordance
-    // gets enabled. Phase 3 will check `unlocked.has(rowKey)` before allowing
-    // any per-row edit and write the diff to /api/browse/users via PATCH.
+    // Wire up lock toggles. Phase 2: visual state only — see comment at
+    // top of file for the phase 3 plan.
     out.querySelectorAll('.bu-lock').forEach(el => {
         el.addEventListener('click', () => {
             const k = el.dataset.row;
@@ -434,18 +642,42 @@ function renderTable(){
             renderTable();
         });
     });
+
+    // Wire up platform header clicks (drives expansion). Faded headers
+    // don't exist — every platform is always clickable to expand. We only
+    // act when the click lands on a non-expanded one.
+    out.querySelectorAll('.bu-plat-th').forEach(el => {
+        el.addEventListener('click', () => {
+            const plat = el.dataset.plat;
+            if (expandedPlatform === plat) return; // already open
+            expandedPlatform = plat;
+            renderTable();
+        });
+    });
+
+    // Wire up toggle clicks. We only flip state if the row is unlocked
+    // AND the toggle isn't faded. Faded toggles have no event handler
+    // attached at all (we just skip them in the loop), but we also guard
+    // inside in case the DOM gets out of sync.
+    out.querySelectorAll('.bu-toggle').forEach(el => {
+        if (el.classList.contains('faded') || el.classList.contains('locked')) return;
+        el.addEventListener('click', () => {
+            const k = `${el.dataset.row}|${el.dataset.plat}`;
+            if (pendingToggles.has(k)) pendingToggles.delete(k);
+            else pendingToggles.add(k);
+            // Targeted re-render of just this toggle would be faster, but
+            // re-rendering the whole table keeps the code simple and the
+            // dataset is small enough (low thousands of rows) that the
+            // perf cost is invisible.
+            renderTable();
+        });
+    });
 }
 
-/* ── Tab switching ──────────────────────────────────────────────── */
-document.querySelectorAll('.bu-tab').forEach(btn => {
-    btn.addEventListener('click', () => {
-        document.querySelectorAll('.bu-tab').forEach(b => b.classList.toggle('active', b === btn));
-        activeTab = btn.dataset.section;
-        if (lastRows.length) renderTable();
-    });
-});
+/* ─────────────────────────────────────────────────────────────────
+   Wire-up
+   ───────────────────────────────────────────────────────────────── */
 
-/* ── Buttons & wire-up ──────────────────────────────────────────── */
 document.getElementById('bu-apply').addEventListener('click', apply);
 document.getElementById('bu-reset').addEventListener('click', () => {
     csPlatforms.clear(); csProjects.clear();
@@ -453,7 +685,7 @@ document.getElementById('bu-reset').addEventListener('click', () => {
     document.getElementById('bu-results').innerHTML = '<div class="bu-loading">Click <strong>Apply</strong> to load users.</div>';
     document.getElementById('bu-count').textContent = '—';
     document.getElementById('bu-source').textContent = '';
-    lastRows = []; unlocked.clear();
+    lastRows = []; unlocked.clear(); pendingToggles.clear();
 });
 document.getElementById('bu-days').addEventListener('keydown', e => { if (e.key === 'Enter') apply(); });
 
