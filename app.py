@@ -2125,14 +2125,27 @@ def revizto_search_user(email, config, allowed_project_uuids: list = None, admin
                 access_role.get("name", "") if isinstance(access_role, dict)
                 else str(access_role or "")
             )
-            license_role_id = ent.get("licenseRole")
-            if license_role_id is None:
-                license_role_id = ent.get("license_role")
-            license_role_label = (
-                role_map_license.get(license_role_id, "")
-                if isinstance(license_role_id, int)
-                else ""
+            # License role resolution — separate concept from project role.
+            # The /team entity wraps license-level info inside `member` (the
+            # GET_License_Members script reads ent.member.user for identity;
+            # license role lives on the same wrapper). Try the most likely
+            # field names in order, falling back to top-level keys for
+            # backward compat. The integer maps to Revizto's license tier
+            # enum: 0=Owner, 1=License Admin, 2=Collaborator,
+            # 3=Content Creator, 4=Guest (per revizto_invite payload).
+            member = ent.get("member") if isinstance(ent.get("member"), dict) else {}
+            license_role_id = (
+                member.get("role")
+                if isinstance(member.get("role"), int)
+                else member.get("licenseRole")
+                if isinstance(member.get("licenseRole"), int)
+                else ent.get("licenseRole")
+                if isinstance(ent.get("licenseRole"), int)
+                else ent.get("license_role")
+                if isinstance(ent.get("license_role"), int)
+                else None
             )
+            license_role_label = role_map_license.get(license_role_id, "") if license_role_id is not None else ""
             project_match = {
                 "uuid":         proj["uuid"],
                 "name":         proj["name"],
@@ -2150,7 +2163,11 @@ def revizto_search_user(email, config, allowed_project_uuids: list = None, admin
                 "name":         ent.get("fullname", "")
                                   or (f"{ent.get('firstname','')} {ent.get('lastname','')}".strip()),
                 "email":        ent.get("email", ""),
-                "license_role": license_role_label or project_role_name,
+                # license_role here is for the user-record summary; never
+                # fall back to project_role_name — that's what caused
+                # license_role to silently show "BIM Coordinator" for users
+                # whose actual license tier the API didn't return.
+                "license_role": license_role_label,
                 "status":       (
                     "deactivated" if ent.get("frozen")
                     else "active" if ent.get("activated")
