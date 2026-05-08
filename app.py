@@ -4231,6 +4231,7 @@ async def api_browse_users(
             return None
 
     rows = list(rows_by_key.values())
+    print(f"[browse/users] aggregator: {len(rows)} unique (user,project) rows built")
     for rec in rows:
         candidates = []
         for plat_key in ("revizto", "forma", "morta"):
@@ -4246,9 +4247,13 @@ async def api_browse_users(
 
     # Inactivity filter
     if min_days_inactive > 0:
+        before_count = len(rows)
         rows = [r for r in rows
                 if isinstance(r.get("last_active_days"), int)
                 and r["last_active_days"] >= min_days_inactive]
+        print(f"[browse/users] inactivity filter: {before_count} → {len(rows)} (threshold={min_days_inactive} days)")
+    else:
+        print(f"[browse/users] no inactivity filter, total rows={len(rows)}")
 
     # Sort: email, then project name, so the same user's projects cluster.
     rows.sort(key=lambda r: (r["email"].lower(), (r["project_name"] or "").lower()))
