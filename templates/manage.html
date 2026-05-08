@@ -188,15 +188,24 @@
     .detail-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px;margin-bottom:10px}
     .detail-item label{font-size:var(--fs-xs);color:var(--text-dark-muted);text-transform:uppercase;letter-spacing:.3px}
     .detail-item .value{font-size:var(--fs-sm);color:var(--text-dark);font-weight:500;margin-top:1px}
-    .project-list{margin-top:8px}
-    .project-row{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:baseline;padding:10px}
-    .project-row + .project-row{border-top:1px solid var(--border-cream)}
-    .proj-name{font-weight:500;color:var(--navy);flex:0 0 auto;min-width:160px;font-size:var(--fs-xs)}
-    .proj-meta{color:var(--text-dark-muted);font-size:var(--fs-xs)}
-    .proj-field{display:inline-flex;flex-direction:column;gap:1px;line-height:1.2}
-    .proj-field-label{font-size:9px;color:var(--text-dark-muted);text-transform:uppercase;letter-spacing:.4px;font-weight:600}
-    .proj-field-value{font-size:var(--fs-xs);color:var(--text-dark)}
-    .proj-field-value.muted{color:var(--text-dark-muted);font-style:italic}
+    /* Project assignment tables — one per platform section.
+       Each section is a CSS grid where the header row and every data row
+       share the same column template, so values align vertically under
+       their headers. Column widths use minmax() so long values don't blow
+       the layout out, but every column gets a fair share of space. */
+    .proj-table{margin-top:8px;display:grid;font-size:var(--fs-xs)}
+    .proj-table-row{display:grid;gap:12px;align-items:baseline;padding:8px 10px;grid-column:1/-1}
+    .proj-table-row + .proj-table-row{border-top:1px solid var(--border-cream)}
+    .proj-table-row.header{padding-bottom:6px;border-bottom:1px solid var(--border-cream)}
+    .proj-table-row.header > div{font-size:9px;color:var(--text-dark-muted);text-transform:uppercase;letter-spacing:.4px;font-weight:600}
+    .proj-table-row > div{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-dark)}
+    .proj-table-row .proj-name-cell{font-weight:500;color:var(--navy)}
+    .proj-table-row .muted{color:var(--text-dark-muted);font-style:italic}
+
+    /* Column templates — Revizto has 6 cols, Forma has 5. Ratios picked to
+       fit the typical content without truncation under normal widths. */
+    .proj-table.revizto .proj-table-row{grid-template-columns:minmax(140px,2fr) minmax(120px,1.6fr) minmax(110px,1.4fr) minmax(80px,1fr) minmax(110px,1.3fr) minmax(120px,1.5fr)}
+    .proj-table.forma   .proj-table-row{grid-template-columns:minmax(140px,2fr) minmax(160px,2.4fr) minmax(140px,1.8fr) minmax(100px,1.2fr) minmax(80px,1fr)}
     .tag-pill{display:inline-block;padding:2px 8px;border-radius:3px;font-size:var(--fs-xs);background:rgba(74,158,255,.1);color:var(--accent);font-weight:500;margin:2px}
     .not-found{color:var(--text-dark-muted);font-size:var(--fs-sm);font-style:italic;padding:8px 0}
     .result-banner{display:none;padding:10px 14px;border-radius:var(--radius);font-size:var(--fs-sm);margin-bottom:14px;align-items:center;gap:8px}
@@ -1854,40 +1863,57 @@ function renderRevizto(r){
     const c=document.getElementById('reviztoContent'),t=document.getElementById('reviztoTitle');
     if(!r){t.textContent='';c.innerHTML='<div class="not-found">Not found in Revizto</div>';return;}
     t.textContent=`${r.projects?r.projects.length:0} project${r.projects&&r.projects.length===1?'':'s'}`;
-    // Per-project columns mirror the Revizto half of the invite compose table:
-    // Company · Department · Location · License Role · Project Role.
-    const fld=(label,val)=>`<span class="proj-field"><span class="proj-field-label">${label}</span><span class="proj-field-value${val?'':' muted'}">${esc(val||'—')}</span></span>`;
-    c.innerHTML=r.projects&&r.projects.length
-        ?'<div class="project-list">'+r.projects.map(p=>`<div class="project-row">
-            <span class="proj-name">${esc(p.name||p.uuid)}</span>
-            ${fld('Company',p.company)}
-            ${fld('Department',p.department)}
-            ${fld('Location',p.location)}
-            ${fld('License Role',p.license_role)}
-            ${fld('Project Role',p.role)}
-        </div>`).join('')+'</div>'
-        :'<div class="not-found">No project assignments found in your registry projects</div>';
+    if(!r.projects||!r.projects.length){
+        c.innerHTML='<div class="not-found">No project assignments found in your registry projects</div>';
+        return;
+    }
+    // Grid table: one header row + one row per project. Columns:
+    // Project · Company · Department · Location · License Role · Project Role.
+    const cell=v=>`<div class="${v?'':'muted'}">${esc(v||'—')}</div>`;
+    const rows=r.projects.map(p=>`<div class="proj-table-row">
+        <div class="proj-name-cell">${esc(p.name||p.uuid)}</div>
+        ${cell(p.company)}
+        ${cell(p.department)}
+        ${cell(p.location)}
+        ${cell(p.license_role)}
+        ${cell(p.role)}
+    </div>`).join('');
+    c.innerHTML=`<div class="proj-table revizto">
+        <div class="proj-table-row header">
+            <div>Project</div><div>Company</div><div>Department</div>
+            <div>Location</div><div>License Role</div><div>Project Role</div>
+        </div>
+        ${rows}
+    </div>`;
 }
 
 function renderForma(f){
     const c=document.getElementById('formaContent'),t=document.getElementById('formaTitle');
     if(!f){t.textContent='';c.innerHTML='<div class="not-found">Not found in Forma/ACC</div>';return;}
     t.textContent=`${f.projects?f.projects.length:0} project${f.projects&&f.projects.length===1?'':'s'}`;
-    // Per-project columns: Company · Role · Access · Status. Products dropped
-    // intentionally — too long to fit in one line; the invite flow is where
-    // products get configured.
-    const fld=(label,val)=>`<span class="proj-field"><span class="proj-field-label">${label}</span><span class="proj-field-value${val?'':' muted'}">${esc(val||'—')}</span></span>`;
-    c.innerHTML=f.projects&&f.projects.length
-        ?'<div class="project-list">'+f.projects.map(p=>{
-            return `<div class="project-row">
-                <span class="proj-name">${esc(p.name||p.project_id)}</span>
-                ${fld('Company',p.company)}
-                ${fld('Role',p.role)}
-                ${fld('Access',p.access_levels)}
-                ${fld('Status',p.status)}
-            </div>`;
-        }).join('')+'</div>'
-        :'<div class="not-found">No project assignments found in your registry projects</div>';
+    if(!f.projects||!f.projects.length){
+        c.innerHTML='<div class="not-found">No project assignments found in your registry projects</div>';
+        return;
+    }
+    // Grid table: one header row + one row per project. Columns:
+    // Project · Company · Role · Access · Status. Products column dropped
+    // intentionally to keep everything on one line; products are configured
+    // via the invite flow rather than displayed here.
+    const cell=v=>`<div class="${v?'':'muted'}">${esc(v||'—')}</div>`;
+    const rows=f.projects.map(p=>`<div class="proj-table-row">
+        <div class="proj-name-cell">${esc(p.name||p.project_id)}</div>
+        ${cell(p.company)}
+        ${cell(p.role)}
+        ${cell(p.access_levels)}
+        ${cell(p.status)}
+    </div>`).join('');
+    c.innerHTML=`<div class="proj-table forma">
+        <div class="proj-table-row header">
+            <div>Project</div><div>Company</div><div>Role</div>
+            <div>Access</div><div>Status</div>
+        </div>
+        ${rows}
+    </div>`;
 }
 
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
