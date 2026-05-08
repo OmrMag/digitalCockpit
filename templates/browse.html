@@ -63,8 +63,11 @@
 .bu-table thead th{
     text-align:left;padding:8px 10px;border-bottom:1px solid var(--navy);
     font-size:9px;color:var(--text-dark-muted);text-transform:uppercase;
-    letter-spacing:.5px;font-weight:600;white-space:nowrap;background:transparent;
-    vertical-align:bottom
+    letter-spacing:.5px;font-weight:600;white-space:nowrap;
+    vertical-align:bottom;
+    position:sticky;top:0;z-index:5;
+    background:var(--cream);
+    box-shadow:0 1px 0 var(--navy)
 }
 .bu-table tbody td{
     padding:7px 10px;border-bottom:1px solid var(--border-cream);
@@ -94,29 +97,34 @@
 .bu-lock svg{display:block}
 
 /* ── Platform header (clickable, drives expansion) ─────────────── */
-/* The clickable header is a flex container with the platform label on the
-   left and an expand chevron on the right. The whole <th> is clickable.
-   When that platform is expanded, the chevron rotates 90deg and a thin
-   navy underline appears beneath the label. */
+/* Platform headers are simple labels — same styling as the "User" header.
+   No chevron, no expansion-state styling, no height changes. The whole
+   <th> is clickable to switch which platform is expanded.
+   Width stays constant (just enough for the centered toggle below) in
+   both collapsed and expanded states. The expansion changes the BODY
+   cell's content, not the header cell's dimensions. */
 .bu-plat-th{
-    cursor:pointer;user-select:none;padding:8px 12px;
+    cursor:pointer;user-select:none;
     border-left:1px solid var(--border-cream);
-    transition:background .12s
+    transition:background .12s;
+    width:50px;text-align:center
 }
 .bu-plat-th:hover{background:var(--cream-mid)}
-.bu-plat-th-inner{
-    display:flex;align-items:center;gap:6px;
-    color:var(--text-dark-muted);font-size:9px;letter-spacing:.5px;
-    text-transform:uppercase;font-weight:600
+.bu-plat-th.expanded{background:rgba(20,40,80,.05)}
+
+/* Second header row — property labels for whichever platform is expanded.
+   Only the expanded platform's <th> in this row contains content; the
+   others are empty placeholders that keep alignment. The row's height
+   collapses to zero when no platform is expanded (always one is, by
+   contract) but that's fine. */
+.bu-prop-th-row th{
+    padding:6px 10px;
+    background:var(--cream);
+    position:sticky;top:30px;z-index:4;
+    border-bottom:1px solid var(--border-cream);
+    border-left:1px solid var(--border-cream)
 }
-.bu-plat-th.expanded .bu-plat-th-inner{color:var(--navy)}
-.bu-plat-th .bu-plat-th-chev{
-    width:10px;height:10px;flex-shrink:0;
-    transition:transform .2s ease;
-    color:currentColor
-}
-.bu-plat-th.expanded .bu-plat-th-chev{transform:rotate(90deg)}
-.bu-plat-th.expanded{border-bottom-color:var(--navy)}
+.bu-prop-th-row th.spacer{border-left:none}
 
 /* Property-column header labels — sit inside the same grid as body
    cells so they line up by construction. */
@@ -141,10 +149,13 @@
     display:flex;align-items:center;gap:10px;
     min-width:0
 }
-/* When the platform is the expanded one, that column gets a faint cream
+/* In an expanded cell, align toggle to the top so wrapped property
+   values can grow downward instead of pushing the toggle around. */
+.bu-plat-cell.expanded .bu-plat-cell-inner{align-items:flex-start;padding-top:2px}
+/* When the platform is the expanded one, that column gets a faint navy
    stripe so the eye groups all of it together top-to-bottom. */
-.bu-plat-cell.expanded{background:rgba(245,240,232,.4)}
-.bu-table tbody tr:hover td.bu-plat-cell.expanded{background:rgba(245,240,232,.7)}
+.bu-plat-cell.expanded{background:rgba(20,40,80,.035)}
+.bu-table tbody tr:hover td.bu-plat-cell.expanded{background:rgba(20,40,80,.07)}
 
 /* Property cells inside an expanded platform cell.
    Layout strategy: header and body use the SAME CSS grid template per
@@ -167,7 +178,8 @@
     overflow:hidden;
     display:-webkit-box;
     -webkit-line-clamp:2;-webkit-box-orient:vertical;
-    line-height:1.35;word-break:break-word
+    line-height:1.35;word-break:break-word;
+    min-width:0
 }
 .bu-prop.muted{color:var(--text-dark-muted);font-style:italic}
 .bu-prop.flag{color:var(--navy);font-weight:600;font-size:12px;text-align:center;display:block}
@@ -178,14 +190,13 @@
 }
 
 /* ── Apple-style toggle ────────────────────────────────────────── */
-/* Three states:
-   - on:       navy fill, knob right
-   - off:      grey fill, knob left  (interactive — was on, flipped)
-   - faded:    grey fill, knob left, 30% opacity, no hover, not-allowed
-   The 'faded' state is for rows where the user isn't on that platform at
-   all. It matches OFF visually but signals "you can't toggle this on
-   because they don't exist here yet". Phase 3 will reconsider this if
-   we add a flow for inviting from the browse view. */
+/* States, in priority order:
+   - faded:    user isn't on this platform. Greyed, not interactive.
+   - locked:   row is locked (toggle cannot be flipped). Greyed.
+   - off:      user IS on platform but admin has flipped to deactivate.
+               Soft red — communicates "pending removal".
+   - on:       user is active on platform (default for existing memberships).
+               Soft green — communicates "active". */
 .bu-toggle{
     flex-shrink:0;
     width:30px;height:17px;border-radius:9px;
@@ -206,8 +217,10 @@
     transition:transform .18s ease;
     box-shadow:0 1px 2px rgba(0,0,0,.18)
 }
-.bu-toggle.on{background:var(--navy)}
+.bu-toggle.on{background:#5d9b6f}              /* faded dark green — active */
 .bu-toggle.on::before{transform:translateX(13px)}
+.bu-toggle.off{background:#b56565}              /* faded dark red — pending deactivate */
+.bu-toggle.off::before{transform:translateX(0)} /* knob stays left */
 .bu-toggle.faded{opacity:.28;cursor:not-allowed}
 .bu-toggle.locked{cursor:not-allowed;opacity:.55}
 .bu-toggle:not(.faded):not(.locked):hover{filter:brightness(.95)}
@@ -442,7 +455,6 @@ const propCheckbox  = (state, label) =>
 
 const lockSvgClosed = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`;
 const lockSvgOpen   = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>`;
-const chevronSvg    = `<svg class="bu-plat-th-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>`;
 
 function fmtLastActive(ts, days){
     if (days == null) return '<span class="bu-prop muted">—</span>';
@@ -470,16 +482,25 @@ function fmtLastActive(ts, days){
 function toggleState(row, plat){
     const exists       = row[plat] != null;
     const pendingFlip  = pendingToggles.has(toggleKey(row, plat));
-    const currentlyOn  = exists ? !pendingFlip : false;   // faded rows are never on
-    return { exists, currentlyOn, faded: !exists };
+    // Three meaningful states for rendering:
+    //   faded   → user isn't on this platform at all
+    //   on      → exists AND not flipped (active)
+    //   off     → exists AND flipped (pending deactivate)
+    return {
+        exists,
+        faded:        !exists,
+        currentlyOn:  exists && !pendingFlip,
+        currentlyOff: exists && pendingFlip,
+    };
 }
 
 function renderToggle(row, plat, isUnlocked){
-    const { currentlyOn, faded } = toggleState(row, plat);
+    const { currentlyOn, currentlyOff, faded } = toggleState(row, plat);
     const cls = ['bu-toggle'];
-    if (currentlyOn)         cls.push('on');
-    if (faded)               cls.push('faded');
-    if (!isUnlocked && !faded) cls.push('locked');
+    if (currentlyOn)            cls.push('on');
+    else if (currentlyOff)      cls.push('off');
+    if (faded)                  cls.push('faded');
+    if (!isUnlocked && !faded)  cls.push('locked');
     const title = faded
         ? 'User is not on this platform — cannot be added from this view'
         : (isUnlocked
@@ -545,49 +566,48 @@ const PROP_RENDERERS = { revizto: reviztoProps, forma: formaProps, morta: mortaP
 /* ─────────────────────────────────────────────────────────────────
    Header row construction
 
-   Three platform headers always render. The expanded one gets the
-   property-column headers tacked onto its <th colspan>. The collapsed
-   ones get a single narrow <th> showing just label + chevron.
-
-   We use one <th> per platform regardless of expansion state. Property
-   header labels live INSIDE the same <th> as a small flex row beneath
-   the platform label — that keeps colspan-arithmetic simple and avoids
-   needing two header rows.
+   Two-row <thead>:
+     Row 1 — primary headers: User, Revizto, Forma, Morta. All same
+             height, same style. Platform headers are clickable to
+             change which platform is expanded. No chevron, no jumping.
+     Row 2 — property labels for the expanded platform only. Sits as a
+             sub-header under whichever platform is open.
    ───────────────────────────────────────────────────────────────── */
 
 function platformHeaderHtml(plat){
-    const isExp  = (expandedPlatform === plat);
-    const cls    = ['bu-plat-th'];
+    const isExp = (expandedPlatform === plat);
+    const cls   = ['bu-plat-th'];
     if (isExp) cls.push('expanded');
-    const label  = PLATFORM_LABELS[plat];
+    return `<th class="${cls.join(' ')}" data-plat="${plat}">${esc(PLATFORM_LABELS[plat])}</th>`;
+}
 
-    if (!isExp){
-        // Collapsed: just label + chevron
-        return `<th class="${cls.join(' ')}" data-plat="${plat}">
-            <div class="bu-plat-th-inner">
-                <span>${esc(label)}</span>
-                ${chevronSvg}
+function propHeaderRowHtml(){
+    // One <th> per platform; only the expanded one has content. Leftmost
+    // two cells (lock + user) are empty spacers. We DON'T render this row
+    // at all when collapsed because that would double the header height
+    // for no reason. Default expandedPlatform is always set so this is
+    // always rendered.
+    const cells = PLATFORMS.map(p => {
+        if (p !== expandedPlatform){
+            return `<th></th>`;
+        }
+        const propLabels = PROP_HEADERS[p]
+            .map(h => `<span class="bu-prop-th">${esc(h)}</span>`)
+            .join('');
+        return `<th>
+            <div style="display:flex;align-items:center;gap:10px">
+                <span style="width:30px;flex-shrink:0"></span>
+                <div class="bu-plat-grid ${p}">
+                    ${propLabels}
+                </div>
             </div>
         </th>`;
-    }
-
-    // Expanded: label + chevron on top, then a grid of property labels
-    // matching the body's grid template so headers align with values.
-    const propLabels = PROP_HEADERS[plat]
-        .map(h => `<span class="bu-prop-th">${esc(h)}</span>`)
-        .join('');
-    return `<th class="${cls.join(' ')}" data-plat="${plat}">
-        <div class="bu-plat-th-inner" style="margin-bottom:6px">
-            <span>${esc(label)}</span>
-            ${chevronSvg}
-        </div>
-        <div style="display:flex;align-items:center;gap:10px">
-            <span style="width:30px;flex-shrink:0"></span>
-            <div class="bu-plat-grid ${plat}" style="color:var(--text-dark-muted);font-weight:600;font-size:9px;text-transform:uppercase;letter-spacing:.5px">
-                ${propLabels}
-            </div>
-        </div>
-    </th>`;
+    }).join('');
+    return `<tr class="bu-prop-th-row">
+        <th class="spacer"></th>
+        <th class="spacer"></th>
+        ${cells}
+    </tr>`;
 }
 
 /* ─────────────────────────────────────────────────────────────────
@@ -603,7 +623,12 @@ function platformBodyCellHtml(row, plat, isUnlocked){
     const cls      = ['bu-plat-cell'];
     if (isExp) cls.push('expanded');
     const toggleEl = renderToggle(row, plat, isUnlocked);
-    const propsEl  = isExp ? PROP_RENDERERS[plat](row) : '';
+    if (!isExp){
+        // Collapsed: toggle centered in a fixed 50px column
+        return `<td class="${cls.join(' ')}" style="text-align:center">${toggleEl}</td>`;
+    }
+    // Expanded: toggle in left slot, properties grid to its right
+    const propsEl = PROP_RENDERERS[plat](row);
     return `<td class="${cls.join(' ')}">
         <div class="bu-plat-cell-inner">
             ${toggleEl}
@@ -646,6 +671,7 @@ function renderTable(){
                 <th>User</th>
                 ${headerHtml}
             </tr>
+            ${propHeaderRowHtml()}
         </thead>
         <tbody>${rowsHtml}</tbody>
     </table></div>`;
