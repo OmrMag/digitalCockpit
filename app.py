@@ -1953,7 +1953,13 @@ def revizto_search_user(email, config, allowed_project_uuids: list = None, admin
         department, last_active, projects: [{uuid, name, region, role,
         license_role, company, department, location}, ...] }
     """
-    role_map_license = {0: "Owner", 1: "License Admin", 2: "Collaborator", 3: "Content Creator", 4: "Guest"}
+    # License tier enum — names match the Revizto web UI (License → Members
+    # screen) and the invite dropdown (Administrator / Content creator /
+    # Collaborator / Guest). The "Super administrator" tier (license owner)
+    # only appears on the web UI for the user who owns the license; rare in
+    # practice. Source for the integer mapping: Revizto's web UI ID order
+    # plus our own invite payload usage.
+    role_map_license = {0: "Super administrator", 1: "Administrator", 2: "Collaborator", 3: "Content Creator", 4: "Guest"}
 
     # Token cache shared across phases. Phase 1+2 (license / project list
     # enumeration) populates it serially, one entry per region, so phase 3
@@ -2076,6 +2082,88 @@ def revizto_search_user(email, config, allowed_project_uuids: list = None, admin
         # that's clearly not-found but carries debug.
         return None
 
+    # ── Phase 2.5: license-level team fetch ────────────────────────────
+    # The /v5/project/{uuid}/team entity does NOT carry license tier — its
+    # `member.role` field is the project access level, not the license
+    # tier. To get the actual license role (Administrator / Collaborator /
+    # Content Creator / Guest, matching the Revizto web UI's License →
+    # Members screen), we fetch /v5/license/{uuid}/team once per unique
+    # license UUID and build an email → tier-int index. This is the
+    # license-scoped sibling of /project/.../team and per Revizto's
+    # consistent /team naming should return entities[] with a per-user
+    # `role` (or `licenseRole`) field carrying the integer tier.
+    #
+    # If the endpoint 404s, we leave the index empty and License Role
+    # falls back to blank. Same defensive posture as everywhere else.
+    license_role_by_email: dict = {}   # email-lower -> int tier
+    debug["license_team"] = {}
+
+    unique_licenses = {}   # (lic_uuid, region) -> license_name (for debug)
+    for proj in project_pool:
+        key = (proj["license_uuid"], proj["region"])
+        unique_licenses.setdefault(key, proj["license_name"])
+
+    for (lic_uuid, region), lic_name in unique_licenses.items():
+        ldbg = {"license_name": lic_name, "status": None, "members_count": 0}
+        debug["license_team"][lic_uuid] = ldbg
+        token = tokens.get(region, "")
+        if not token:
+            ldbg["error"] = "no token for region"
+            continue
+        url = f"https://api.{region}.revizto.com/v5/license/{lic_uuid}/team"
+        headers  = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+        try:
+            lr = http_requests.get(url, headers=headers, timeout=15)
+        except Exception as e:
+            ldbg["error"] = f"raised: {type(e).__name__}"
+            continue
+        ldbg["status"] = lr.status_code
+        if lr.status_code != 200:
+            continue
+        try:
+            body = lr.json()
+        except Exception:
+            ldbg["error"] = "json parse failed"
+            continue
+        if body.get("result", 0) != 0:
+            ldbg["error"] = f"result={body.get('result')}"
+            continue
+        ents = (body.get("data") or {}).get("entities") or []
+        if not isinstance(ents, list):
+            continue
+        ldbg["members_count"] = len(ents)
+        # Capture the searched user's full entity once for diagnosis — lets
+        # us see exactly which field carries the tier integer without
+        # dumping every member.
+        for ent in ents:
+            if not isinstance(ent, dict):
+                continue
+            ent_email = (ent.get("email") or "").lower()
+            if not ent_email:
+                # Try nested user field (mirrors the GET_License_Members script)
+                user_sub = ent.get("user") if isinstance(ent.get("user"), dict) else {}
+                ent_email = (user_sub.get("email") or "").lower()
+            if not ent_email:
+                continue
+            # Resolution order for license tier: try several plausible field
+            # names. We don't know the exact one for /license/.../team, but
+            # `role` and `licenseRole` are the obvious candidates by
+            # consistency with the rest of the API.
+            tier = None
+            for k in ("role", "licenseRole", "license_role", "tier"):
+                v = ent.get(k)
+                if isinstance(v, int):
+                    tier = v
+                    break
+            if tier is not None:
+                license_role_by_email[ent_email] = tier
+            # Capture the searched user's raw entity once for visibility
+            if ent_email == email.lower() and "matched_entity" not in ldbg:
+                ldbg["matched_entity"] = {k: ent[k] for k in sorted(ent.keys())
+                                           if not isinstance(ent[k], (list, dict))}
+
+    debug["license_role_index_size"] = len(license_role_by_email)
+
     # Phase 3 token getter: read from the shared cache populated above.
     # Returns "" if the region had no usable token (skipped or failed).
     # No fetch happens here — phase 1+2 is the only place tokens get
@@ -2125,26 +2213,12 @@ def revizto_search_user(email, config, allowed_project_uuids: list = None, admin
                 access_role.get("name", "") if isinstance(access_role, dict)
                 else str(access_role or "")
             )
-            # License role resolution — separate concept from project role.
-            # The /team entity wraps license-level info inside `member` (the
-            # GET_License_Members script reads ent.member.user for identity;
-            # license role lives on the same wrapper). Try the most likely
-            # field names in order, falling back to top-level keys for
-            # backward compat. The integer maps to Revizto's license tier
-            # enum: 0=Owner, 1=License Admin, 2=Collaborator,
-            # 3=Content Creator, 4=Guest (per revizto_invite payload).
-            member = ent.get("member") if isinstance(ent.get("member"), dict) else {}
-            license_role_id = (
-                member.get("role")
-                if isinstance(member.get("role"), int)
-                else member.get("licenseRole")
-                if isinstance(member.get("licenseRole"), int)
-                else ent.get("licenseRole")
-                if isinstance(ent.get("licenseRole"), int)
-                else ent.get("license_role")
-                if isinstance(ent.get("license_role"), int)
-                else None
-            )
+            # License tier resolution — read from the per-license email index
+            # built in phase 2.5 (sourced from /license/{uuid}/team). This
+            # is the only known place the license-level role lives; the
+            # /project/{uuid}/team entity carries only the project access
+            # level under member.role, which is a separate concept.
+            license_role_id = license_role_by_email.get(email.lower())
             license_role_label = role_map_license.get(license_role_id, "") if license_role_id is not None else ""
             project_match = {
                 "uuid":         proj["uuid"],
