@@ -95,6 +95,12 @@ EXPORTS_DIR = BASE_DIR / "exports"
 EXPORTS_DIR.mkdir(exist_ok=True)
 TEMP_DIR    = BASE_DIR / "temp"
 TEMP_DIR.mkdir(exist_ok=True)
+# Audit log dir for the Browse Users edit feature. Phase 2 only writes the
+# scaffolding; phase 3 (inline edits) appends to audit_log.jsonl on every
+# write-back. Kept here so the dir exists from day one and any helpers
+# elsewhere can reference AUDIT_DIR without import surprises.
+AUDIT_DIR   = BASE_DIR / "audit"
+AUDIT_DIR.mkdir(exist_ok=True)
 SCRIPT_DIRS = {
     "revizto": BASE_DIR / "codeRevizto" / "vsCode",
     "morta":   BASE_DIR / "codeMorta"   / "vsCode",
@@ -571,6 +577,38 @@ def _config_blob_name(email: str = None) -> str:
         safe = email.lower().replace("@", "_at_").replace(".", "_")
         return f"config_{safe}.json"
     return "config.json"
+
+def audit_log_event(event_type: str, actor: str, target: dict, before: dict = None, after: dict = None, status: str = "ok", error: str = ""):
+    """Append a single audit record to AUDIT_DIR/audit_log.jsonl.
+
+    JSONL = one JSON object per line, append-friendly, easy to tail.
+    Fields are intentionally simple so the file stays human-readable on
+    `cat` / `tail`. The Browse Users edit flow will call this on every
+    write-back; phase 1+2 doesn't write yet but the helper exists so phase
+    3 doesn't need a separate plumbing change.
+
+    target.platform / target.email / target.project_id together identify
+    what was changed; before/after are the diff snapshots. Failures are
+    logged too with status="error" so we have a complete trail.
+    """
+    record = {
+        "ts":         datetime.now(timezone.utc).isoformat(),
+        "actor":      actor,
+        "event":      event_type,
+        "status":     status,
+        "target":     target,
+        "before":     before,
+        "after":      after,
+    }
+    if error:
+        record["error"] = error
+    try:
+        path = AUDIT_DIR / "audit_log.jsonl"
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(record, default=str) + "\n")
+    except Exception as e:
+        # Audit log failures must never break the calling code path.
+        print(f"[audit] failed to write event: {e}")
 
 def load_config(email: str = None):
     cache_key = f"config:{email or 'default'}"
@@ -3693,6 +3731,316 @@ async def manage_page(request: Request, user: str = Depends(require_user)):
         "current_user":   user,
         "active_context": config.get("active_context", {}),
     })
+
+# ─────────────────────────────────────────────────────────────────────
+# BROWSE USERS — license-wide grid view (phase 1+2: read-only)
+#
+# The Manage page is search-driven (one email at a time). Browse Users
+# inverts that: load every user across every license + platform, let the
+# admin filter & inspect. Inline edit (phase 3) is intentionally not in
+# this deploy — that's a separate write-path with audit + per-platform
+# PATCH endpoints, scoped in a follow-up.
+#
+# Three routes:
+#   GET /browse                    — page shell
+#   GET /api/browse/projects       — filter dropdown options
+#   GET /api/browse/users          — aggregated user list across platforms
+# ─────────────────────────────────────────────────────────────────────
+
+@app.get("/browse", response_class=HTMLResponse)
+async def browse_page(request: Request, user: str = Depends(require_user)):
+    return templates.TemplateResponse(request=request, name="browse.html", context={
+        "active_page":  "manage",   # nav highlight stays on Manage Users
+        "current_user": user,
+    })
+
+@app.get("/api/browse/projects")
+async def api_browse_projects(user: str = Depends(require_user)):
+    """Return projects visible to this admin's licenses across all platforms.
+
+    Per the brief, "loose" scope: every project the admin can see in any
+    platform, not restricted to the registry. Each entry is tagged with
+    platform + the platform-specific id so the picker can disambiguate.
+
+    Shape: { projects: [{ platform, id, name }] }
+    """
+    config = load_config(user)
+    out: list = []
+
+    # Revizto — license-based sweep (matches the extraction script).
+    # Reuses fetch_revizto_projects() which already walks user/licenses
+    # then project/list/{lic}/paged across both regions.
+    try:
+        rev_projects = fetch_revizto_projects(config, email=user) or []
+        for p in rev_projects:
+            out.append({
+                "platform": "revizto",
+                "id":       p.get("uuid", ""),
+                "name":     p.get("title", p.get("uuid", "")),
+            })
+    except Exception as e:
+        print(f"[browse/projects] revizto failed: {e}")
+
+    # Forma — pull from the cached registry. The registry holds the
+    # admin's known-good Forma project set; an unrestricted "all visible"
+    # sweep would require an extra ACC call we can defer to phase 3 if
+    # someone asks for it. For phase 1+2, registry-scoped is enough.
+    try:
+        registry       = load_registry()
+        admin_projects = registry if is_owner(user) else {
+            k: v for k, v in registry.items() if user in v.get("admins", [])
+        }
+        for k, rp in admin_projects.items():
+            forma = (rp.get("platforms", {}) or {}).get("forma", {}) or {}
+            pid = forma.get("project_id", "")
+            if pid:
+                out.append({
+                    "platform": "forma",
+                    "id":       pid,
+                    "name":     rp.get("name", k),
+                })
+            morta = (rp.get("platforms", {}) or {}).get("morta", {}) or {}
+            mhub  = morta.get("hub_id", "") or morta.get("project_id", "")
+            if mhub:
+                out.append({
+                    "platform": "morta",
+                    "id":       mhub,
+                    "name":     rp.get("name", k),
+                })
+    except Exception as e:
+        print(f"[browse/projects] registry walk failed: {e}")
+
+    # Sort: platform first (revizto, forma, morta), name alpha second.
+    plat_order = {"revizto": 0, "forma": 1, "morta": 2}
+    out.sort(key=lambda p: (plat_order.get(p["platform"], 9), p["name"].lower()))
+    return {"projects": out}
+
+@app.get("/api/browse/users")
+async def api_browse_users(
+    request: Request,
+    user: str = Depends(require_user),
+):
+    """Aggregate users across the selected platforms + projects.
+
+    Query params (multi-valued):
+      platform: revizto | forma | morta   (default: all three)
+      project:  "<platform>:<id>"          (default: all visible projects)
+
+    Returns:
+      { users: [{
+          email, name, company,
+          revizto: { role, projects: [{ id, name, role }] } | null,
+          forma:   { role, projects: [...] } | null,
+          morta:   { role, projects: [...] } | null,
+          project_count: int
+        }] }
+
+    Phase 1+2 contract: read-only, deduplicated by lower(email). If a user
+    is on two platforms, both objects populate; if only one, the others
+    are null. Designed so phase 3 can attach edit affordances per platform
+    without restructuring the payload.
+    """
+    qp = request.query_params
+    platforms = set(qp.getlist("platform")) or {"revizto", "forma", "morta"}
+    project_filters = qp.getlist("project")    # ["platform:id", ...]
+
+    # Index project filters by platform for cheap membership checks below.
+    pf_by_platform: dict = {"revizto": set(), "forma": set(), "morta": set()}
+    for raw in project_filters:
+        if ":" not in raw:
+            continue
+        plat, pid = raw.split(":", 1)
+        if plat in pf_by_platform and pid:
+            pf_by_platform[plat].add(pid)
+
+    config = load_config(user)
+    # Aggregator keyed by lowercase email. Each entry merges fields from
+    # every platform we found this user on. The merge is shallow — we
+    # take the first non-empty value for top-level fields like company.
+    users_by_email: dict = {}
+
+    def upsert(email: str, **fields):
+        if not email:
+            return None
+        key = email.lower()
+        rec = users_by_email.get(key)
+        if rec is None:
+            rec = {
+                "email":         email,
+                "name":          "",
+                "company":       "",
+                "revizto":       None,
+                "forma":         None,
+                "morta":         None,
+                "project_count": 0,
+            }
+            users_by_email[key] = rec
+        for k, v in fields.items():
+            # Only fill blanks for shared identity fields; platform sub-
+            # objects are written once each.
+            if k in ("name", "company") and v and not rec.get(k):
+                rec[k] = v
+            elif k in ("revizto", "forma", "morta"):
+                rec[k] = v
+        return rec
+
+    # ── Revizto ────────────────────────────────────────────────────
+    # Walk licenses → projects → /team. Same pattern revizto_search_user
+    # uses, but unbounded: every user, not one email lookup.
+    if "revizto" in platforms:
+        try:
+            rev_projects = fetch_revizto_projects(config, email=user) or []
+            # Cache one token per region.
+            rev_tokens: dict = {}
+            for proj in rev_projects:
+                pid = proj.get("uuid", "")
+                if not pid:
+                    continue
+                if pf_by_platform["revizto"] and pid not in pf_by_platform["revizto"]:
+                    continue
+                region = proj.get("region", "dubai")
+                token  = rev_tokens.get(region)
+                if token is None:
+                    token = revizto_get_token_for_region(config, region, email=user) or ""
+                    rev_tokens[region] = token
+                if not token:
+                    continue
+                try:
+                    tr = http_requests.get(
+                        f"https://api.{region}.revizto.com/v5/project/{pid}/team",
+                        headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+                        timeout=15
+                    )
+                except Exception as e:
+                    print(f"[browse/users] revizto /team {pid[:8]} raised: {e}")
+                    continue
+                if tr.status_code != 200:
+                    continue
+                try:
+                    body = tr.json()
+                except Exception:
+                    continue
+                if body.get("result", 0) != 0:
+                    continue
+                ents = (body.get("data") or {}).get("entities") or []
+                for ent in ents:
+                    if not isinstance(ent, dict):
+                        continue
+                    em = (ent.get("email") or "").strip()
+                    if not em:
+                        continue
+                    role = ((ent.get("accessRole") or {}).get("name", "")
+                            if isinstance(ent.get("accessRole"), dict) else "")
+                    full_name = ent.get("fullname") or (
+                        f"{ent.get('firstname','')} {ent.get('lastname','')}".strip()
+                    )
+                    rec = upsert(em, name=full_name, company=ent.get("company", ""))
+                    if not rec:
+                        continue
+                    if rec["revizto"] is None:
+                        rec["revizto"] = {"role": role, "projects": []}
+                    rec["revizto"]["projects"].append({
+                        "id":   pid,
+                        "name": proj.get("title", pid),
+                        "role": role,
+                    })
+                    rec["project_count"] = (rec["project_count"] or 0) + 1
+        except Exception as e:
+            print(f"[browse/users] revizto sweep failed: {e}")
+
+    # ── Forma ──────────────────────────────────────────────────────
+    # Walk registry-known Forma projects, hit /projects/{id}/users for each.
+    if "forma" in platforms:
+        try:
+            registry       = load_registry()
+            admin_projects = registry if is_owner(user) else {
+                k: v for k, v in registry.items() if user in v.get("admins", [])
+            }
+            forma_token = forma_get_token(config)
+            forma_headers = {"Authorization": f"Bearer {forma_token}",
+                             "Accept": "application/json"} if forma_token else None
+
+            for k, rp in admin_projects.items():
+                forma = (rp.get("platforms", {}) or {}).get("forma", {}) or {}
+                fpid = forma.get("project_id", "")
+                if not fpid or not forma_headers:
+                    continue
+                if pf_by_platform["forma"] and fpid not in pf_by_platform["forma"]:
+                    continue
+                # Roles map for this project so we can resolve role IDs to names
+                roles = {r["id"]: r["name"] for r in (forma.get("roles") or []) if r.get("id")}
+                companies = {c["id"]: c["name"] for c in (forma.get("companies") or []) if c.get("id")}
+
+                offset = 0
+                while True:
+                    try:
+                        rr = http_requests.get(
+                            f"https://developer.api.autodesk.com/construction/admin/v1/projects/{fpid}/users",
+                            headers=forma_headers, params={"limit": 200, "offset": offset}, timeout=15
+                        )
+                    except Exception as e:
+                        print(f"[browse/users] forma users {fpid[:8]} raised: {e}")
+                        break
+                    if rr.status_code != 200:
+                        break
+                    batch = (rr.json() or {}).get("results", [])
+                    if not batch:
+                        break
+                    for u_ in batch:
+                        em = (u_.get("email") or "").strip()
+                        if not em:
+                            continue
+                        # Resolve role names: prefer inline {id,name} pairs,
+                        # else look up role IDs in the registry catalog.
+                        rnames = []
+                        for ro in (u_.get("roles") or []):
+                            if isinstance(ro, dict) and ro.get("name"):
+                                rnames.append(ro["name"])
+                            elif isinstance(ro, dict) and ro.get("id"):
+                                rnames.append(roles.get(ro["id"], ro["id"]))
+                            elif isinstance(ro, str):
+                                rnames.append(roles.get(ro, ro))
+                        role_str = ", ".join(rnames)
+                        company_id = u_.get("companyId", "")
+                        company_name = companies.get(company_id, company_id) if company_id else ""
+                        full_name = (
+                            (u_.get("name") or "").strip() or
+                            f"{u_.get('firstName','')} {u_.get('lastName','')}".strip()
+                        )
+                        rec = upsert(em, name=full_name, company=company_name)
+                        if not rec:
+                            continue
+                        if rec["forma"] is None:
+                            rec["forma"] = {"role": role_str, "projects": []}
+                        rec["forma"]["projects"].append({
+                            "id":   fpid,
+                            "name": rp.get("name", k),
+                            "role": role_str,
+                            "status": u_.get("status", ""),
+                        })
+                        rec["project_count"] = (rec["project_count"] or 0) + 1
+                    offset += len(batch)
+                    if len(batch) < 200:
+                        break
+        except Exception as e:
+            print(f"[browse/users] forma sweep failed: {e}")
+
+    # ── Morta ──────────────────────────────────────────────────────
+    # Phase 1 stub: registry-known hubs only. The existing fetch_morta_hubs
+    # gives hub-level info but not member rosters; pulling member rosters
+    # requires a separate Morta API call we can defer until phase 3 or a
+    # proper "Morta in browse" follow-up. For now, if morta is selected,
+    # we don't error — we just don't add Morta entries to the result.
+    # This keeps the UI honest about what's actually fetched.
+    if "morta" in platforms:
+        # No-op for now. See above comment. The platform option is still
+        # offered so phase 3 wires up cleanly without a UI change.
+        pass
+
+    users = list(users_by_email.values())
+    # Sort by email — predictable, easy to scan.
+    users.sort(key=lambda u: u["email"].lower())
+    return {"users": users}
 
 @app.get("/scheduler", response_class=HTMLResponse)
 async def scheduler_page(request: Request, user: str = Depends(require_user)):

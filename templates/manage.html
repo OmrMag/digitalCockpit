@@ -3,6 +3,21 @@
 {% block page_title %}Manage Users{% endblock %}
 {% block page_subtitle %}Search, invite, and manage user permissions across platforms{% endblock %}
 
+{# Header action: Browse Users — same pattern as the home → profile button.
+   Lives in base.html's header_actions slot. Takes the admin to a license-
+   wide grid of all users across all platforms, with filters & inline edit. #}
+{% block header_actions %}
+<a href="/browse" class="cc-btn cc-btn--secondary" title="Browse all users in your licenses">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+        <circle cx="9" cy="7" r="4"/>
+        <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+        <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+    </svg>
+    Browse Users
+</a>
+{% endblock %}
+
 {% block head %}
 <style>
     /* Critical: prevent the flex .main column from growing to its

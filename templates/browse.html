@@ -1,0 +1,277 @@
+{% extends "base.html" %}
+
+{% block title %}Browse Users — Digital Construction Cockpit{% endblock %}
+{% block page_title %}Browse Users{% endblock %}
+{% block page_subtitle %}All users in your licenses across Revizto, Forma, and Morta · Phase 1 (read-only){% endblock %}
+
+{# Header action: Back to manage. Mirrors profile.html's "Back to home"
+   pattern so the navigation feels symmetric. #}
+{% block header_actions %}
+<a href="/manage" class="cc-btn cc-btn--secondary" title="Back to manage users">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M19 12H5"/><polyline points="12 19 5 12 12 5"/>
+    </svg>
+    Back to Manage
+</a>
+{% endblock %}
+
+{% block head %}
+<style>
+/* ── Filter bar ───────────────────────────────────────────────────
+   Compact two-row layout: filter chips on the left, Apply on the right.
+   Mirrors the Manage page's cc-card aesthetic so it doesn't feel like a
+   different app. */
+.bu-filter-bar{
+    display:flex;flex-wrap:wrap;gap:14px;align-items:flex-end;
+    padding:14px 16px;background:white;border:1px solid var(--border-cream);
+    border-radius:6px;margin-bottom:14px
+}
+.bu-filter-group{display:flex;flex-direction:column;gap:5px;min-width:200px}
+.bu-filter-group label{
+    font-size:9px;color:var(--text-dark-muted);text-transform:uppercase;
+    letter-spacing:.5px;font-weight:600
+}
+.bu-filter-group select,.bu-filter-group input{
+    padding:7px 10px;border:1px solid var(--border-cream);border-radius:4px;
+    background:white;font-size:var(--fs-sm);color:var(--text-dark);min-width:200px;
+    font-family:inherit
+}
+.bu-filter-group select[multiple]{min-height:80px}
+.bu-filter-actions{display:flex;gap:8px;margin-left:auto}
+.bu-filter-summary{font-size:var(--fs-xs);color:var(--text-dark-muted);align-self:center}
+
+/* ── Results grid ─────────────────────────────────────────────────
+   CSS grid table similar to the per-project tables in manage.html, but
+   wider and with a fixed sticky header for long lists. */
+.bu-results-card{padding:0;overflow:hidden}
+.bu-results-header{
+    display:flex;justify-content:space-between;align-items:center;
+    padding:12px 16px;border-bottom:1px solid var(--border-cream);
+    background:var(--cream-mid)
+}
+.bu-results-title{font-weight:600;color:var(--navy);font-size:var(--fs-sm)}
+.bu-results-count{font-size:var(--fs-xs);color:var(--text-dark-muted)}
+
+.bu-grid{display:grid;font-size:var(--fs-xs)}
+.bu-row{
+    display:grid;
+    grid-template-columns:
+        minmax(200px,2fr)   /* email + name */
+        minmax(140px,1.4fr) /* company */
+        minmax(110px,1fr)   /* revizto status */
+        minmax(110px,1fr)   /* forma status */
+        minmax(110px,1fr)   /* morta status */
+        minmax(80px,.8fr);  /* projects count */
+    gap:14px;align-items:center;padding:10px 16px
+}
+.bu-row + .bu-row{border-top:1px solid var(--border-cream)}
+.bu-row.header{
+    background:var(--cream-mid);position:sticky;top:0;z-index:1;
+    padding:8px 16px;border-bottom:1px solid var(--border-cream)
+}
+.bu-row.header > div{
+    font-size:9px;color:var(--text-dark-muted);text-transform:uppercase;
+    letter-spacing:.4px;font-weight:600
+}
+.bu-row > div{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bu-row .bu-user{display:flex;flex-direction:column;gap:1px;min-width:0}
+.bu-row .bu-user-name{font-weight:500;color:var(--navy);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bu-row .bu-user-email{font-size:11px;color:var(--text-dark-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* Platform pill — a small chip showing role / status per platform.
+   Muted "—" when the user isn't on that platform. Color-coded so a
+   busy grid is still scannable. */
+.bu-pill{
+    display:inline-flex;align-items:center;gap:6px;padding:2px 8px;border-radius:10px;
+    font-size:11px;font-weight:500;background:var(--cream-mid);color:var(--text-dark)
+}
+.bu-pill.revizto{background:#fde8e8;color:#9b3a3a}
+.bu-pill.forma  {background:#e8edff;color:#3a4d9b}
+.bu-pill.morta  {background:#e8f5ee;color:#2f7548}
+.bu-pill.muted  {background:transparent;color:var(--text-dark-muted);font-style:italic;padding:0}
+
+.bu-loading{padding:60px;text-align:center;color:var(--text-dark-muted);font-size:var(--fs-sm)}
+.bu-empty{padding:40px 16px;text-align:center;color:var(--text-dark-muted);font-size:var(--fs-sm)}
+.bu-error{padding:16px;color:#9b3a3a;font-size:var(--fs-sm);background:#fdf3f3;border-radius:4px}
+
+/* Phase-1 banner — temporary signal that edits aren't here yet. */
+.bu-phase-banner{
+    padding:8px 12px;background:#fff8e1;border:1px solid #f5c842;border-radius:4px;
+    font-size:var(--fs-xs);color:#8a6d00;margin-bottom:14px;display:flex;gap:8px;align-items:center
+}
+</style>
+{% endblock %}
+
+{% block content %}
+
+<div class="bu-phase-banner">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+    </svg>
+    <span>Phase 1: read-only browse view. Inline edits land in a follow-up deploy.</span>
+</div>
+
+<div class="bu-filter-bar">
+    <div class="bu-filter-group">
+        <label for="bu-platforms">Platforms</label>
+        <select id="bu-platforms" multiple size="3">
+            <option value="revizto" selected>Revizto</option>
+            <option value="forma" selected>Forma / ACC</option>
+            <option value="morta" selected>Morta</option>
+        </select>
+    </div>
+    <div class="bu-filter-group">
+        <label for="bu-projects">Projects</label>
+        <select id="bu-projects" multiple size="3" disabled>
+            <option>Loading projects…</option>
+        </select>
+    </div>
+    <div class="bu-filter-group" style="min-width:240px">
+        <label for="bu-search">Filter by email or name</label>
+        <input id="bu-search" type="text" placeholder="Type to filter results…" autocomplete="off">
+    </div>
+    <div class="bu-filter-actions">
+        <button id="bu-apply" class="cc-btn cc-btn--primary" type="button">Apply</button>
+        <button id="bu-reset" class="cc-btn cc-btn--secondary" type="button">Reset</button>
+    </div>
+</div>
+
+<div class="cc-card bu-results-card">
+    <div class="bu-results-header">
+        <div class="bu-results-title">Users</div>
+        <div class="bu-results-count" id="bu-count">—</div>
+    </div>
+    <div id="bu-results">
+        <div class="bu-loading">Click <strong>Apply</strong> to load users from the selected platforms.</div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+/* ── Browse Users — phase 1 (read path only) ────────────────────────
+   Calls /api/browse/users with selected filters, renders a grid.
+   Project list is loaded once on page load from /api/browse/projects.
+   Search box filters client-side over the loaded result set, so it's
+   instant; Apply is what actually triggers a fresh server fetch. */
+
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+let lastResults = [];   // server payload from most recent /api/browse/users
+
+/* ── Project picker hydration ───────────────────────────────────── */
+async function loadProjects(){
+    const sel = document.getElementById('bu-projects');
+    try {
+        const r = await fetch('/api/browse/projects');
+        if (!r.ok) throw new Error('HTTP '+r.status);
+        const data = await r.json();
+        sel.innerHTML = '';
+        if (!data.projects || !data.projects.length){
+            sel.innerHTML = '<option disabled>No projects available</option>';
+            return;
+        }
+        // Group projects by platform so the picker is scannable. Each
+        // option's value is "platform:id" so the API can disambiguate
+        // (a single registry project can have UUIDs across all 3).
+        for (const p of data.projects){
+            const o = document.createElement('option');
+            o.value = `${p.platform}:${p.id}`;
+            o.textContent = `${p.name} · ${p.platform}`;
+            sel.appendChild(o);
+        }
+        sel.disabled = false;
+    } catch(e){
+        sel.innerHTML = '<option disabled>Failed to load projects</option>';
+        console.error('[browse] project load failed', e);
+    }
+}
+
+/* ── Apply (server fetch) ───────────────────────────────────────── */
+async function apply(){
+    const platforms = Array.from(document.getElementById('bu-platforms').selectedOptions).map(o=>o.value);
+    const projects  = Array.from(document.getElementById('bu-projects').selectedOptions).map(o=>o.value);
+    const params = new URLSearchParams();
+    platforms.forEach(p=>params.append('platform', p));
+    projects.forEach(p=>params.append('project', p));
+
+    const out = document.getElementById('bu-results');
+    out.innerHTML = '<div class="bu-loading">Loading users…</div>';
+    document.getElementById('bu-count').textContent = '—';
+
+    try {
+        const r = await fetch('/api/browse/users?'+params.toString());
+        if (!r.ok) throw new Error('HTTP '+r.status);
+        const data = await r.json();
+        lastResults = data.users || [];
+        renderResults(lastResults);
+    } catch(e){
+        out.innerHTML = '<div class="bu-error">Failed to load users: '+esc(e.message)+'</div>';
+        console.error('[browse] users fetch failed', e);
+    }
+}
+
+/* ── Client-side search filter ──────────────────────────────────── */
+function applyClientFilter(){
+    const q = document.getElementById('bu-search').value.toLowerCase().trim();
+    if (!q){ renderResults(lastResults); return; }
+    const filtered = lastResults.filter(u =>
+        (u.email||'').toLowerCase().includes(q) ||
+        (u.name ||'').toLowerCase().includes(q) ||
+        (u.company||'').toLowerCase().includes(q));
+    renderResults(filtered);
+}
+
+/* ── Result rendering ───────────────────────────────────────────── */
+function renderResults(users){
+    document.getElementById('bu-count').textContent =
+        users.length === 1 ? '1 user' : `${users.length} users`;
+    const out = document.getElementById('bu-results');
+    if (!users.length){
+        out.innerHTML = '<div class="bu-empty">No users match these filters.</div>';
+        return;
+    }
+    const pill = (cls, label) => label
+        ? `<span class="bu-pill ${cls}">${esc(label)}</span>`
+        : `<span class="bu-pill muted">—</span>`;
+    const rows = users.map(u => `<div class="bu-row">
+        <div class="bu-user">
+            <div class="bu-user-name">${esc(u.name||u.email)}</div>
+            <div class="bu-user-email">${esc(u.email)}</div>
+        </div>
+        <div>${esc(u.company||'—')}</div>
+        <div>${pill('revizto', u.revizto && u.revizto.role)}</div>
+        <div>${pill('forma',   u.forma   && u.forma.role)}</div>
+        <div>${pill('morta',   u.morta   && u.morta.role)}</div>
+        <div>${u.project_count ?? 0}</div>
+    </div>`).join('');
+    out.innerHTML = `<div class="bu-grid">
+        <div class="bu-row header">
+            <div>User</div><div>Company</div>
+            <div>Revizto</div><div>Forma</div><div>Morta</div>
+            <div>Projects</div>
+        </div>
+        ${rows}
+    </div>`;
+}
+
+/* ── Wire up ────────────────────────────────────────────────────── */
+document.getElementById('bu-apply').addEventListener('click', apply);
+document.getElementById('bu-reset').addEventListener('click', ()=>{
+    document.getElementById('bu-platforms').querySelectorAll('option')
+        .forEach(o => o.selected = true);
+    Array.from(document.getElementById('bu-projects').selectedOptions)
+        .forEach(o => o.selected = false);
+    document.getElementById('bu-search').value = '';
+    document.getElementById('bu-results').innerHTML =
+        '<div class="bu-loading">Click <strong>Apply</strong> to load users from the selected platforms.</div>';
+    document.getElementById('bu-count').textContent = '—';
+    lastResults = [];
+});
+document.getElementById('bu-search').addEventListener('input', applyClientFilter);
+
+loadProjects();
+</script>
+{% endblock %}
