@@ -2030,18 +2030,8 @@ def revizto_search_user(email, config, allowed_project_uuids: list = None, admin
                 access_role.get("name", "") if isinstance(access_role, dict)
                 else str(access_role or "")
             )
-            # Build the project hit (for the `projects` list)
-            project_match = {
-                "uuid": project_uuid,
-                "role": project_role_name,
-            }
-            # Build a candidate user record. License-level fields aren't
-            # available from /team; we fall back to the project-level
-            # accessRole.name so the UI doesn't show a blank role pill.
-            # `license_role_id` is the v5 license-level role enum (0–4)
-            # — Revizto sometimes echoes it on team entities as `licenseRole`
-            # or `accessRoleSystem`; we read both as opportunistic hints
-            # and otherwise leave license_role blank.
+            # License role enum (0–4) — sometimes echoed on team entities as
+            # `licenseRole` or `license_role`. Fixed mapping in role_map_license.
             license_role_id = ent.get("licenseRole")
             if license_role_id is None:
                 license_role_id = ent.get("license_role")
@@ -2050,6 +2040,21 @@ def revizto_search_user(email, config, allowed_project_uuids: list = None, admin
                 if isinstance(license_role_id, int)
                 else ""
             )
+            # Build the project hit (for the `projects` list). Carry every
+            # field the manage.html user-info pane needs to render the
+            # invite-table-equivalent columns: company, department, location,
+            # license role, project role.
+            project_match = {
+                "uuid":         project_uuid,
+                "role":         project_role_name,
+                "license_role": license_role_label,
+                "company":      ent.get("company", ""),
+                "department":   ent.get("department", ""),
+                "location":     ent.get("location", ""),
+            }
+            # Build a candidate user record. License-level fields aren't
+            # available from /team; we fall back to the project-level
+            # accessRole.name so the UI doesn't show a blank role pill.
             user_record = {
                 "found":        True,
                 "region":       region,
@@ -2154,7 +2159,12 @@ def forma_search_user(email, config, allowed_project_ids: list = None):
     if not hub_info:
         return None
 
-    # Check project membership — only within registry-allowed projects
+    # Check project membership — only within registry-allowed projects.
+    # The /projects/{id}/users endpoint returns user records with:
+    #   email, status, accessLevels, addedOn, companyId, roles[], products[]
+    # We pass through the raw IDs; the search endpoint resolves them to
+    # display names using the registry's forma.companies / forma.roles
+    # lookups (which the manage.html invite table also uses).
     def check_forma_project(project_id):
         po = 0
         while True:
@@ -2168,11 +2178,41 @@ def forma_search_user(email, config, allowed_project_ids: list = None):
             for u in batch:
                 if u.get("email", "").lower() == email.lower():
                     access = [k for k, v in u.get("accessLevels", {}).items() if v] if isinstance(u.get("accessLevels"), dict) else []
+                    # Roles can come back as full {id, name} pairs or just
+                    # role IDs. Capture both — the search endpoint will
+                    # reconcile against the registry's role list.
+                    roles_raw = u.get("roles") or u.get("industryRoles") or []
+                    role_ids = []
+                    role_names_inline = []
+                    if isinstance(roles_raw, list):
+                        for ro in roles_raw:
+                            if isinstance(ro, dict):
+                                rid = ro.get("id") or ro.get("roleId") or ""
+                                rnm = ro.get("name") or ""
+                                if rid: role_ids.append(rid)
+                                if rnm: role_names_inline.append(rnm)
+                            elif isinstance(ro, str):
+                                role_ids.append(ro)
+                    # Products — list of {key, access} per the invite payload.
+                    # ACC may return "products" with the same shape, or a
+                    # list of strings. Normalize to a list of keys for the UI.
+                    products_raw = u.get("products") or []
+                    product_keys = []
+                    if isinstance(products_raw, list):
+                        for p in products_raw:
+                            if isinstance(p, dict) and p.get("key"):
+                                product_keys.append(p["key"])
+                            elif isinstance(p, str):
+                                product_keys.append(p)
                     return {
-                        "project_id":    project_id,
-                        "status":        u.get("status", ""),
-                        "access_levels": ", ".join(access) if access else "member",
-                        "added_on":      u.get("addedOn", ""),
+                        "project_id":        project_id,
+                        "status":            u.get("status", ""),
+                        "access_levels":     ", ".join(access) if access else "member",
+                        "added_on":          u.get("addedOn", ""),
+                        "company_id":        u.get("companyId", "") or "",
+                        "role_ids":          role_ids,
+                        "role_names_inline": role_names_inline,
+                        "product_keys":      product_keys,
                     }
             po += len(batch)
             if len(batch) < 200: break
@@ -6440,10 +6480,37 @@ async def api_user_search(email: str, user: str = Depends(require_user)):
         for p in revizto_result["projects"]:
             p["name"] = revizto_name_map.get(p.get("uuid"), p.get("uuid", ""))
 
-    # Enrich Forma project results with names from registry
+    # Enrich Forma project results with names + resolved company/role labels.
+    # The registry stores per-project forma.companies and forma.roles as
+    # [{id, name}] lists. Build a per-project lookup so the user pane can
+    # show the same human-readable values that the invite table uses.
     if forma_result and forma_result.get("projects"):
+        # Map forma project_id -> registry record (for company/role lookups)
+        forma_pid_to_regkey = {
+            v["platforms"]["forma"]["project_id"]: k
+            for k, v in admin_projects.items()
+            if v.get("platforms", {}).get("forma", {}).get("project_id")
+        }
         for p in forma_result["projects"]:
-            p["name"] = forma_name_map.get(p.get("project_id"), p.get("project_id", ""))
+            pid = p.get("project_id", "")
+            p["name"] = forma_name_map.get(pid, pid)
+            reg_key = forma_pid_to_regkey.get(pid)
+            reg_forma = (admin_projects.get(reg_key, {})
+                                       .get("platforms", {})
+                                       .get("forma", {})) if reg_key else {}
+            companies = {c["id"]: c["name"] for c in reg_forma.get("companies", []) if c.get("id")}
+            roles     = {r["id"]: r["name"] for r in reg_forma.get("roles", [])     if r.get("id")}
+            # Resolve company name; fall back to raw id if not in registry
+            cid = p.get("company_id", "")
+            p["company"] = companies.get(cid, cid) if cid else ""
+            # Resolve role names: prefer inline names from the API, else
+            # look up role_ids in the registry.
+            inline = p.get("role_names_inline") or []
+            if inline:
+                p["role"] = ", ".join(inline)
+            else:
+                resolved = [roles.get(rid, rid) for rid in (p.get("role_ids") or [])]
+                p["role"] = ", ".join(r for r in resolved if r)
 
     found = any(r is not None for r in [morta_result, revizto_result, forma_result])
     name  = ""
