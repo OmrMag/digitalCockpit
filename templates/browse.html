@@ -54,25 +54,32 @@
 .bu-phase-banner{padding:8px 12px;background:#fff8e1;border:1px solid #f5c842;border-radius:4px;font-size:var(--fs-xs);color:#8a6d00;margin-bottom:14px;display:flex;gap:8px;align-items:center}
 
 /* ── Table chrome ───────────────────────────────────────────────── */
-.bu-table-wrap{overflow-x:auto;width:100%}
+/* No overflow on the wrapper — the page handles horizontal scroll if
+   the table overflows. This is what makes position:sticky work on the
+   <thead> cells: sticky anchors to the nearest scrolling ancestor, and
+   if the wrapper has overflow:auto, sticky anchors there and never
+   fires (because the wrapper has no defined height). Letting the page
+   own the scroll context lets sticky anchor to the viewport. */
+.bu-table-wrap{width:100%}
 .bu-table{
     width:100%;border-collapse:collapse;font-size:11px;
     font-family:'JetBrains Mono', 'SF Mono', Consolas, monospace;
-    color:var(--text-dark)
+    color:var(--text-dark);
+    table-layout:fixed
 }
 .bu-table thead th{
     text-align:left;padding:8px 10px;border-bottom:1px solid var(--navy);
     font-size:9px;color:var(--text-dark-muted);text-transform:uppercase;
     letter-spacing:.5px;font-weight:600;white-space:nowrap;
-    vertical-align:bottom;
+    vertical-align:middle;
     position:sticky;top:0;z-index:5;
     background:var(--cream);
     box-shadow:0 1px 0 var(--navy)
 }
 .bu-table tbody td{
     padding:7px 10px;border-bottom:1px solid var(--border-cream);
-    vertical-align:middle;white-space:nowrap;
-    overflow:hidden;text-overflow:ellipsis
+    vertical-align:middle;
+    overflow:hidden
 }
 .bu-table tbody tr:hover td{background:var(--cream-mid)}
 .bu-table tbody td.muted{color:var(--text-dark-muted);font-style:italic}
@@ -96,35 +103,42 @@
 .bu-lock.unlocked{color:#c47a00}
 .bu-lock svg{display:block}
 
+/* ── Column width definitions ──────────────────────────────────── */
+/* Column widths via <col> elements — clean separation from cell
+   content, survives re-renders. With table-layout:fixed these are
+   honored exactly. Tune per-column as needed. */
+.col-lock{width:36px}
+.col-user{width:220px}
+.col-plat{width:60px}             /* Reviz / Forma / Morta — toggle column */
+.col-prop-company{width:120px}
+.col-prop-department{width:110px}
+.col-prop-location{width:90px}
+.col-prop-license-role{width:110px}
+.col-prop-project-role{width:140px}
+.col-prop-l{width:36px}
+.col-prop-p{width:36px}
+.col-prop-last-active{width:90px}
+.col-prop-role{width:120px}        /* Forma role */
+.col-prop-docs{width:70px}
+.col-prop-design{width:70px}
+.col-prop-model{width:70px}
+.col-prop-tag{width:280px}         /* Morta tag */
+
 /* ── Platform header (clickable, drives expansion) ─────────────── */
-/* Platform headers are simple labels — same styling as the "User" header.
-   No chevron, no expansion-state styling, no height changes. The whole
-   <th> is clickable to switch which platform is expanded.
-   Width stays constant (just enough for the centered toggle below) in
-   both collapsed and expanded states. The expansion changes the BODY
-   cell's content, not the header cell's dimensions. */
 .bu-plat-th{
     cursor:pointer;user-select:none;
     border-left:1px solid var(--border-cream);
     transition:background .12s;
-    width:50px;text-align:center
+    text-align:center
 }
 .bu-plat-th:hover{background:var(--cream-mid)}
-.bu-plat-th.expanded{background:rgba(20,40,80,.05)}
+.bu-plat-th.expanded{background:rgba(20,40,80,.018)}
 
-/* Second header row — property labels for whichever platform is expanded.
-   Only the expanded platform's <th> in this row contains content; the
-   others are empty placeholders that keep alignment. The row's height
-   collapses to zero when no platform is expanded (always one is, by
-   contract) but that's fine. */
-.bu-prop-th-row th{
-    padding:6px 10px;
-    background:var(--cream);
-    position:sticky;top:30px;z-index:4;
-    border-bottom:1px solid var(--border-cream);
-    border-left:1px solid var(--border-cream)
+/* Property column header cells — same light navy tone as expanded
+   column, so the whole expanded section reads as a single soft band. */
+.bu-prop-th-cell{
+    background:rgba(20,40,80,.018) !important
 }
-.bu-prop-th-row th.spacer{border-left:none}
 
 /* Property-column header labels — sit inside the same grid as body
    cells so they line up by construction. */
@@ -382,7 +396,7 @@ const pendingToggles   = new Set();
 let csPlatforms, csProjects;
 
 const PLATFORMS = ['revizto', 'forma', 'morta'];
-const PLATFORM_LABELS = { revizto: 'Revizto', forma: 'Forma', morta: 'Morta' };
+const PLATFORM_LABELS = { revizto: 'Reviz', forma: 'Forma', morta: 'Morta' };
 
 function rowKey(r){ return `${r.email.toLowerCase()}|${r.project_key}`; }
 function toggleKey(r, plat){ return `${rowKey(r)}|${plat}`; }
@@ -439,30 +453,77 @@ async function apply(){
     }
 }
 
-/* ─────────────────────────────────────────────────────────────────
-   Cell helpers — same primitives as before, now used inside expanded
-   platform cells rather than dedicated <td>s
-   ───────────────────────────────────────────────────────────────── */
-
-const propCell      = (v) => v
-    ? `<span class="bu-prop" title="${esc(v)}">${esc(v)}</span>`
-    : `<span class="bu-prop muted">—</span>`;
-const propFlag      = (b) => b
-    ? `<span class="bu-prop flag">✓</span>`
-    : `<span class="bu-prop flag off">·</span>`;
-const propCheckbox  = (state, label) =>
-    `<span class="bu-prop"><input type="checkbox" class="bu-prop-cb" ${state ? 'checked' : ''} disabled title="${esc(label)} — read-only in phase 2"></span>`;
-
 const lockSvgClosed = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`;
 const lockSvgOpen   = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>`;
 
-function fmtLastActive(ts, days){
-    if (days == null) return '<span class="bu-prop muted">—</span>';
-    if (days === 0) return '<span class="bu-prop">Today</span>';
-    if (days === 1) return '<span class="bu-prop">Yesterday</span>';
-    if (days < 30)  return `<span class="bu-prop">${days} days ago</span>`;
-    if (days < 365) return `<span class="bu-prop">${Math.floor(days/30)} months ago</span>`;
-    return `<span class="bu-prop">${Math.floor(days/365)}y ago</span>`;
+/* ─────────────────────────────────────────────────────────────────
+   Property column specs — single source of truth for headers, widths,
+   and body renderers per platform.
+
+   To add or remove a column edit only here. The `col` value matches a
+   CSS class that controls width via <colgroup>. `render(row)` returns
+   the FULL <td> for that cell. `textCellHtml` and `flagHtml` are the
+   building blocks; both produce wrap-friendly cells with a 2-line clamp.
+   ───────────────────────────────────────────────────────────────── */
+
+const PROP_SPECS = {
+    revizto: [
+        { key:'company',      label:'Company',      col:'col-prop-company',
+          render: row => textCellHtml(row.revizto?.company) },
+        { key:'department',   label:'Department',   col:'col-prop-department',
+          render: row => textCellHtml(row.revizto?.department) },
+        { key:'location',     label:'Location',     col:'col-prop-location',
+          render: row => textCellHtml(row.revizto?.location) },
+        { key:'license_role', label:'License Role', col:'col-prop-license-role',
+          render: row => textCellHtml(row.revizto?.license_role) },
+        { key:'project_role', label:'Project Role', col:'col-prop-project-role',
+          render: row => textCellHtml(row.revizto?.role) },
+        { key:'l',            label:'L',            col:'col-prop-l',           cellCls:'flag',
+          render: row => flagHtml(row.revizto?.on_license) },
+        { key:'p',            label:'P',            col:'col-prop-p',           cellCls:'flag',
+          render: row => flagHtml(row.revizto?.on_project) },
+        { key:'last_active',  label:'Last Active',  col:'col-prop-last-active',
+          render: row => textCellHtml(row.revizto ? lastActiveLabel(row.revizto.last_active, row.last_active_days) : '') },
+    ],
+    forma: [
+        { key:'company',      label:'Company',      col:'col-prop-company',
+          render: row => textCellHtml(row.forma?.company) },
+        { key:'role',         label:'Role',         col:'col-prop-role',
+          render: row => textCellHtml(row.forma?.role) },
+        { key:'docs',         label:'Docs',         col:'col-prop-docs',
+          render: row => textCellHtml(row.forma?.docs) },
+        { key:'design',       label:'Design',       col:'col-prop-design',
+          render: row => textCellHtml(row.forma?.design) },
+        { key:'model',        label:'Model',        col:'col-prop-model',
+          render: row => textCellHtml(row.forma?.model) },
+        { key:'last_active',  label:'Last Active',  col:'col-prop-last-active',
+          render: row => textCellHtml(row.forma ? lastActiveLabel(row.forma.last_active, row.last_active_days) : '') },
+    ],
+    morta: [
+        { key:'tag',          label:'Tag',          col:'col-prop-tag',
+          render: row => textCellHtml(row.morta?.tag) },
+        { key:'last_active',  label:'Last Active',  col:'col-prop-last-active',
+          render: row => textCellHtml(row.morta ? lastActiveLabel(row.morta.last_active, row.last_active_days) : '') },
+    ],
+};
+
+/* Body-cell HTML helpers. Each returns a complete <td>. */
+function textCellHtml(value){
+    if (!value) return `<td class="bu-prop-cell muted"><div class="bu-prop-cell-content">—</div></td>`;
+    return `<td class="bu-prop-cell" title="${esc(value)}"><div class="bu-prop-cell-content">${esc(value)}</div></td>`;
+}
+function flagHtml(b){
+    return b
+        ? `<td class="bu-prop-cell flag">✓</td>`
+        : `<td class="bu-prop-cell flag off">·</td>`;
+}
+function lastActiveLabel(ts, days){
+    if (days == null) return '';
+    if (days === 0) return 'Today';
+    if (days === 1) return 'Yesterday';
+    if (days < 30)  return `${days} days ago`;
+    if (days < 365) return `${Math.floor(days/30)} months ago`;
+    return `${Math.floor(days/365)}y ago`;
 }
 
 /* ─────────────────────────────────────────────────────────────────
@@ -510,104 +571,46 @@ function renderToggle(row, plat, isUnlocked){
 }
 
 /* ─────────────────────────────────────────────────────────────────
-   Per-platform property renderers — produce the inner HTML that lives
-   to the right of the toggle when that platform is expanded.
+   Header row + colgroup construction
 
-   Each returns a string of `<span class="bu-prop">…</span>` siblings.
-   The widths are governed by min-width on .bu-prop, not by a grid —
-   we want the row to remain a regular flex line so things wrap
-   gracefully on narrow viewports.
+   ONE header row. Layout from left to right:
+     [lock] [User] [Reviz toggle] [...Reviz props if expanded...]
+                   [Forma toggle] [...Forma props if expanded...]
+                   [Morta toggle] [...Morta props if expanded...]
+
+   Property columns are inserted directly after their platform's toggle
+   <th>, so when you expand Forma, its property <th>s appear between the
+   Forma toggle <th> and the Morta toggle <th>. Everything is at the
+   same vertical level — one row, no two-tier header. The colgroup
+   defines column widths; with table-layout:fixed those widths are
+   honored exactly, and content wraps inside cells at fixed widths.
    ───────────────────────────────────────────────────────────────── */
 
-function reviztoProps(row){
-    const r = row.revizto;
-    if (!r) return '';
-    return `<div class="bu-plat-grid revizto">${[
-        propCell(r.company),
-        propCell(r.department),
-        propCell(r.location),
-        propCell(r.license_role),
-        propCell(r.role),
-        propCheckbox(r.on_license, 'On license'),
-        propCheckbox(r.on_project, 'On project'),
-        fmtLastActive(r.last_active, row.last_active_days),
-    ].join('')}</div>`;
-}
-
-function formaProps(row){
-    const f = row.forma;
-    if (!f) return '';
-    return `<div class="bu-plat-grid forma">${[
-        propCell(f.company),
-        propCell(f.role),
-        propCell(f.docs),
-        propCell(f.design),
-        propCell(f.model),
-        fmtLastActive(f.last_active, row.last_active_days),
-    ].join('')}</div>`;
-}
-
-function mortaProps(row){
-    const m = row.morta;
-    if (!m) return '';
-    return `<div class="bu-plat-grid morta">${[
-        propCell(m.tag),
-        fmtLastActive(m.last_active, row.last_active_days),
-    ].join('')}</div>`;
-}
-
-const PROP_HEADERS = {
-    revizto: ['Company', 'Department', 'Location', 'License Role', 'Project Role', 'L', 'P', 'Last Active'],
-    forma:   ['Company', 'Role', 'Docs', 'Design', 'Model', 'Last Active'],
-    morta:   ['Tag', 'Last Active'],
-};
-const PROP_RENDERERS = { revizto: reviztoProps, forma: formaProps, morta: mortaProps };
-
-/* ─────────────────────────────────────────────────────────────────
-   Header row construction
-
-   Two-row <thead>:
-     Row 1 — primary headers: User, Revizto, Forma, Morta. All same
-             height, same style. Platform headers are clickable to
-             change which platform is expanded. No chevron, no jumping.
-     Row 2 — property labels for the expanded platform only. Sits as a
-             sub-header under whichever platform is open.
-   ───────────────────────────────────────────────────────────────── */
-
-function platformHeaderHtml(plat){
-    const isExp = (expandedPlatform === plat);
-    const cls   = ['bu-plat-th'];
-    if (isExp) cls.push('expanded');
-    return `<th class="${cls.join(' ')}" data-plat="${plat}">${esc(PLATFORM_LABELS[plat])}</th>`;
-}
-
-function propHeaderRowHtml(){
-    // One <th> per platform; only the expanded one has content. Leftmost
-    // two cells (lock + user) are empty spacers. We DON'T render this row
-    // at all when collapsed because that would double the header height
-    // for no reason. Default expandedPlatform is always set so this is
-    // always rendered.
-    const cells = PLATFORMS.map(p => {
-        if (p !== expandedPlatform){
-            return `<th></th>`;
+function colgroupHtml(){
+    const cols = ['<col class="col-lock">', '<col class="col-user">'];
+    PLATFORMS.forEach(p => {
+        cols.push('<col class="col-plat">');
+        if (expandedPlatform === p){
+            PROP_SPECS[p].forEach(s => cols.push(`<col class="${s.col}">`));
         }
-        const propLabels = PROP_HEADERS[p]
-            .map(h => `<span class="bu-prop-th">${esc(h)}</span>`)
-            .join('');
-        return `<th>
-            <div style="display:flex;align-items:center;gap:10px">
-                <span style="width:30px;flex-shrink:0"></span>
-                <div class="bu-plat-grid ${p}">
-                    ${propLabels}
-                </div>
-            </div>
-        </th>`;
-    }).join('');
-    return `<tr class="bu-prop-th-row">
-        <th class="spacer"></th>
-        <th class="spacer"></th>
-        ${cells}
-    </tr>`;
+    });
+    return `<colgroup>${cols.join('')}</colgroup>`;
+}
+
+function headerRowHtml(){
+    const cells = [`<th></th>`, `<th>User</th>`];
+    PLATFORMS.forEach(p => {
+        const isExp = (expandedPlatform === p);
+        const cls   = ['bu-plat-th'];
+        if (isExp) cls.push('expanded');
+        cells.push(`<th class="${cls.join(' ')}" data-plat="${p}">${esc(PLATFORM_LABELS[p])}</th>`);
+        if (isExp){
+            PROP_SPECS[p].forEach(s => {
+                cells.push(`<th class="bu-prop-th-cell">${esc(s.label)}</th>`);
+            });
+        }
+    });
+    return `<tr>${cells.join('')}</tr>`;
 }
 
 /* ─────────────────────────────────────────────────────────────────
@@ -618,23 +621,24 @@ function propHeaderRowHtml(){
    rendered to the right of the toggle inside the same <td>.
    ───────────────────────────────────────────────────────────────── */
 
-function platformBodyCellHtml(row, plat, isUnlocked){
-    const isExp    = (expandedPlatform === plat);
-    const cls      = ['bu-plat-cell'];
+/* ─────────────────────────────────────────────────────────────────
+   Body cell construction
+
+   For each row we emit:
+     - <td> for lock
+     - <td> for user (3-line stack)
+     - For each platform in PLATFORMS: a <td> for the toggle, plus,
+       if that platform is expanded, one <td> per property column.
+
+   Property cells come from PROP_SPECS[plat][i].render(row), which
+   returns a complete <td>. Toggle cells use platformBodyToggleHtml.
+   ───────────────────────────────────────────────────────────────── */
+
+function platformBodyToggleHtml(row, plat, isUnlocked){
+    const isExp = (expandedPlatform === plat);
+    const cls   = ['bu-plat-cell'];
     if (isExp) cls.push('expanded');
-    const toggleEl = renderToggle(row, plat, isUnlocked);
-    if (!isExp){
-        // Collapsed: toggle centered in a fixed 50px column
-        return `<td class="${cls.join(' ')}" style="text-align:center">${toggleEl}</td>`;
-    }
-    // Expanded: toggle in left slot, properties grid to its right
-    const propsEl = PROP_RENDERERS[plat](row);
-    return `<td class="${cls.join(' ')}">
-        <div class="bu-plat-cell-inner">
-            ${toggleEl}
-            ${propsEl}
-        </div>
-    </td>`;
+    return `<td class="${cls.join(' ')}">${renderToggle(row, plat, isUnlocked)}</td>`;
 }
 
 /* ─────────────────────────────────────────────────────────────────
@@ -652,27 +656,25 @@ function renderTable(){
     const rowsHtml = lastRows.map(r => {
         const isUnlocked = unlocked.has(rowKey(r));
         const lockHtml = `<span class="bu-lock ${isUnlocked ? 'unlocked' : ''}" data-row="${esc(rowKey(r))}" title="${isUnlocked ? 'Click to lock (cancel edit)' : 'Click to unlock for editing'}">${isUnlocked ? lockSvgOpen : lockSvgClosed}</span>`;
-        const platCells = PLATFORMS.map(p => platformBodyCellHtml(r, p, isUnlocked)).join('');
-        return `<tr>
-            <td style="width:32px">${lockHtml}</td>
-            <td class="user-cell">
+        const cells = [
+            `<td>${lockHtml}</td>`,
+            `<td class="user-cell">
                 <div class="bu-user-name">${esc(r.name||r.email)}</div>
                 <div class="bu-user-email">${esc(r.email)}</div>
                 <div class="bu-user-project">${esc(r.project_name||r.project_key)}</div>
-            </td>
-            ${platCells}
-        </tr>`;
+            </td>`,
+        ];
+        PLATFORMS.forEach(p => {
+            cells.push(platformBodyToggleHtml(r, p, isUnlocked));
+            if (expandedPlatform === p){
+                PROP_SPECS[p].forEach(spec => cells.push(spec.render(r)));
+            }
+        });
+        return `<tr>${cells.join('')}</tr>`;
     }).join('');
-    const headerHtml = PLATFORMS.map(p => platformHeaderHtml(p)).join('');
     out.innerHTML = `<div class="bu-table-wrap"><table class="bu-table">
-        <thead>
-            <tr>
-                <th></th>
-                <th>User</th>
-                ${headerHtml}
-            </tr>
-            ${propHeaderRowHtml()}
-        </thead>
+        ${colgroupHtml()}
+        <thead>${headerRowHtml()}</thead>
         <tbody>${rowsHtml}</tbody>
     </table></div>`;
 
@@ -687,32 +689,23 @@ function renderTable(){
         });
     });
 
-    // Wire up platform header clicks (drives expansion). Faded headers
-    // don't exist — every platform is always clickable to expand. We only
-    // act when the click lands on a non-expanded one.
+    // Wire up platform header clicks (drives expansion).
     out.querySelectorAll('.bu-plat-th').forEach(el => {
         el.addEventListener('click', () => {
             const plat = el.dataset.plat;
-            if (expandedPlatform === plat) return; // already open
+            if (expandedPlatform === plat) return;
             expandedPlatform = plat;
             renderTable();
         });
     });
 
-    // Wire up toggle clicks. We only flip state if the row is unlocked
-    // AND the toggle isn't faded. Faded toggles have no event handler
-    // attached at all (we just skip them in the loop), but we also guard
-    // inside in case the DOM gets out of sync.
+    // Wire up toggle clicks. Faded/locked toggles are skipped.
     out.querySelectorAll('.bu-toggle').forEach(el => {
         if (el.classList.contains('faded') || el.classList.contains('locked')) return;
         el.addEventListener('click', () => {
             const k = `${el.dataset.row}|${el.dataset.plat}`;
             if (pendingToggles.has(k)) pendingToggles.delete(k);
             else pendingToggles.add(k);
-            // Targeted re-render of just this toggle would be faster, but
-            // re-rendering the whole table keeps the code simple and the
-            // dataset is small enough (low thousands of rows) that the
-            // perf cost is invisible.
             renderTable();
         });
     });
