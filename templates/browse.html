@@ -74,10 +74,14 @@
 .bu-table tbody tr:hover td{background:var(--cream-mid)}
 .bu-table tbody td.muted{color:var(--text-dark-muted);font-style:italic}
 
-/* User cell — name + email stacked */
-.bu-table td.user-cell{max-width:260px;min-width:200px}
+/* User cell — name, email, and project stacked. Three lines total.
+   Project sits on its own line beneath the email at the same muted size
+   so the eye reads "who · where they live · which project" top-to-bottom
+   without the table needing a dedicated Project column. */
+.bu-table td.user-cell{max-width:240px;min-width:200px}
 .bu-user-name{font-weight:500;color:var(--navy);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .bu-user-email{font-size:10px;color:var(--text-dark-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bu-user-project{font-size:10px;color:var(--text-dark-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 /* ── Lock toggle (row-level edit gate) ─────────────────────────── */
 .bu-lock{
@@ -629,8 +633,8 @@ function renderTable(){
             <td class="user-cell">
                 <div class="bu-user-name">${esc(r.name||r.email)}</div>
                 <div class="bu-user-email">${esc(r.email)}</div>
+                <div class="bu-user-project">${esc(r.project_name||r.project_key)}</div>
             </td>
-            <td>${esc(r.project_name||r.project_key)}</td>
             ${platCells}
         </tr>`;
     }).join('');
@@ -640,7 +644,6 @@ function renderTable(){
             <tr>
                 <th></th>
                 <th>User</th>
-                <th>Project</th>
                 ${headerHtml}
             </tr>
         </thead>
