@@ -2,7 +2,7 @@
 
 {% block title %}Browse Users — Digital Construction Cockpit{% endblock %}
 {% block page_title %}Browse Users{% endblock %}
-{% block page_subtitle %}All users in your licenses across Revizto, Forma, and Morta · Phase 1 (read-only){% endblock %}
+{% block page_subtitle %}One row per (user, project). Pick a platform tab to swap the columns on the right.{% endblock %}
 
 {% block header_actions %}
 <a href="/manage" class="cc-btn cc-btn--secondary" title="Back to manage users">
@@ -25,67 +25,56 @@
     font-size:9px;color:var(--text-dark-muted);text-transform:uppercase;
     letter-spacing:.5px;font-weight:600
 }
-.bu-chip-select{
-    position:relative;border:1px solid var(--border-cream);border-radius:4px;
-    background:white;cursor:text;min-height:36px
-}
+.bu-chip-select{position:relative;border:1px solid var(--border-cream);border-radius:4px;background:white;cursor:text;min-height:36px}
 .bu-chip-select:focus-within{border-color:var(--navy);box-shadow:0 0 0 2px rgba(20,40,80,.08)}
-.bu-chip-select-inner{
-    display:flex;flex-wrap:wrap;gap:4px;padding:5px 8px;align-items:center;min-height:24px
-}
-.bu-chip{
-    display:inline-flex;align-items:center;gap:4px;padding:2px 4px 2px 8px;
-    background:var(--cream-mid);border:1px solid var(--border-cream);border-radius:3px;
-    font-size:11px;color:var(--text-dark);max-width:200px
-}
+.bu-chip-select-inner{display:flex;flex-wrap:wrap;gap:4px;padding:5px 8px;align-items:center;min-height:24px}
+.bu-chip{display:inline-flex;align-items:center;gap:4px;padding:2px 4px 2px 8px;background:var(--cream-mid);border:1px solid var(--border-cream);border-radius:3px;font-size:11px;color:var(--text-dark);max-width:200px}
 .bu-chip-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.bu-chip-x{
-    cursor:pointer;color:var(--text-dark-muted);padding:0 4px;font-size:14px;line-height:1;
-    border-radius:2px;user-select:none
-}
+.bu-chip-x{cursor:pointer;color:var(--text-dark-muted);padding:0 4px;font-size:14px;line-height:1;border-radius:2px;user-select:none}
 .bu-chip-x:hover{background:rgba(0,0,0,.06);color:var(--text-dark)}
-.bu-chip-input{
-    flex:1;min-width:80px;border:none;outline:none;padding:3px 2px;
-    font-size:var(--fs-sm);color:var(--text-dark);background:transparent;
-    font-family:inherit
-}
+.bu-chip-input{flex:1;min-width:80px;border:none;outline:none;padding:3px 2px;font-size:var(--fs-sm);color:var(--text-dark);background:transparent;font-family:inherit}
 .bu-chip-input::placeholder{color:var(--text-dark-muted);font-style:italic}
-.bu-chip-pop{
-    position:absolute;top:calc(100% + 2px);left:0;right:0;z-index:100;
-    background:white;border:1px solid var(--border-cream);border-radius:4px;
-    max-height:280px;overflow-y:auto;box-shadow:0 4px 12px rgba(0,0,0,.08);
-    display:none
-}
+.bu-chip-pop{position:absolute;top:calc(100% + 2px);left:0;right:0;z-index:100;background:white;border:1px solid var(--border-cream);border-radius:4px;max-height:280px;overflow-y:auto;box-shadow:0 4px 12px rgba(0,0,0,.08);display:none}
 .bu-chip-pop.open{display:block}
-.bu-chip-opt{
-    padding:7px 10px;cursor:pointer;font-size:var(--fs-sm);color:var(--text-dark);
-    display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--cream-mid)
-}
+.bu-chip-opt{padding:7px 10px;cursor:pointer;font-size:var(--fs-sm);color:var(--text-dark);display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--cream-mid)}
 .bu-chip-opt:last-child{border-bottom:none}
 .bu-chip-opt:hover{background:var(--cream-mid)}
 .bu-chip-opt.active{background:var(--cream-mid)}
 .bu-chip-opt.selected{background:rgba(20,40,80,.05);font-weight:500;color:var(--navy)}
 .bu-chip-opt-sub{font-size:10px;color:var(--text-dark-muted);margin-left:auto}
 .bu-chip-pop-empty{padding:12px;text-align:center;color:var(--text-dark-muted);font-size:var(--fs-xs);font-style:italic}
-.bu-num-input{
-    padding:7px 10px;border:1px solid var(--border-cream);border-radius:4px;
-    background:white;font-size:var(--fs-sm);color:var(--text-dark);
-    font-family:inherit;width:100%
-}
+.bu-num-input{padding:7px 10px;border:1px solid var(--border-cream);border-radius:4px;background:white;font-size:var(--fs-sm);color:var(--text-dark);font-family:inherit;width:100%}
 .bu-num-input:focus{outline:none;border-color:var(--navy);box-shadow:0 0 0 2px rgba(20,40,80,.08)}
-.bu-num-help{font-size:10px;color:var(--text-dark-muted);margin-top:2px;font-style:italic}
 .bu-filter-actions{display:flex;gap:8px;align-self:end}
 
-/* ── Results meta line ──────────────────────────────────────────── */
-.bu-meta{
-    display:flex;justify-content:space-between;align-items:baseline;
-    margin:4px 0 10px;font-size:var(--fs-xs);color:var(--text-dark-muted)
-}
+/* ── Meta line ──────────────────────────────────────────────────── */
+.bu-meta{display:flex;justify-content:space-between;align-items:baseline;margin:4px 0 10px;font-size:var(--fs-xs);color:var(--text-dark-muted)}
 
-/* ── Table — minimal, no greys ──────────────────────────────────── */
-/* Table uses native overflow for horizontal scroll on narrow viewports.
-   No card wrapper, no grey block headers, no row striping. Just a thin
-   underline on the header and hairline dividers between rows. */
+/* ── Section tab bar ────────────────────────────────────────────── */
+/* The tab bar lives just above the table. Section A (User Personal Details)
+   on the left is always shown; Morta / Revizto / Forma on the right are
+   mutually exclusive — picking one swaps the right-hand columns. */
+.bu-tabs{
+    display:flex;align-items:end;gap:0;border-bottom:1px solid var(--border-cream);
+    margin-bottom:0
+}
+.bu-tab-static{
+    padding:8px 14px;font-size:9px;color:var(--text-dark-muted);
+    text-transform:uppercase;letter-spacing:.5px;font-weight:600;
+    border-bottom:2px solid transparent;display:flex;align-items:center;gap:6px
+}
+.bu-tab-static .bu-tab-lock{font-size:11px}
+.bu-tab-spacer{flex:1}
+.bu-tab{
+    padding:8px 16px;font-size:11px;color:var(--text-dark-muted);
+    background:transparent;border:none;cursor:pointer;
+    border-bottom:2px solid transparent;font-family:inherit;font-weight:500;
+    transition:color .12s, border-color .12s
+}
+.bu-tab:hover{color:var(--text-dark)}
+.bu-tab.active{color:var(--navy);border-bottom-color:var(--navy);font-weight:600}
+
+/* ── Table — minimal ────────────────────────────────────────────── */
 .bu-table-wrap{overflow-x:auto;width:100%}
 .bu-table{
     width:100%;border-collapse:collapse;font-size:11px;
@@ -95,49 +84,45 @@
 .bu-table thead th{
     text-align:left;padding:8px 10px;border-bottom:1px solid var(--navy);
     font-size:9px;color:var(--text-dark-muted);text-transform:uppercase;
-    letter-spacing:.5px;font-weight:600;white-space:nowrap;
-    background:transparent;position:sticky;top:0;z-index:1
+    letter-spacing:.5px;font-weight:600;white-space:nowrap;background:transparent
 }
-.bu-table thead th.sec{
-    /* Section start (Morta / Revizto / Forma) — small left rule to group */
-    border-left:1px solid var(--border-cream);padding-left:14px
-}
+.bu-table thead th.divider{border-left:1px solid var(--border-cream);padding-left:14px}
 .bu-table tbody td{
-    padding:8px 10px;border-bottom:1px solid var(--border-cream);
-    vertical-align:middle;white-space:nowrap;max-width:180px;
+    padding:7px 10px;border-bottom:1px solid var(--border-cream);
+    vertical-align:middle;white-space:nowrap;max-width:200px;
     overflow:hidden;text-overflow:ellipsis
 }
-.bu-table tbody td.sec{border-left:1px solid var(--border-cream);padding-left:14px}
+.bu-table tbody td.divider{border-left:1px solid var(--border-cream);padding-left:14px}
 .bu-table tbody tr:hover td{background:var(--cream-mid)}
 .bu-table tbody td.muted{color:var(--text-dark-muted);font-style:italic}
 
-/* User cell — name + email stacked, slightly wider */
+/* User cell — name + email stacked */
 .bu-table td.user-cell{max-width:260px;min-width:200px}
 .bu-user-name{font-weight:500;color:var(--navy);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .bu-user-email{font-size:10px;color:var(--text-dark-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
-/* Access flag — checkmark for "user is on this platform" */
-.bu-flag{
-    display:inline-flex;align-items:center;justify-content:center;
-    width:16px;height:16px;border-radius:3px;
-    color:var(--navy);font-weight:600;font-size:12px;line-height:1
+/* Lock toggle — clickable per-row gate. In phase 2 the click only
+   toggles visual state; phase 3 will use it as the edit gate. */
+.bu-lock{
+    cursor:pointer;display:inline-flex;align-items:center;justify-content:center;
+    width:24px;height:24px;border-radius:3px;color:var(--text-dark-muted);
+    transition:color .12s,background .12s;user-select:none
 }
+.bu-lock:hover{background:var(--cream-mid);color:var(--navy)}
+.bu-lock.unlocked{color:#c47a00}
+.bu-lock svg{display:block}
+
+/* Access flag (✓ / ·) for "user is on this platform here" */
+.bu-flag{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;color:var(--navy);font-weight:600;font-size:12px;line-height:1}
 .bu-flag.off{color:var(--text-dark-muted);font-style:normal}
 
-/* L/P checkboxes — read-only display in phase 2. opacity:.55 so they
-   look interactive-but-frozen; tooltip explains. */
-.bu-cb{
-    width:14px;height:14px;cursor:not-allowed;accent-color:var(--navy);
-    opacity:.55
-}
+/* L/P read-only checkbox */
+.bu-cb{width:14px;height:14px;cursor:not-allowed;accent-color:var(--navy);opacity:.55}
 
 .bu-empty{padding:40px 16px;text-align:center;color:var(--text-dark-muted);font-size:var(--fs-sm)}
 .bu-error{padding:16px;color:#9b3a3a;font-size:var(--fs-sm);background:#fdf3f3;border-radius:4px}
 .bu-loading{padding:60px;text-align:center;color:var(--text-dark-muted);font-size:var(--fs-sm)}
-.bu-phase-banner{
-    padding:8px 12px;background:#fff8e1;border:1px solid #f5c842;border-radius:4px;
-    font-size:var(--fs-xs);color:#8a6d00;margin-bottom:14px;display:flex;gap:8px;align-items:center
-}
+.bu-phase-banner{padding:8px 12px;background:#fff8e1;border:1px solid #f5c842;border-radius:4px;font-size:var(--fs-xs);color:#8a6d00;margin-bottom:14px;display:flex;gap:8px;align-items:center}
 </style>
 {% endblock %}
 
@@ -147,7 +132,7 @@
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
     </svg>
-    <span>Phase 1: read-only view. L/P checkboxes show current state but are not yet editable — inline edits land in the next deploy.</span>
+    <span>Phase 2: read-only. Lock toggle and L/P checkboxes show state but don't write back yet.</span>
 </div>
 
 <div class="bu-filter-bar">
@@ -174,6 +159,18 @@
     <span id="bu-source"></span>
 </div>
 
+<!-- Section tabs: A on the left (locked, always-on); B/C/D on the right -->
+<div class="bu-tabs" role="tablist">
+    <div class="bu-tab-static" title="User Personal Details — always visible">
+        <span class="bu-tab-lock">🔒</span>
+        <span>User Details</span>
+    </div>
+    <div class="bu-tab-spacer"></div>
+    <button class="bu-tab"        data-section="morta"   type="button" role="tab">Morta</button>
+    <button class="bu-tab active" data-section="revizto" type="button" role="tab">Revizto</button>
+    <button class="bu-tab"        data-section="forma"   type="button" role="tab">Forma</button>
+</div>
+
 <div id="bu-results">
     <div class="bu-loading">Click <strong>Apply</strong> to load users.</div>
 </div>
@@ -185,7 +182,7 @@
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
     ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
-/* ── ChipSelect (Aconex-style chip multi-select, plain JS) ───────── */
+/* ── ChipSelect (Aconex-style) ──────────────────────────────────── */
 class ChipSelect {
     constructor(rootEl, options, opts={}){
         this.root = rootEl; this.opts = opts; this.options = options || [];
@@ -193,11 +190,7 @@ class ChipSelect {
     }
     _build(){
         this.root.classList.add('bu-chip-select');
-        this.root.innerHTML = `
-            <div class="bu-chip-select-inner">
-                <input class="bu-chip-input" type="text" placeholder="${esc(this.opts.placeholder||'All')}">
-            </div>
-            <div class="bu-chip-pop"></div>`;
+        this.root.innerHTML = `<div class="bu-chip-select-inner"><input class="bu-chip-input" type="text" placeholder="${esc(this.opts.placeholder||'All')}"></div><div class="bu-chip-pop"></div>`;
         this.inner = this.root.querySelector('.bu-chip-select-inner');
         this.input = this.root.querySelector('.bu-chip-input');
         this.pop   = this.root.querySelector('.bu-chip-pop');
@@ -208,9 +201,7 @@ class ChipSelect {
         this.input.addEventListener('focus', () => this._open());
         this.input.addEventListener('input', () => { this.activeIdx = -1; this._renderPop(); });
         this.input.addEventListener('keydown', e => this._onKey(e));
-        document.addEventListener('mousedown', e => {
-            if (!this.root.contains(e.target)) this._close();
-        });
+        document.addEventListener('mousedown', e => { if (!this.root.contains(e.target)) this._close(); });
     }
     setOptions(options){
         this.options = options || [];
@@ -244,8 +235,7 @@ class ChipSelect {
     _filteredOptions(){
         const q = this.input.value.toLowerCase().trim();
         if (!q) return this.options;
-        return this.options.filter(o =>
-            o.label.toLowerCase().includes(q) || (o.sub && o.sub.toLowerCase().includes(q)));
+        return this.options.filter(o => o.label.toLowerCase().includes(q) || (o.sub && o.sub.toLowerCase().includes(q)));
     }
     _renderPop(){
         const opts = this._filteredOptions();
@@ -254,10 +244,7 @@ class ChipSelect {
             const cls = ['bu-chip-opt'];
             if (this.selected.has(o.value)) cls.push('selected');
             if (i === this.activeIdx) cls.push('active');
-            return `<div class="${cls.join(' ')}" data-val="${esc(o.value)}">
-                <span>${esc(o.label)}</span>
-                ${o.sub ? `<span class="bu-chip-opt-sub">${esc(o.sub)}</span>` : ''}
-            </div>`;
+            return `<div class="${cls.join(' ')}" data-val="${esc(o.value)}"><span>${esc(o.label)}</span>${o.sub ? `<span class="bu-chip-opt-sub">${esc(o.sub)}</span>` : ''}</div>`;
         }).join('');
         this.pop.querySelectorAll('.bu-chip-opt').forEach(el => {
             el.addEventListener('mousedown', e => { e.preventDefault(); this._toggle(el.dataset.val); });
@@ -276,9 +263,15 @@ class ChipSelect {
     }
 }
 
-let lastResults = [];
+/* ── Page state ─────────────────────────────────────────────────── */
+let lastRows   = [];
+let activeTab  = 'revizto';   // default per spec
+const unlocked = new Set();   // composite-keys (email|project_key) of unlocked rows
 let csPlatforms, csProjects;
 
+function rowKey(r){ return `${r.email.toLowerCase()}|${r.project_key}`; }
+
+/* ── Init ───────────────────────────────────────────────────────── */
 function initFilters(){
     csPlatforms = new ChipSelect(document.getElementById('cs-platforms'), [
         { value: 'revizto', label: 'Revizto' },
@@ -297,10 +290,7 @@ async function loadProjects(){
             value: `${p.platform}:${p.id}`, label: p.name, sub: p.platform,
         }));
         csProjects.setOptions(opts);
-    } catch(e){
-        console.error('[browse] project load failed', e);
-        csProjects.setOptions([]);
-    }
+    } catch(e){ console.error('[browse] project load failed', e); csProjects.setOptions([]); }
 }
 
 async function apply(){
@@ -321,113 +311,157 @@ async function apply(){
         const r = await fetch('/api/browse/users?'+params.toString());
         if (!r.ok) throw new Error('HTTP '+r.status);
         const data = await r.json();
-        lastResults = data.users || [];
-        renderResults(lastResults);
-        document.getElementById('bu-source').textContent =
-            `Loaded in ${Math.round(performance.now() - t0)} ms`;
+        lastRows = data.rows || [];
+        renderTable();
+        document.getElementById('bu-source').textContent = `Loaded in ${Math.round(performance.now() - t0)} ms`;
     } catch(e){
         out.innerHTML = '<div class="bu-error">Failed to load users: '+esc(e.message)+'</div>';
         console.error('[browse] users fetch failed', e);
     }
 }
 
-/* ── Cell helpers ─────────────────────────────────────────────── */
-const blank  = () => `<td class="muted">—</td>`;
-const cell   = v => v ? `<td title="${esc(v)}">${esc(v)}</td>` : blank();
-const flag   = b => b
-    ? `<td class="bu-flag">✓</td>`
-    : `<td class="bu-flag off">·</td>`;
-// L/P read-only checkbox cells: `checked` reflects current state but the
-// input is disabled with a tooltip that hints at phase 3 wiring.
-const cb     = (state, label) => `<td><input type="checkbox" class="bu-cb" ${state ? 'checked' : ''} disabled title="${esc(label)} (read-only — edits land in phase 3)"></td>`;
+/* ── Cell helpers ───────────────────────────────────────────────── */
+const blankCell = () => `<td class="muted">—</td>`;
+const cell      = v => v ? `<td title="${esc(v)}">${esc(v)}</td>` : blankCell();
+const flagCell  = b => b ? `<td class="bu-flag">✓</td>` : `<td class="bu-flag off">·</td>`;
+const cbCell    = (state, label) => `<td><input type="checkbox" class="bu-cb" ${state ? 'checked' : ''} disabled title="${esc(label)} — read-only in phase 2"></td>`;
 
-function renderResults(users){
+const lockSvgClosed = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`;
+const lockSvgOpen   = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>`;
+
+function fmtLastActive(ts, days){
+    if (days == null) return '<span class="muted">—</span>';
+    if (days === 0) return 'Today';
+    if (days === 1) return 'Yesterday';
+    if (days < 30)  return `${days} days ago`;
+    if (days < 365) return `${Math.floor(days/30)} months ago`;
+    return `${Math.floor(days/365)}y ago`;
+}
+
+/* ── Per-section column builders ───────────────────────────────── */
+function sectionHeader(){
+    if (activeTab === 'morta') return `
+        <th class="divider">Morta</th><th>Tag</th><th>Last Active</th>`;
+    if (activeTab === 'forma') return `
+        <th class="divider">Forma</th><th>Company</th><th>Role</th>
+        <th>Docs</th><th>Design</th><th>Model</th><th>Last Active</th>`;
+    // default: revizto
+    return `
+        <th class="divider">Revizto</th><th>Company</th><th>Department</th>
+        <th>Location</th><th>License Role</th><th>Project Role</th>
+        <th title="On license">L</th><th title="On project">P</th>
+        <th>Last Active</th>`;
+}
+
+function sectionCells(row){
+    if (activeTab === 'morta'){
+        const m = row.morta;
+        return [
+            flagCell(!!m) + (m ? '' : ''),  // first cell is the flag w/ divider class
+            cell(m && m.tag),
+            `<td title="${esc((m && m.last_active) || '')}">${m ? fmtLastActive(m.last_active, row.last_active_days) : '<span class="muted">—</span>'}</td>`,
+        ].join('').replace(/^<td class="bu-flag/, '<td class="bu-flag divider');
+    }
+    if (activeTab === 'forma'){
+        const f = row.forma;
+        return [
+            (f ? `<td class="bu-flag divider">✓</td>` : `<td class="bu-flag off divider">·</td>`),
+            cell(f && f.company),
+            cell(f && f.role),
+            cell(f && f.docs),
+            cell(f && f.design),
+            cell(f && f.model),
+            `<td>${f ? fmtLastActive(f.last_active, row.last_active_days) : '<span class="muted">—</span>'}</td>`,
+        ].join('');
+    }
+    // revizto
+    const r = row.revizto;
+    return [
+        (r ? `<td class="bu-flag divider">✓</td>` : `<td class="bu-flag off divider">·</td>`),
+        cell(r && r.company),
+        cell(r && r.department),
+        cell(r && r.location),
+        cell(r && r.license_role),
+        cell(r && r.role),
+        cbCell(r && r.on_license, 'On license'),
+        cbCell(r && r.on_project, 'On project'),
+        `<td>${r ? fmtLastActive(r.last_active, row.last_active_days) : '<span class="muted">—</span>'}</td>`,
+    ].join('');
+}
+
+/* ── Table render ───────────────────────────────────────────────── */
+function renderTable(){
+    // DEBUG PILL — visible on the page so we don't need DevTools console.
+    // Shows the raw row count + active tab. Will be removed after we
+    // figure out why "No rows match" displays even when data is loaded.
+    const dbgEl = document.getElementById('bu-source');
+    if (dbgEl) {
+        const dbg = `[debug] lastRows=${lastRows.length}, tab=${activeTab}, first=${lastRows[0] ? lastRows[0].email : 'none'}`;
+        dbgEl.textContent = (dbgEl.textContent || '') + ' · ' + dbg;
+    }
     document.getElementById('bu-count').textContent =
-        users.length === 1 ? '1 user' : `${users.length} users`;
+        lastRows.length === 1 ? '1 row' : `${lastRows.length} rows`;
     const out = document.getElementById('bu-results');
-    if (!users.length){
-        out.innerHTML = '<div class="bu-empty">No users match these filters.</div>';
+    if (!lastRows.length){
+        out.innerHTML = '<div class="bu-empty">No rows match these filters.</div>';
         return;
     }
-
-    /*  Column order — exactly mirrors the invite compose table:
-        1 Email · 2 Name · 3 Morta · 4 Tag · 5 Revizto · 6 Company ·
-        7 Department · 8 Location · 9 License · 10 Project · 11 L · 12 P ·
-        13 Forma · 14 Company · 15 Role · 16 Docs · 17 Design · 18 Model
-        ── 18 columns total. Section borders (Morta / Revizto / Forma) use
-        a 1px left rule on those columns to group visually without grey.   */
-
-    const rows = users.map(u => {
-        const r = u.revizto || {};
-        const f = u.forma   || {};
-        const m = u.morta   || {};   // not loaded in phase 2; kept for shape
+    const rowsHtml = lastRows.map(r => {
+        const isUnlocked = unlocked.has(rowKey(r));
+        const lockHtml = `<span class="bu-lock ${isUnlocked ? 'unlocked' : ''}" data-row="${esc(rowKey(r))}" title="${isUnlocked ? 'Click to lock (cancel edit)' : 'Click to unlock for editing'}">${isUnlocked ? lockSvgOpen : lockSvgClosed}</span>`;
         return `<tr>
+            <td style="width:32px">${lockHtml}</td>
             <td class="user-cell">
-                <div class="bu-user-name">${esc(u.name||u.email)}</div>
-                <div class="bu-user-email">${esc(u.email)}</div>
+                <div class="bu-user-name">${esc(r.name||r.email)}</div>
+                <div class="bu-user-email">${esc(r.email)}</div>
             </td>
-            <td>${esc(u.name||'—')}</td>
-
-            <!-- Morta section -->
-            ${flag(!!u.morta)}
-            ${cell(m.tag||'')}
-
-            <!-- Revizto section -->
-            ${flag(!!u.revizto)}
-            ${cell(r.company||'')}
-            ${cell(r.department||'')}
-            ${cell(r.location||'')}
-            ${cell(r.license_role||'')}
-            ${cell(r.role||'')}
-            ${cb(!!u.revizto, 'On license')}
-            ${cb((r.projects||[]).length > 0, 'On project(s)')}
-
-            <!-- Forma section -->
-            ${flag(!!u.forma)}
-            ${cell(f.company||'')}
-            ${cell(f.role||'')}
-            ${cell(f.docs||'')}
-            ${cell(f.design||'')}
-            ${cell(f.model||'')}
+            <td>${esc(r.project_name||r.project_key)}</td>
+            ${sectionCells(r)}
         </tr>`;
     }).join('');
-
     out.innerHTML = `<div class="bu-table-wrap"><table class="bu-table">
         <thead>
             <tr>
-                <th>Email</th>
-                <th>Name</th>
-                <th class="sec">Morta</th>
-                <th>Tag</th>
-                <th class="sec">Revizto</th>
-                <th>Company</th>
-                <th>Department</th>
-                <th>Location</th>
-                <th>License</th>
+                <th></th>
+                <th>User</th>
                 <th>Project</th>
-                <th title="Invite to license — phase 3">L</th>
-                <th title="Invite to project — phase 3">P</th>
-                <th class="sec">Forma</th>
-                <th>Company</th>
-                <th>Role</th>
-                <th>Docs</th>
-                <th>Design</th>
-                <th>Model</th>
+                ${sectionHeader()}
             </tr>
         </thead>
-        <tbody>${rows}</tbody>
+        <tbody>${rowsHtml}</tbody>
     </table></div>`;
+
+    // Wire up lock toggles. Phase 2: visual state only — no edit affordance
+    // gets enabled. Phase 3 will check `unlocked.has(rowKey)` before allowing
+    // any per-row edit and write the diff to /api/browse/users via PATCH.
+    out.querySelectorAll('.bu-lock').forEach(el => {
+        el.addEventListener('click', () => {
+            const k = el.dataset.row;
+            if (unlocked.has(k)) unlocked.delete(k);
+            else unlocked.add(k);
+            renderTable();
+        });
+    });
 }
 
+/* ── Tab switching ──────────────────────────────────────────────── */
+document.querySelectorAll('.bu-tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+        document.querySelectorAll('.bu-tab').forEach(b => b.classList.toggle('active', b === btn));
+        activeTab = btn.dataset.section;
+        if (lastRows.length) renderTable();
+    });
+});
+
+/* ── Buttons & wire-up ──────────────────────────────────────────── */
 document.getElementById('bu-apply').addEventListener('click', apply);
 document.getElementById('bu-reset').addEventListener('click', () => {
     csPlatforms.clear(); csProjects.clear();
     document.getElementById('bu-days').value = '';
-    document.getElementById('bu-results').innerHTML =
-        '<div class="bu-loading">Click <strong>Apply</strong> to load users.</div>';
+    document.getElementById('bu-results').innerHTML = '<div class="bu-loading">Click <strong>Apply</strong> to load users.</div>';
     document.getElementById('bu-count').textContent = '—';
     document.getElementById('bu-source').textContent = '';
-    lastResults = [];
+    lastRows = []; unlocked.clear();
 });
 document.getElementById('bu-days').addEventListener('keydown', e => { if (e.key === 'Enter') apply(); });
 
