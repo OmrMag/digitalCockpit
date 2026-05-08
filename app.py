@@ -1955,6 +1955,15 @@ def revizto_search_user(email, config, allowed_project_uuids: list = None, admin
     """
     role_map_license = {0: "Owner", 1: "License Admin", 2: "Collaborator", 3: "Content Creator", 4: "Guest"}
 
+    # Token cache shared across phases. Phase 1+2 (license / project list
+    # enumeration) populates it serially, one entry per region, so phase 3
+    # (parallel /team checks across 8 worker threads) never has to fetch a
+    # token concurrently. Concurrent fetches were the root cause of the
+    # "no token" errors we saw for 3 of 5 projects — under parallel load,
+    # multiple threads raced into revizto_get_token_for_region simultaneously
+    # and some came back empty before the canonical fetch finished.
+    tokens: dict = {}   # region -> token string ("" means tried-and-failed)
+
     # Diagnostic trace — attached to the response so the UI can surface why
     # certain projects didn't show up. Captures: regions probed, license
     # status, projects per license, /team status per project, and the final
@@ -1981,17 +1990,23 @@ def revizto_search_user(email, config, allowed_project_uuids: list = None, admin
         has_tokens = bool(load_revizto_tokens(region, admin_email)) if admin_email else (BASE_DIR / f"revizto_tokens_{region}.json").exists()
         if not rc.get("access_code") and not has_tokens:
             rdbg["skip_reason"] = "no access_code and no saved tokens"
+            tokens[region] = ""
             continue
         try:
             token = revizto_get_token_for_region(config, region, email=admin_email)
         except Exception as e:
             print(f"[revizto-search] token fetch for {region} raised: {e}")
             rdbg["skip_reason"] = f"token fetch raised: {type(e).__name__}"
+            tokens[region] = ""
             continue
         if not token:
             rdbg["skip_reason"] = "token fetch returned empty"
+            tokens[region] = ""
             continue
         rdbg["token_ok"] = True
+        # Stash the working token so phase 3 reuses it instead of re-fetching
+        # under parallel load.
+        tokens[region] = token
 
         base_url = f"https://api.{region}.revizto.com/v5"
         headers  = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
@@ -2061,17 +2076,13 @@ def revizto_search_user(email, config, allowed_project_uuids: list = None, admin
         # that's clearly not-found but carries debug.
         return None
 
-    # Token cache for the membership sweep — reuse what we just fetched.
-    tokens: dict = {}
+    # Phase 3 token getter: read from the shared cache populated above.
+    # Returns "" if the region had no usable token (skipped or failed).
+    # No fetch happens here — phase 1+2 is the only place tokens get
+    # acquired, so there's no race window when multiple worker threads
+    # call this concurrently.
     def get_token(region: str) -> str:
-        if region in tokens:
-            return tokens[region]
-        try:
-            t = revizto_get_token_for_region(config, region, email=admin_email)
-        except Exception:
-            t = ""
-        tokens[region] = t or ""
-        return tokens[region]
+        return tokens.get(region, "")
 
     # Step 3: check membership on each project in parallel.
     # Returns a dict with team_status + match details so the caller can
