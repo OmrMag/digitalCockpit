@@ -3949,21 +3949,51 @@ async def api_browse_users(
                         f"{ent.get('firstname','')} {ent.get('lastname','')}".strip()
                     )
                     last_active = ent.get("lastActive", "") or ""
-                    rec = upsert(em, name=full_name, company=ent.get("company", ""))
+                    # Per-team-entity values for the invite-table fields. Revizto
+                    # exposes company / department / location at the team-entity
+                    # top level (same fields the user-search detail uses).
+                    rev_company    = ent.get("company", "") or ""
+                    rev_department = ent.get("department", "") or ""
+                    rev_location   = ent.get("location", "") or ""
+                    # License role: phase 2 doesn't have a reliable source for
+                    # this (see prior debugging). Leave blank for now; phase 3
+                    # will resolve via /v5/license/{uuid}/team once that lookup
+                    # lands.
+                    rev_license_role = ""
+                    rec = upsert(em, name=full_name, company=rev_company)
                     if not rec:
                         continue
                     if rec["revizto"] is None:
-                        rec["revizto"] = {"role": role, "last_active": last_active, "projects": []}
+                        rec["revizto"] = {
+                            "role":         role,
+                            "license_role": rev_license_role,
+                            "company":      rev_company,
+                            "department":   rev_department,
+                            "location":     rev_location,
+                            "last_active":  last_active,
+                            "projects":     [],
+                        }
                     else:
                         # Keep the newest timestamp seen across this user's
                         # Revizto projects (string compare works for ISO-ish
                         # timestamps; falls back gracefully if formats differ).
                         if last_active and last_active > (rec["revizto"].get("last_active") or ""):
                             rec["revizto"]["last_active"] = last_active
+                        # Fill blanks at user level if this entity has values
+                        # the previous one didn't. We don't overwrite, since
+                        # different projects can show different values for
+                        # the same user; first non-empty wins.
+                        for k, v in (("company", rev_company), ("department", rev_department),
+                                     ("location", rev_location)):
+                            if v and not rec["revizto"].get(k):
+                                rec["revizto"][k] = v
                     rec["revizto"]["projects"].append({
-                        "id":   pid,
-                        "name": proj.get("title", pid),
-                        "role": role,
+                        "id":          pid,
+                        "name":        proj.get("title", pid),
+                        "role":        role,
+                        "company":     rev_company,
+                        "department":  rev_department,
+                        "location":    rev_location,
                         "last_active": last_active,
                     })
                     rec["project_count"] = (rec["project_count"] or 0) + 1
@@ -4029,6 +4059,23 @@ async def api_browse_users(
                             (u_.get("name") or "").strip() or
                             f"{u_.get('firstName','')} {u_.get('lastName','')}".strip()
                         )
+                        # Forma product access flags. The /projects/{id}/users
+                        # endpoint returns an `accessLevels` object with keys
+                        # like docs / designCollaboration / modelCoordination
+                        # mapped to a level string ("administrator", "user")
+                        # or None. We surface the per-product level if it's
+                        # truthy, blank otherwise. Some tenants nest these
+                        # under `products` instead — handle both shapes.
+                        access_levels = u_.get("accessLevels") or {}
+                        if not isinstance(access_levels, dict):
+                            access_levels = {}
+                        # Older API shape: products = [{key, access}]
+                        for p in (u_.get("products") or []):
+                            if isinstance(p, dict) and p.get("key"):
+                                access_levels.setdefault(p["key"], p.get("access") or "user")
+                        forma_docs   = access_levels.get("docs") or ""
+                        forma_design = access_levels.get("designCollaboration") or ""
+                        forma_model  = access_levels.get("modelCoordination") or ""
                         rec = upsert(em, name=full_name, company=company_name)
                         if not rec:
                             continue
@@ -4037,15 +4084,34 @@ async def api_browse_users(
                         # both, take whichever is non-empty.
                         last_active = u_.get("last_sign_in") or u_.get("lastSignIn") or ""
                         if rec["forma"] is None:
-                            rec["forma"] = {"role": role_str, "last_active": last_active, "projects": []}
+                            rec["forma"] = {
+                                "role":        role_str,
+                                "company":     company_name,
+                                "docs":        forma_docs,
+                                "design":      forma_design,
+                                "model":       forma_model,
+                                "last_active": last_active,
+                                "projects":    [],
+                            }
                         else:
                             if last_active and last_active > (rec["forma"].get("last_active") or ""):
                                 rec["forma"]["last_active"] = last_active
+                            # First non-empty wins for top-level access flags
+                            for k, v in (("company", company_name),
+                                         ("docs",   forma_docs),
+                                         ("design", forma_design),
+                                         ("model",  forma_model)):
+                                if v and not rec["forma"].get(k):
+                                    rec["forma"][k] = v
                         rec["forma"]["projects"].append({
-                            "id":   fpid,
-                            "name": rp.get("name", k),
-                            "role": role_str,
-                            "status": u_.get("status", ""),
+                            "id":          fpid,
+                            "name":        rp.get("name", k),
+                            "role":        role_str,
+                            "company":     company_name,
+                            "docs":        forma_docs,
+                            "design":      forma_design,
+                            "model":       forma_model,
+                            "status":      u_.get("status", ""),
                             "last_active": last_active,
                         })
                         rec["project_count"] = (rec["project_count"] or 0) + 1

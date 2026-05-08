@@ -15,25 +15,16 @@
 
 {% block head %}
 <style>
-/* ── Filter bar with Aconex-style chip multi-selects ──────────────
-   Each filter is a clickable input that:
-   - Shows selected items as removable chips inside the input itself
-   - On click/focus, opens a popover dropdown with all options + a typeahead
-   - Empty selection means "all" (handled server-side)
-   The widget is implemented in plain JS at the bottom of this file as
-   ChipSelect(rootEl, options, opts) — no external libs. */
+/* ── Filter bar (Aconex chip multi-selects) ─────────────────────── */
 .bu-filter-bar{
     display:grid;grid-template-columns:repeat(3,1fr) auto;gap:14px;align-items:end;
-    padding:14px 16px;background:white;border:1px solid var(--border-cream);
-    border-radius:6px;margin-bottom:14px
+    padding:14px 0;margin-bottom:14px;border-bottom:1px solid var(--border-cream)
 }
 .bu-field{display:flex;flex-direction:column;gap:5px;min-width:0}
 .bu-field label{
     font-size:9px;color:var(--text-dark-muted);text-transform:uppercase;
     letter-spacing:.5px;font-weight:600
 }
-
-/* The chip-multi-select control. */
 .bu-chip-select{
     position:relative;border:1px solid var(--border-cream);border-radius:4px;
     background:white;cursor:text;min-height:36px
@@ -59,8 +50,6 @@
     font-family:inherit
 }
 .bu-chip-input::placeholder{color:var(--text-dark-muted);font-style:italic}
-
-/* The dropdown popover. */
 .bu-chip-pop{
     position:absolute;top:calc(100% + 2px);left:0;right:0;z-index:100;
     background:white;border:1px solid var(--border-cream);border-radius:4px;
@@ -78,8 +67,6 @@
 .bu-chip-opt.selected{background:rgba(20,40,80,.05);font-weight:500;color:var(--navy)}
 .bu-chip-opt-sub{font-size:10px;color:var(--text-dark-muted);margin-left:auto}
 .bu-chip-pop-empty{padding:12px;text-align:center;color:var(--text-dark-muted);font-size:var(--fs-xs);font-style:italic}
-
-/* Numeric input for last_active days */
 .bu-num-input{
     padding:7px 10px;border:1px solid var(--border-cream);border-radius:4px;
     background:white;font-size:var(--fs-sm);color:var(--text-dark);
@@ -87,59 +74,66 @@
 }
 .bu-num-input:focus{outline:none;border-color:var(--navy);box-shadow:0 0 0 2px rgba(20,40,80,.08)}
 .bu-num-help{font-size:10px;color:var(--text-dark-muted);margin-top:2px;font-style:italic}
-
 .bu-filter-actions{display:flex;gap:8px;align-self:end}
 
-/* ── Results grid ───────────────────────────────────────────────── */
-.bu-results-card{padding:0;overflow:hidden}
-.bu-results-header{
-    display:flex;justify-content:space-between;align-items:center;
-    padding:12px 16px;border-bottom:1px solid var(--border-cream);
-    background:var(--cream-mid)
+/* ── Results meta line ──────────────────────────────────────────── */
+.bu-meta{
+    display:flex;justify-content:space-between;align-items:baseline;
+    margin:4px 0 10px;font-size:var(--fs-xs);color:var(--text-dark-muted)
 }
-.bu-results-title{font-weight:600;color:var(--navy);font-size:var(--fs-sm)}
-.bu-results-count{font-size:var(--fs-xs);color:var(--text-dark-muted)}
 
-.bu-grid{display:grid;font-size:var(--fs-xs)}
-.bu-row{
-    display:grid;
-    grid-template-columns:
-        minmax(200px,2fr)   /* user */
-        minmax(140px,1.4fr) /* company */
-        minmax(110px,1fr)   /* revizto */
-        minmax(110px,1fr)   /* forma */
-        minmax(110px,1fr)   /* morta */
-        minmax(80px,.8fr)   /* projects */
-        minmax(110px,1fr);  /* last active */
-    gap:14px;align-items:center;padding:10px 16px
+/* ── Table — minimal, no greys ──────────────────────────────────── */
+/* Table uses native overflow for horizontal scroll on narrow viewports.
+   No card wrapper, no grey block headers, no row striping. Just a thin
+   underline on the header and hairline dividers between rows. */
+.bu-table-wrap{overflow-x:auto;width:100%}
+.bu-table{
+    width:100%;border-collapse:collapse;font-size:11px;
+    font-family:'JetBrains Mono', 'SF Mono', Consolas, monospace;
+    color:var(--text-dark)
 }
-.bu-row + .bu-row{border-top:1px solid var(--border-cream)}
-.bu-row.header{
-    background:var(--cream-mid);position:sticky;top:0;z-index:1;
-    padding:8px 16px;border-bottom:1px solid var(--border-cream)
-}
-.bu-row.header > div{
+.bu-table thead th{
+    text-align:left;padding:8px 10px;border-bottom:1px solid var(--navy);
     font-size:9px;color:var(--text-dark-muted);text-transform:uppercase;
-    letter-spacing:.4px;font-weight:600
+    letter-spacing:.5px;font-weight:600;white-space:nowrap;
+    background:transparent;position:sticky;top:0;z-index:1
 }
-.bu-row > div{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.bu-user{display:flex;flex-direction:column;gap:1px;min-width:0}
+.bu-table thead th.sec{
+    /* Section start (Morta / Revizto / Forma) — small left rule to group */
+    border-left:1px solid var(--border-cream);padding-left:14px
+}
+.bu-table tbody td{
+    padding:8px 10px;border-bottom:1px solid var(--border-cream);
+    vertical-align:middle;white-space:nowrap;max-width:180px;
+    overflow:hidden;text-overflow:ellipsis
+}
+.bu-table tbody td.sec{border-left:1px solid var(--border-cream);padding-left:14px}
+.bu-table tbody tr:hover td{background:var(--cream-mid)}
+.bu-table tbody td.muted{color:var(--text-dark-muted);font-style:italic}
+
+/* User cell — name + email stacked, slightly wider */
+.bu-table td.user-cell{max-width:260px;min-width:200px}
 .bu-user-name{font-weight:500;color:var(--navy);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.bu-user-email{font-size:11px;color:var(--text-dark-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bu-user-email{font-size:10px;color:var(--text-dark-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
-.bu-pill{
-    display:inline-flex;align-items:center;gap:6px;padding:2px 8px;border-radius:10px;
-    font-size:11px;font-weight:500;background:var(--cream-mid);color:var(--text-dark)
+/* Access flag — checkmark for "user is on this platform" */
+.bu-flag{
+    display:inline-flex;align-items:center;justify-content:center;
+    width:16px;height:16px;border-radius:3px;
+    color:var(--navy);font-weight:600;font-size:12px;line-height:1
 }
-.bu-pill.revizto{background:#fde8e8;color:#9b3a3a}
-.bu-pill.forma  {background:#e8edff;color:#3a4d9b}
-.bu-pill.morta  {background:#e8f5ee;color:#2f7548}
-.bu-pill.muted  {background:transparent;color:var(--text-dark-muted);font-style:italic;padding:0}
+.bu-flag.off{color:var(--text-dark-muted);font-style:normal}
 
-.bu-loading{padding:60px;text-align:center;color:var(--text-dark-muted);font-size:var(--fs-sm)}
+/* L/P checkboxes — read-only display in phase 2. opacity:.55 so they
+   look interactive-but-frozen; tooltip explains. */
+.bu-cb{
+    width:14px;height:14px;cursor:not-allowed;accent-color:var(--navy);
+    opacity:.55
+}
+
 .bu-empty{padding:40px 16px;text-align:center;color:var(--text-dark-muted);font-size:var(--fs-sm)}
 .bu-error{padding:16px;color:#9b3a3a;font-size:var(--fs-sm);background:#fdf3f3;border-radius:4px}
-
+.bu-loading{padding:60px;text-align:center;color:var(--text-dark-muted);font-size:var(--fs-sm)}
 .bu-phase-banner{
     padding:8px 12px;background:#fff8e1;border:1px solid #f5c842;border-radius:4px;
     font-size:var(--fs-xs);color:#8a6d00;margin-bottom:14px;display:flex;gap:8px;align-items:center
@@ -153,7 +147,7 @@
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
     </svg>
-    <span>Phase 1: read-only browse view. Inline edits land in a follow-up deploy.</span>
+    <span>Phase 1: read-only view. L/P checkboxes show current state but are not yet editable — inline edits land in the next deploy.</span>
 </div>
 
 <div class="bu-filter-bar">
@@ -168,7 +162,6 @@
     <div class="bu-field">
         <label for="bu-days">Last active (days ago)</label>
         <input id="bu-days" type="number" class="bu-num-input" min="0" placeholder="e.g. 60">
-        <div class="bu-num-help">Show users inactive for N+ days. Leave blank for all.</div>
     </div>
     <div class="bu-filter-actions">
         <button id="bu-apply" class="cc-btn cc-btn--primary" type="button">Apply</button>
@@ -176,14 +169,13 @@
     </div>
 </div>
 
-<div class="cc-card bu-results-card">
-    <div class="bu-results-header">
-        <div class="bu-results-title">Users</div>
-        <div class="bu-results-count" id="bu-count">—</div>
-    </div>
-    <div id="bu-results">
-        <div class="bu-loading">Click <strong>Apply</strong> to load users.</div>
-    </div>
+<div class="bu-meta">
+    <span id="bu-count">—</span>
+    <span id="bu-source"></span>
+</div>
+
+<div id="bu-results">
+    <div class="bu-loading">Click <strong>Apply</strong> to load users.</div>
 </div>
 
 {% endblock %}
@@ -193,28 +185,11 @@
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
     ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
-/* ── ChipSelect: Aconex-style chip multi-select ────────────────────
-   Constructor: new ChipSelect(rootEl, options, { placeholder })
-     options = [{ value, label, sub }]   (sub renders right-aligned in dropdown)
-   API:
-     instance.values()   → array of selected values
-     instance.setOptions(options)
-     instance.clear()
-   Behavior:
-     - Click anywhere in the box → focus input + open dropdown
-     - Type to filter dropdown options (case-insensitive substring)
-     - Click option to toggle selection (selected ones stay highlighted)
-     - Backspace in empty input removes the last chip
-     - Click outside → close dropdown
-     - Selected = chip in the input; not selected = available in dropdown */
+/* ── ChipSelect (Aconex-style chip multi-select, plain JS) ───────── */
 class ChipSelect {
     constructor(rootEl, options, opts={}){
-        this.root = rootEl;
-        this.opts = opts;
-        this.options = options || [];
-        this.selected = new Set();
-        this.activeIdx = -1;
-        this._build();
+        this.root = rootEl; this.opts = opts; this.options = options || [];
+        this.selected = new Set(); this.activeIdx = -1; this._build();
     }
     _build(){
         this.root.classList.add('bu-chip-select');
@@ -226,18 +201,13 @@ class ChipSelect {
         this.inner = this.root.querySelector('.bu-chip-select-inner');
         this.input = this.root.querySelector('.bu-chip-input');
         this.pop   = this.root.querySelector('.bu-chip-pop');
-
         this.inner.addEventListener('mousedown', e => {
-            if (e.target === this.input) return;
-            if (e.target.classList.contains('bu-chip-x')) return;
-            e.preventDefault();
-            this.input.focus();
-            this._open();
+            if (e.target === this.input || e.target.classList.contains('bu-chip-x')) return;
+            e.preventDefault(); this.input.focus(); this._open();
         });
         this.input.addEventListener('focus', () => this._open());
         this.input.addEventListener('input', () => { this.activeIdx = -1; this._renderPop(); });
         this.input.addEventListener('keydown', e => this._onKey(e));
-
         document.addEventListener('mousedown', e => {
             if (!this.root.contains(e.target)) this._close();
         });
@@ -246,25 +216,16 @@ class ChipSelect {
         this.options = options || [];
         const valid = new Set(this.options.map(o => o.value));
         this.selected = new Set(Array.from(this.selected).filter(v => valid.has(v)));
-        this._renderChips();
-        this._renderPop();
+        this._renderChips(); this._renderPop();
     }
     values(){ return Array.from(this.selected); }
-    clear(){
-        this.selected.clear();
-        this.input.value = '';
-        this._renderChips();
-        this._renderPop();
-    }
+    clear(){ this.selected.clear(); this.input.value = ''; this._renderChips(); this._renderPop(); }
     _open(){ this.pop.classList.add('open'); this._renderPop(); }
     _close(){ this.pop.classList.remove('open'); this.activeIdx = -1; }
     _toggle(value){
         if (this.selected.has(value)) this.selected.delete(value);
         else this.selected.add(value);
-        this.input.value = '';
-        this._renderChips();
-        this._renderPop();
-        this.input.focus();
+        this.input.value = ''; this._renderChips(); this._renderPop(); this.input.focus();
     }
     _renderChips(){
         Array.from(this.inner.querySelectorAll('.bu-chip')).forEach(n => n.remove());
@@ -275,10 +236,7 @@ class ChipSelect {
             chip.className = 'bu-chip';
             chip.innerHTML = `<span class="bu-chip-label">${esc(label)}</span><span class="bu-chip-x" title="Remove">&times;</span>`;
             chip.querySelector('.bu-chip-x').addEventListener('click', e => {
-                e.stopPropagation();
-                this.selected.delete(v);
-                this._renderChips();
-                this._renderPop();
+                e.stopPropagation(); this.selected.delete(v); this._renderChips(); this._renderPop();
             });
             this.inner.insertBefore(chip, this.input);
         }
@@ -287,56 +245,33 @@ class ChipSelect {
         const q = this.input.value.toLowerCase().trim();
         if (!q) return this.options;
         return this.options.filter(o =>
-            o.label.toLowerCase().includes(q) ||
-            (o.sub && o.sub.toLowerCase().includes(q)));
+            o.label.toLowerCase().includes(q) || (o.sub && o.sub.toLowerCase().includes(q)));
     }
     _renderPop(){
         const opts = this._filteredOptions();
-        if (!opts.length){
-            this.pop.innerHTML = '<div class="bu-chip-pop-empty">No matches</div>';
-            return;
-        }
+        if (!opts.length){ this.pop.innerHTML = '<div class="bu-chip-pop-empty">No matches</div>'; return; }
         this.pop.innerHTML = opts.map((o, i) => {
-            const isSelected = this.selected.has(o.value);
-            const isActive   = i === this.activeIdx;
             const cls = ['bu-chip-opt'];
-            if (isSelected) cls.push('selected');
-            if (isActive)   cls.push('active');
+            if (this.selected.has(o.value)) cls.push('selected');
+            if (i === this.activeIdx) cls.push('active');
             return `<div class="${cls.join(' ')}" data-val="${esc(o.value)}">
                 <span>${esc(o.label)}</span>
                 ${o.sub ? `<span class="bu-chip-opt-sub">${esc(o.sub)}</span>` : ''}
             </div>`;
         }).join('');
         this.pop.querySelectorAll('.bu-chip-opt').forEach(el => {
-            el.addEventListener('mousedown', e => {
-                e.preventDefault();
-                this._toggle(el.dataset.val);
-            });
+            el.addEventListener('mousedown', e => { e.preventDefault(); this._toggle(el.dataset.val); });
         });
     }
     _onKey(e){
         const opts = this._filteredOptions();
-        if (e.key === 'ArrowDown'){
-            e.preventDefault();
-            this._open();
-            this.activeIdx = Math.min(opts.length - 1, this.activeIdx + 1);
-            this._renderPop();
-        } else if (e.key === 'ArrowUp'){
-            e.preventDefault();
-            this.activeIdx = Math.max(0, this.activeIdx - 1);
-            this._renderPop();
-        } else if (e.key === 'Enter'){
-            e.preventDefault();
-            if (this.activeIdx >= 0 && opts[this.activeIdx]){
-                this._toggle(opts[this.activeIdx].value);
-            }
-        } else if (e.key === 'Escape'){
-            this._close();
-        } else if (e.key === 'Backspace' && !this.input.value && this.selected.size){
+        if (e.key === 'ArrowDown'){ e.preventDefault(); this._open(); this.activeIdx = Math.min(opts.length-1, this.activeIdx+1); this._renderPop(); }
+        else if (e.key === 'ArrowUp'){ e.preventDefault(); this.activeIdx = Math.max(0, this.activeIdx-1); this._renderPop(); }
+        else if (e.key === 'Enter'){ e.preventDefault(); if (this.activeIdx >= 0 && opts[this.activeIdx]) this._toggle(opts[this.activeIdx].value); }
+        else if (e.key === 'Escape'){ this._close(); }
+        else if (e.key === 'Backspace' && !this.input.value && this.selected.size){
             const last = Array.from(this.selected).pop();
-            this.selected.delete(last);
-            this._renderChips();
-            this._renderPop();
+            this.selected.delete(last); this._renderChips(); this._renderPop();
         }
     }
 }
@@ -350,10 +285,7 @@ function initFilters(){
         { value: 'forma',   label: 'Forma / ACC' },
         { value: 'morta',   label: 'Morta' },
     ], { placeholder: 'All platforms' });
-
-    csProjects = new ChipSelect(document.getElementById('cs-projects'), [], {
-        placeholder: 'All projects'
-    });
+    csProjects = new ChipSelect(document.getElementById('cs-projects'), [], { placeholder: 'All projects' });
 }
 
 async function loadProjects(){
@@ -362,9 +294,7 @@ async function loadProjects(){
         if (!r.ok) throw new Error('HTTP '+r.status);
         const data = await r.json();
         const opts = (data.projects || []).map(p => ({
-            value: `${p.platform}:${p.id}`,
-            label: p.name,
-            sub:   p.platform,
+            value: `${p.platform}:${p.id}`, label: p.name, sub: p.platform,
         }));
         csProjects.setOptions(opts);
     } catch(e){
@@ -377,39 +307,39 @@ async function apply(){
     const platforms = csPlatforms.values();
     const projects  = csProjects.values();
     const days      = (document.getElementById('bu-days').value || '').trim();
-
     const params = new URLSearchParams();
     platforms.forEach(p => params.append('platform', p));
     projects.forEach(p => params.append('project', p));
     if (days && /^\d+$/.test(days) && parseInt(days, 10) > 0){
         params.set('min_days_inactive', days);
     }
-
     const out = document.getElementById('bu-results');
     out.innerHTML = '<div class="bu-loading">Loading users…</div>';
     document.getElementById('bu-count').textContent = '—';
-
     try {
+        const t0 = performance.now();
         const r = await fetch('/api/browse/users?'+params.toString());
         if (!r.ok) throw new Error('HTTP '+r.status);
         const data = await r.json();
         lastResults = data.users || [];
         renderResults(lastResults);
+        document.getElementById('bu-source').textContent =
+            `Loaded in ${Math.round(performance.now() - t0)} ms`;
     } catch(e){
         out.innerHTML = '<div class="bu-error">Failed to load users: '+esc(e.message)+'</div>';
         console.error('[browse] users fetch failed', e);
     }
 }
 
-function fmtLastActive(rec){
-    if (rec.last_active_days == null) return '<span class="bu-pill muted">—</span>';
-    const d = rec.last_active_days;
-    if (d === 0) return 'Today';
-    if (d === 1) return 'Yesterday';
-    if (d < 30)  return `${d} days ago`;
-    if (d < 365) return `${Math.floor(d/30)} months ago`;
-    return `${Math.floor(d/365)}y ago`;
-}
+/* ── Cell helpers ─────────────────────────────────────────────── */
+const blank  = () => `<td class="muted">—</td>`;
+const cell   = v => v ? `<td title="${esc(v)}">${esc(v)}</td>` : blank();
+const flag   = b => b
+    ? `<td class="bu-flag">✓</td>`
+    : `<td class="bu-flag off">·</td>`;
+// L/P read-only checkbox cells: `checked` reflects current state but the
+// input is disabled with a tooltip that hints at phase 3 wiring.
+const cb     = (state, label) => `<td><input type="checkbox" class="bu-cb" ${state ? 'checked' : ''} disabled title="${esc(label)} (read-only — edits land in phase 3)"></td>`;
 
 function renderResults(users){
     document.getElementById('bu-count').textContent =
@@ -419,44 +349,87 @@ function renderResults(users){
         out.innerHTML = '<div class="bu-empty">No users match these filters.</div>';
         return;
     }
-    const pill = (cls, label) => label
-        ? `<span class="bu-pill ${cls}">${esc(label)}</span>`
-        : `<span class="bu-pill muted">—</span>`;
-    const rows = users.map(u => `<div class="bu-row">
-        <div class="bu-user">
-            <div class="bu-user-name">${esc(u.name||u.email)}</div>
-            <div class="bu-user-email">${esc(u.email)}</div>
-        </div>
-        <div>${esc(u.company||'—')}</div>
-        <div>${pill('revizto', u.revizto && u.revizto.role)}</div>
-        <div>${pill('forma',   u.forma   && u.forma.role)}</div>
-        <div>${pill('morta',   u.morta   && u.morta.role)}</div>
-        <div>${u.project_count ?? 0}</div>
-        <div title="${esc(u.last_active_ts||'')}">${fmtLastActive(u)}</div>
-    </div>`).join('');
-    out.innerHTML = `<div class="bu-grid">
-        <div class="bu-row header">
-            <div>User</div><div>Company</div>
-            <div>Revizto</div><div>Forma</div><div>Morta</div>
-            <div>Projects</div><div>Last Active</div>
-        </div>
-        ${rows}
-    </div>`;
+
+    /*  Column order — exactly mirrors the invite compose table:
+        1 Email · 2 Name · 3 Morta · 4 Tag · 5 Revizto · 6 Company ·
+        7 Department · 8 Location · 9 License · 10 Project · 11 L · 12 P ·
+        13 Forma · 14 Company · 15 Role · 16 Docs · 17 Design · 18 Model
+        ── 18 columns total. Section borders (Morta / Revizto / Forma) use
+        a 1px left rule on those columns to group visually without grey.   */
+
+    const rows = users.map(u => {
+        const r = u.revizto || {};
+        const f = u.forma   || {};
+        const m = u.morta   || {};   // not loaded in phase 2; kept for shape
+        return `<tr>
+            <td class="user-cell">
+                <div class="bu-user-name">${esc(u.name||u.email)}</div>
+                <div class="bu-user-email">${esc(u.email)}</div>
+            </td>
+            <td>${esc(u.name||'—')}</td>
+
+            <!-- Morta section -->
+            ${flag(!!u.morta)}
+            ${cell(m.tag||'')}
+
+            <!-- Revizto section -->
+            ${flag(!!u.revizto)}
+            ${cell(r.company||'')}
+            ${cell(r.department||'')}
+            ${cell(r.location||'')}
+            ${cell(r.license_role||'')}
+            ${cell(r.role||'')}
+            ${cb(!!u.revizto, 'On license')}
+            ${cb((r.projects||[]).length > 0, 'On project(s)')}
+
+            <!-- Forma section -->
+            ${flag(!!u.forma)}
+            ${cell(f.company||'')}
+            ${cell(f.role||'')}
+            ${cell(f.docs||'')}
+            ${cell(f.design||'')}
+            ${cell(f.model||'')}
+        </tr>`;
+    }).join('');
+
+    out.innerHTML = `<div class="bu-table-wrap"><table class="bu-table">
+        <thead>
+            <tr>
+                <th>Email</th>
+                <th>Name</th>
+                <th class="sec">Morta</th>
+                <th>Tag</th>
+                <th class="sec">Revizto</th>
+                <th>Company</th>
+                <th>Department</th>
+                <th>Location</th>
+                <th>License</th>
+                <th>Project</th>
+                <th title="Invite to license — phase 3">L</th>
+                <th title="Invite to project — phase 3">P</th>
+                <th class="sec">Forma</th>
+                <th>Company</th>
+                <th>Role</th>
+                <th>Docs</th>
+                <th>Design</th>
+                <th>Model</th>
+            </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+    </table></div>`;
 }
 
 document.getElementById('bu-apply').addEventListener('click', apply);
 document.getElementById('bu-reset').addEventListener('click', () => {
-    csPlatforms.clear();
-    csProjects.clear();
+    csPlatforms.clear(); csProjects.clear();
     document.getElementById('bu-days').value = '';
     document.getElementById('bu-results').innerHTML =
         '<div class="bu-loading">Click <strong>Apply</strong> to load users.</div>';
     document.getElementById('bu-count').textContent = '—';
+    document.getElementById('bu-source').textContent = '';
     lastResults = [];
 });
-document.getElementById('bu-days').addEventListener('keydown', e => {
-    if (e.key === 'Enter') apply();
-});
+document.getElementById('bu-days').addEventListener('keydown', e => { if (e.key === 'Enter') apply(); });
 
 initFilters();
 loadProjects();
