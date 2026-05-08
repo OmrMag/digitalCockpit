@@ -1732,6 +1732,12 @@ async function searchUser(){
 function renderUserDetail(data){
     hackerText(document.getElementById('userName'),data.name||data.email,{duration:1000});
     hackerText(document.getElementById('userEmail'),data.email,{duration:800,startDelay:200});
+    // Surface revizto search trace to console for diagnosis. Shows every
+    // license walked, projects per license, /team status per project, and
+    // which ones matched. Open DevTools console to inspect.
+    if (data.revizto && data.revizto._debug) {
+        console.log('[revizto-search] debug trace', data.revizto._debug);
+    }
     renderMorta(data.morta); renderRevizto(data.revizto); renderForma(data.forma);
 }
 

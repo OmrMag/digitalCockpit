@@ -1955,23 +1955,43 @@ def revizto_search_user(email, config, allowed_project_uuids: list = None, admin
     """
     role_map_license = {0: "Owner", 1: "License Admin", 2: "Collaborator", 3: "Content Creator", 4: "Guest"}
 
+    # Diagnostic trace — attached to the response so the UI can surface why
+    # certain projects didn't show up. Captures: regions probed, license
+    # status, projects per license, /team status per project, and the final
+    # shortlist of projects where `email` matched. The whole structure is
+    # safe to log on the client (no secrets, only API outcomes).
+    debug = {
+        "searched_email":   email,
+        "regions":          {},   # region -> {token_ok, licenses_status, licenses_count, licenses: [...]}
+        "projects_total":   0,
+        "projects_matched": 0,
+        "match_details":    [],   # [{uuid, name, region, license_name}] for each match
+    }
+
     # Step 1+2: enumerate all (project_uuid, region, name) triples across
     # both regions by walking the admin's licenses. Per-region token cache.
     project_pool: list = []   # [{uuid, region, name, license_uuid, license_name}]
     seen_uuids = set()
 
     for region in ["dubai", "ireland"]:
+        rdbg = {"token_ok": False, "licenses_status": None, "licenses_count": 0, "licenses": []}
+        debug["regions"][region] = rdbg
+
         rc = config.get(f"revizto_{region}", {})
         has_tokens = bool(load_revizto_tokens(region, admin_email)) if admin_email else (BASE_DIR / f"revizto_tokens_{region}.json").exists()
         if not rc.get("access_code") and not has_tokens:
+            rdbg["skip_reason"] = "no access_code and no saved tokens"
             continue
         try:
             token = revizto_get_token_for_region(config, region, email=admin_email)
         except Exception as e:
             print(f"[revizto-search] token fetch for {region} raised: {e}")
+            rdbg["skip_reason"] = f"token fetch raised: {type(e).__name__}"
             continue
         if not token:
+            rdbg["skip_reason"] = "token fetch returned empty"
             continue
+        rdbg["token_ok"] = True
 
         base_url = f"https://api.{region}.revizto.com/v5"
         headers  = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
@@ -1981,19 +2001,26 @@ def revizto_search_user(email, config, allowed_project_uuids: list = None, admin
             r = http_requests.get(f"{base_url}/user/licenses", headers=headers, timeout=15)
         except Exception as e:
             print(f"[revizto-search] /user/licenses {region} raised: {e}")
+            rdbg["skip_reason"] = f"/user/licenses raised: {type(e).__name__}"
             continue
+        rdbg["licenses_status"] = r.status_code
         if r.status_code != 200:
             continue
         try:
             licenses = r.json()["data"]["entities"]
         except (KeyError, TypeError):
+            rdbg["skip_reason"] = "/user/licenses unexpected shape"
             continue
+        rdbg["licenses_count"] = len(licenses)
 
         # Projects under each license
         for lic in licenses:
             lic_uuid = lic.get("uuid", "")
             lic_name = lic.get("name", lic_uuid)
+            ldbg = {"name": lic_name, "uuid": lic_uuid, "projects_status": None, "projects_count": 0}
+            rdbg["licenses"].append(ldbg)
             if not lic_uuid:
+                ldbg["skip_reason"] = "no license uuid"
                 continue
             try:
                 r2 = http_requests.get(
@@ -2002,13 +2029,18 @@ def revizto_search_user(email, config, allowed_project_uuids: list = None, admin
                 )
             except Exception as e:
                 print(f"[revizto-search] /project/list {lic_name} raised: {e}")
+                ldbg["skip_reason"] = f"/project/list raised: {type(e).__name__}"
                 continue
+            ldbg["projects_status"] = r2.status_code
             if r2.status_code != 200:
                 continue
             try:
                 projects = r2.json()["data"]["data"]
             except (KeyError, TypeError):
+                ldbg["skip_reason"] = "/project/list unexpected shape"
                 continue
+            ldbg["projects_count"] = len(projects)
+            ldbg["project_titles"] = [p.get("title", "") for p in projects]
             for p in projects:
                 uuid = p.get("uuid", "")
                 if uuid and uuid not in seen_uuids:
@@ -2021,7 +2053,12 @@ def revizto_search_user(email, config, allowed_project_uuids: list = None, admin
                         "license_name": lic_name,
                     })
 
+    debug["projects_total"] = len(project_pool)
+
     if not project_pool:
+        # Wrap a no-results "not found" so the debug still surfaces. The
+        # caller compares to None for "found", so we return a stub record
+        # that's clearly not-found but carries debug.
         return None
 
     # Token cache for the membership sweep — reuse what we just fetched.
@@ -2036,13 +2073,16 @@ def revizto_search_user(email, config, allowed_project_uuids: list = None, admin
         tokens[region] = t or ""
         return tokens[region]
 
-    # Step 3: check membership on each project in parallel
+    # Step 3: check membership on each project in parallel.
+    # Returns a dict with team_status + match details so the caller can
+    # populate the debug trace.
     def check_project(proj: dict):
-        """Return {project_match, user_record} when email matches /team, else None."""
+        """Return {project_match, user_record, team_status} on hit; on miss
+        returns {project_match: None, team_status, team_count, error?}."""
         region = proj["region"]
         token  = get_token(region)
         if not token:
-            return None
+            return {"project_match": None, "team_status": None, "error": "no token"}
         base_url = f"https://api.{region}.revizto.com/v5"
         headers  = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
         try:
@@ -2052,18 +2092,18 @@ def revizto_search_user(email, config, allowed_project_uuids: list = None, admin
             )
         except Exception as e:
             print(f"[revizto-search] /team {proj['uuid'][:8]} raised: {e}")
-            return None
+            return {"project_match": None, "team_status": None, "error": f"raised: {type(e).__name__}"}
         if pr.status_code != 200:
-            return None
+            return {"project_match": None, "team_status": pr.status_code, "error": f"http {pr.status_code}"}
         try:
             body = pr.json()
         except Exception:
-            return None
+            return {"project_match": None, "team_status": pr.status_code, "error": "json parse failed"}
         if body.get("result", 0) != 0:
-            return None
+            return {"project_match": None, "team_status": pr.status_code, "error": f"result={body.get('result')}"}
         entities = (body.get("data") or {}).get("entities") or []
         if not isinstance(entities, list):
-            return None
+            return {"project_match": None, "team_status": pr.status_code, "error": "entities not a list"}
         for ent in entities:
             if not isinstance(ent, dict):
                 continue
@@ -2074,8 +2114,6 @@ def revizto_search_user(email, config, allowed_project_uuids: list = None, admin
                 access_role.get("name", "") if isinstance(access_role, dict)
                 else str(access_role or "")
             )
-            # License role enum (0–4) — sometimes echoed on team entities
-            # as `licenseRole` or `license_role`. Best-effort; blank if absent.
             license_role_id = ent.get("licenseRole")
             if license_role_id is None:
                 license_role_id = ent.get("license_role")
@@ -2114,25 +2152,60 @@ def revizto_search_user(email, config, allowed_project_uuids: list = None, admin
                 "user_uuid":    ent.get("uuid", ""),
                 "projects":     [],
             }
-            return {"project_match": project_match, "user_record": user_record}
-        return None
+            return {"project_match": project_match, "user_record": user_record,
+                    "team_status": pr.status_code, "team_count": len(entities)}
+        return {"project_match": None, "team_status": pr.status_code,
+                "team_count": len(entities), "error": "email not in /team"}
 
     with ThreadPoolExecutor(max_workers=8) as pool:
         results = list(pool.map(check_project, project_pool))
 
+    # Build per-project debug detail — every project we tried, with outcome.
+    debug["projects_checked"] = []
+    for proj, res in zip(project_pool, results):
+        debug["projects_checked"].append({
+            "name":         proj["name"],
+            "uuid":         proj["uuid"],
+            "region":       proj["region"],
+            "license_name": proj["license_name"],
+            "team_status":  res.get("team_status"),
+            "team_count":   res.get("team_count"),
+            "matched":      res.get("project_match") is not None,
+            "error":        res.get("error"),
+        })
+
     user_record = None
     project_hits = []
-    for r in results:
-        if r is None:
+    for res in results:
+        # results is always a list of dicts now (never None). Skip ones
+        # where the email wasn't on /team.
+        if not res or not res.get("project_match"):
             continue
         if user_record is None:
-            user_record = r["user_record"]
-        project_hits.append(r["project_match"])
+            user_record = res["user_record"]
+        project_hits.append(res["project_match"])
+        debug["match_details"].append({
+            "name":   res["project_match"]["name"],
+            "uuid":   res["project_match"]["uuid"],
+            "region": res["project_match"]["region"],
+        })
+
+    debug["projects_matched"] = len(project_hits)
+
+    # Always log the debug trace to server stdout so we can diagnose why a
+    # particular search didn't return what was expected. Goes to Azure log
+    # stream — visible in the portal's Log Stream tab.
+    try:
+        import json as _json
+        print(f"[revizto-search] DEBUG: {_json.dumps(debug, default=str)[:4000]}")
+    except Exception:
+        pass
 
     if user_record is None:
         return None
 
     user_record["projects"] = project_hits
+    user_record["_debug"]   = debug
     return user_record
 
 
