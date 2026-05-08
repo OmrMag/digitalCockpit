@@ -4,8 +4,6 @@
 {% block page_title %}Browse Users{% endblock %}
 {% block page_subtitle %}All users in your licenses across Revizto, Forma, and Morta · Phase 1 (read-only){% endblock %}
 
-{# Header action: Back to manage. Mirrors profile.html's "Back to home"
-   pattern so the navigation feels symmetric. #}
 {% block header_actions %}
 <a href="/manage" class="cc-btn cc-btn--secondary" title="Back to manage users">
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -17,32 +15,82 @@
 
 {% block head %}
 <style>
-/* ── Filter bar ───────────────────────────────────────────────────
-   Compact two-row layout: filter chips on the left, Apply on the right.
-   Mirrors the Manage page's cc-card aesthetic so it doesn't feel like a
-   different app. */
+/* ── Filter bar with Aconex-style chip multi-selects ──────────────
+   Each filter is a clickable input that:
+   - Shows selected items as removable chips inside the input itself
+   - On click/focus, opens a popover dropdown with all options + a typeahead
+   - Empty selection means "all" (handled server-side)
+   The widget is implemented in plain JS at the bottom of this file as
+   ChipSelect(rootEl, options, opts) — no external libs. */
 .bu-filter-bar{
-    display:flex;flex-wrap:wrap;gap:14px;align-items:flex-end;
+    display:grid;grid-template-columns:repeat(3,1fr) auto;gap:14px;align-items:end;
     padding:14px 16px;background:white;border:1px solid var(--border-cream);
     border-radius:6px;margin-bottom:14px
 }
-.bu-filter-group{display:flex;flex-direction:column;gap:5px;min-width:200px}
-.bu-filter-group label{
+.bu-field{display:flex;flex-direction:column;gap:5px;min-width:0}
+.bu-field label{
     font-size:9px;color:var(--text-dark-muted);text-transform:uppercase;
     letter-spacing:.5px;font-weight:600
 }
-.bu-filter-group select,.bu-filter-group input{
-    padding:7px 10px;border:1px solid var(--border-cream);border-radius:4px;
-    background:white;font-size:var(--fs-sm);color:var(--text-dark);min-width:200px;
+
+/* The chip-multi-select control. */
+.bu-chip-select{
+    position:relative;border:1px solid var(--border-cream);border-radius:4px;
+    background:white;cursor:text;min-height:36px
+}
+.bu-chip-select:focus-within{border-color:var(--navy);box-shadow:0 0 0 2px rgba(20,40,80,.08)}
+.bu-chip-select-inner{
+    display:flex;flex-wrap:wrap;gap:4px;padding:5px 8px;align-items:center;min-height:24px
+}
+.bu-chip{
+    display:inline-flex;align-items:center;gap:4px;padding:2px 4px 2px 8px;
+    background:var(--cream-mid);border:1px solid var(--border-cream);border-radius:3px;
+    font-size:11px;color:var(--text-dark);max-width:200px
+}
+.bu-chip-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bu-chip-x{
+    cursor:pointer;color:var(--text-dark-muted);padding:0 4px;font-size:14px;line-height:1;
+    border-radius:2px;user-select:none
+}
+.bu-chip-x:hover{background:rgba(0,0,0,.06);color:var(--text-dark)}
+.bu-chip-input{
+    flex:1;min-width:80px;border:none;outline:none;padding:3px 2px;
+    font-size:var(--fs-sm);color:var(--text-dark);background:transparent;
     font-family:inherit
 }
-.bu-filter-group select[multiple]{min-height:80px}
-.bu-filter-actions{display:flex;gap:8px;margin-left:auto}
-.bu-filter-summary{font-size:var(--fs-xs);color:var(--text-dark-muted);align-self:center}
+.bu-chip-input::placeholder{color:var(--text-dark-muted);font-style:italic}
 
-/* ── Results grid ─────────────────────────────────────────────────
-   CSS grid table similar to the per-project tables in manage.html, but
-   wider and with a fixed sticky header for long lists. */
+/* The dropdown popover. */
+.bu-chip-pop{
+    position:absolute;top:calc(100% + 2px);left:0;right:0;z-index:100;
+    background:white;border:1px solid var(--border-cream);border-radius:4px;
+    max-height:280px;overflow-y:auto;box-shadow:0 4px 12px rgba(0,0,0,.08);
+    display:none
+}
+.bu-chip-pop.open{display:block}
+.bu-chip-opt{
+    padding:7px 10px;cursor:pointer;font-size:var(--fs-sm);color:var(--text-dark);
+    display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--cream-mid)
+}
+.bu-chip-opt:last-child{border-bottom:none}
+.bu-chip-opt:hover{background:var(--cream-mid)}
+.bu-chip-opt.active{background:var(--cream-mid)}
+.bu-chip-opt.selected{background:rgba(20,40,80,.05);font-weight:500;color:var(--navy)}
+.bu-chip-opt-sub{font-size:10px;color:var(--text-dark-muted);margin-left:auto}
+.bu-chip-pop-empty{padding:12px;text-align:center;color:var(--text-dark-muted);font-size:var(--fs-xs);font-style:italic}
+
+/* Numeric input for last_active days */
+.bu-num-input{
+    padding:7px 10px;border:1px solid var(--border-cream);border-radius:4px;
+    background:white;font-size:var(--fs-sm);color:var(--text-dark);
+    font-family:inherit;width:100%
+}
+.bu-num-input:focus{outline:none;border-color:var(--navy);box-shadow:0 0 0 2px rgba(20,40,80,.08)}
+.bu-num-help{font-size:10px;color:var(--text-dark-muted);margin-top:2px;font-style:italic}
+
+.bu-filter-actions{display:flex;gap:8px;align-self:end}
+
+/* ── Results grid ───────────────────────────────────────────────── */
 .bu-results-card{padding:0;overflow:hidden}
 .bu-results-header{
     display:flex;justify-content:space-between;align-items:center;
@@ -56,12 +104,13 @@
 .bu-row{
     display:grid;
     grid-template-columns:
-        minmax(200px,2fr)   /* email + name */
+        minmax(200px,2fr)   /* user */
         minmax(140px,1.4fr) /* company */
-        minmax(110px,1fr)   /* revizto status */
-        minmax(110px,1fr)   /* forma status */
-        minmax(110px,1fr)   /* morta status */
-        minmax(80px,.8fr);  /* projects count */
+        minmax(110px,1fr)   /* revizto */
+        minmax(110px,1fr)   /* forma */
+        minmax(110px,1fr)   /* morta */
+        minmax(80px,.8fr)   /* projects */
+        minmax(110px,1fr);  /* last active */
     gap:14px;align-items:center;padding:10px 16px
 }
 .bu-row + .bu-row{border-top:1px solid var(--border-cream)}
@@ -74,13 +123,10 @@
     letter-spacing:.4px;font-weight:600
 }
 .bu-row > div{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.bu-row .bu-user{display:flex;flex-direction:column;gap:1px;min-width:0}
-.bu-row .bu-user-name{font-weight:500;color:var(--navy);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.bu-row .bu-user-email{font-size:11px;color:var(--text-dark-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bu-user{display:flex;flex-direction:column;gap:1px;min-width:0}
+.bu-user-name{font-weight:500;color:var(--navy);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bu-user-email{font-size:11px;color:var(--text-dark-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
-/* Platform pill — a small chip showing role / status per platform.
-   Muted "—" when the user isn't on that platform. Color-coded so a
-   busy grid is still scannable. */
 .bu-pill{
     display:inline-flex;align-items:center;gap:6px;padding:2px 8px;border-radius:10px;
     font-size:11px;font-weight:500;background:var(--cream-mid);color:var(--text-dark)
@@ -94,7 +140,6 @@
 .bu-empty{padding:40px 16px;text-align:center;color:var(--text-dark-muted);font-size:var(--fs-sm)}
 .bu-error{padding:16px;color:#9b3a3a;font-size:var(--fs-sm);background:#fdf3f3;border-radius:4px}
 
-/* Phase-1 banner — temporary signal that edits aren't here yet. */
 .bu-phase-banner{
     padding:8px 12px;background:#fff8e1;border:1px solid #f5c842;border-radius:4px;
     font-size:var(--fs-xs);color:#8a6d00;margin-bottom:14px;display:flex;gap:8px;align-items:center
@@ -112,23 +157,18 @@
 </div>
 
 <div class="bu-filter-bar">
-    <div class="bu-filter-group">
-        <label for="bu-platforms">Platforms</label>
-        <select id="bu-platforms" multiple size="3">
-            <option value="revizto" selected>Revizto</option>
-            <option value="forma" selected>Forma / ACC</option>
-            <option value="morta" selected>Morta</option>
-        </select>
+    <div class="bu-field">
+        <label>Platforms</label>
+        <div id="cs-platforms"></div>
     </div>
-    <div class="bu-filter-group">
-        <label for="bu-projects">Projects</label>
-        <select id="bu-projects" multiple size="3" disabled>
-            <option>Loading projects…</option>
-        </select>
+    <div class="bu-field">
+        <label>Projects</label>
+        <div id="cs-projects"></div>
     </div>
-    <div class="bu-filter-group" style="min-width:240px">
-        <label for="bu-search">Filter by email or name</label>
-        <input id="bu-search" type="text" placeholder="Type to filter results…" autocomplete="off">
+    <div class="bu-field">
+        <label for="bu-days">Last active (days ago)</label>
+        <input id="bu-days" type="number" class="bu-num-input" min="0" placeholder="e.g. 60">
+        <div class="bu-num-help">Show users inactive for N+ days. Leave blank for all.</div>
     </div>
     <div class="bu-filter-actions">
         <button id="bu-apply" class="cc-btn cc-btn--primary" type="button">Apply</button>
@@ -142,7 +182,7 @@
         <div class="bu-results-count" id="bu-count">—</div>
     </div>
     <div id="bu-results">
-        <div class="bu-loading">Click <strong>Apply</strong> to load users from the selected platforms.</div>
+        <div class="bu-loading">Click <strong>Apply</strong> to load users.</div>
     </div>
 </div>
 
@@ -150,52 +190,200 @@
 
 {% block scripts %}
 <script>
-/* ── Browse Users — phase 1 (read path only) ────────────────────────
-   Calls /api/browse/users with selected filters, renders a grid.
-   Project list is loaded once on page load from /api/browse/projects.
-   Search box filters client-side over the loaded result set, so it's
-   instant; Apply is what actually triggers a fresh server fetch. */
-
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
     ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
-let lastResults = [];   // server payload from most recent /api/browse/users
+/* ── ChipSelect: Aconex-style chip multi-select ────────────────────
+   Constructor: new ChipSelect(rootEl, options, { placeholder })
+     options = [{ value, label, sub }]   (sub renders right-aligned in dropdown)
+   API:
+     instance.values()   → array of selected values
+     instance.setOptions(options)
+     instance.clear()
+   Behavior:
+     - Click anywhere in the box → focus input + open dropdown
+     - Type to filter dropdown options (case-insensitive substring)
+     - Click option to toggle selection (selected ones stay highlighted)
+     - Backspace in empty input removes the last chip
+     - Click outside → close dropdown
+     - Selected = chip in the input; not selected = available in dropdown */
+class ChipSelect {
+    constructor(rootEl, options, opts={}){
+        this.root = rootEl;
+        this.opts = opts;
+        this.options = options || [];
+        this.selected = new Set();
+        this.activeIdx = -1;
+        this._build();
+    }
+    _build(){
+        this.root.classList.add('bu-chip-select');
+        this.root.innerHTML = `
+            <div class="bu-chip-select-inner">
+                <input class="bu-chip-input" type="text" placeholder="${esc(this.opts.placeholder||'All')}">
+            </div>
+            <div class="bu-chip-pop"></div>`;
+        this.inner = this.root.querySelector('.bu-chip-select-inner');
+        this.input = this.root.querySelector('.bu-chip-input');
+        this.pop   = this.root.querySelector('.bu-chip-pop');
 
-/* ── Project picker hydration ───────────────────────────────────── */
+        this.inner.addEventListener('mousedown', e => {
+            if (e.target === this.input) return;
+            if (e.target.classList.contains('bu-chip-x')) return;
+            e.preventDefault();
+            this.input.focus();
+            this._open();
+        });
+        this.input.addEventListener('focus', () => this._open());
+        this.input.addEventListener('input', () => { this.activeIdx = -1; this._renderPop(); });
+        this.input.addEventListener('keydown', e => this._onKey(e));
+
+        document.addEventListener('mousedown', e => {
+            if (!this.root.contains(e.target)) this._close();
+        });
+    }
+    setOptions(options){
+        this.options = options || [];
+        const valid = new Set(this.options.map(o => o.value));
+        this.selected = new Set(Array.from(this.selected).filter(v => valid.has(v)));
+        this._renderChips();
+        this._renderPop();
+    }
+    values(){ return Array.from(this.selected); }
+    clear(){
+        this.selected.clear();
+        this.input.value = '';
+        this._renderChips();
+        this._renderPop();
+    }
+    _open(){ this.pop.classList.add('open'); this._renderPop(); }
+    _close(){ this.pop.classList.remove('open'); this.activeIdx = -1; }
+    _toggle(value){
+        if (this.selected.has(value)) this.selected.delete(value);
+        else this.selected.add(value);
+        this.input.value = '';
+        this._renderChips();
+        this._renderPop();
+        this.input.focus();
+    }
+    _renderChips(){
+        Array.from(this.inner.querySelectorAll('.bu-chip')).forEach(n => n.remove());
+        const labelByValue = new Map(this.options.map(o => [o.value, o.label]));
+        for (const v of this.selected){
+            const label = labelByValue.get(v) || v;
+            const chip = document.createElement('span');
+            chip.className = 'bu-chip';
+            chip.innerHTML = `<span class="bu-chip-label">${esc(label)}</span><span class="bu-chip-x" title="Remove">&times;</span>`;
+            chip.querySelector('.bu-chip-x').addEventListener('click', e => {
+                e.stopPropagation();
+                this.selected.delete(v);
+                this._renderChips();
+                this._renderPop();
+            });
+            this.inner.insertBefore(chip, this.input);
+        }
+    }
+    _filteredOptions(){
+        const q = this.input.value.toLowerCase().trim();
+        if (!q) return this.options;
+        return this.options.filter(o =>
+            o.label.toLowerCase().includes(q) ||
+            (o.sub && o.sub.toLowerCase().includes(q)));
+    }
+    _renderPop(){
+        const opts = this._filteredOptions();
+        if (!opts.length){
+            this.pop.innerHTML = '<div class="bu-chip-pop-empty">No matches</div>';
+            return;
+        }
+        this.pop.innerHTML = opts.map((o, i) => {
+            const isSelected = this.selected.has(o.value);
+            const isActive   = i === this.activeIdx;
+            const cls = ['bu-chip-opt'];
+            if (isSelected) cls.push('selected');
+            if (isActive)   cls.push('active');
+            return `<div class="${cls.join(' ')}" data-val="${esc(o.value)}">
+                <span>${esc(o.label)}</span>
+                ${o.sub ? `<span class="bu-chip-opt-sub">${esc(o.sub)}</span>` : ''}
+            </div>`;
+        }).join('');
+        this.pop.querySelectorAll('.bu-chip-opt').forEach(el => {
+            el.addEventListener('mousedown', e => {
+                e.preventDefault();
+                this._toggle(el.dataset.val);
+            });
+        });
+    }
+    _onKey(e){
+        const opts = this._filteredOptions();
+        if (e.key === 'ArrowDown'){
+            e.preventDefault();
+            this._open();
+            this.activeIdx = Math.min(opts.length - 1, this.activeIdx + 1);
+            this._renderPop();
+        } else if (e.key === 'ArrowUp'){
+            e.preventDefault();
+            this.activeIdx = Math.max(0, this.activeIdx - 1);
+            this._renderPop();
+        } else if (e.key === 'Enter'){
+            e.preventDefault();
+            if (this.activeIdx >= 0 && opts[this.activeIdx]){
+                this._toggle(opts[this.activeIdx].value);
+            }
+        } else if (e.key === 'Escape'){
+            this._close();
+        } else if (e.key === 'Backspace' && !this.input.value && this.selected.size){
+            const last = Array.from(this.selected).pop();
+            this.selected.delete(last);
+            this._renderChips();
+            this._renderPop();
+        }
+    }
+}
+
+let lastResults = [];
+let csPlatforms, csProjects;
+
+function initFilters(){
+    csPlatforms = new ChipSelect(document.getElementById('cs-platforms'), [
+        { value: 'revizto', label: 'Revizto' },
+        { value: 'forma',   label: 'Forma / ACC' },
+        { value: 'morta',   label: 'Morta' },
+    ], { placeholder: 'All platforms' });
+
+    csProjects = new ChipSelect(document.getElementById('cs-projects'), [], {
+        placeholder: 'All projects'
+    });
+}
+
 async function loadProjects(){
-    const sel = document.getElementById('bu-projects');
     try {
         const r = await fetch('/api/browse/projects');
         if (!r.ok) throw new Error('HTTP '+r.status);
         const data = await r.json();
-        sel.innerHTML = '';
-        if (!data.projects || !data.projects.length){
-            sel.innerHTML = '<option disabled>No projects available</option>';
-            return;
-        }
-        // Group projects by platform so the picker is scannable. Each
-        // option's value is "platform:id" so the API can disambiguate
-        // (a single registry project can have UUIDs across all 3).
-        for (const p of data.projects){
-            const o = document.createElement('option');
-            o.value = `${p.platform}:${p.id}`;
-            o.textContent = `${p.name} · ${p.platform}`;
-            sel.appendChild(o);
-        }
-        sel.disabled = false;
+        const opts = (data.projects || []).map(p => ({
+            value: `${p.platform}:${p.id}`,
+            label: p.name,
+            sub:   p.platform,
+        }));
+        csProjects.setOptions(opts);
     } catch(e){
-        sel.innerHTML = '<option disabled>Failed to load projects</option>';
         console.error('[browse] project load failed', e);
+        csProjects.setOptions([]);
     }
 }
 
-/* ── Apply (server fetch) ───────────────────────────────────────── */
 async function apply(){
-    const platforms = Array.from(document.getElementById('bu-platforms').selectedOptions).map(o=>o.value);
-    const projects  = Array.from(document.getElementById('bu-projects').selectedOptions).map(o=>o.value);
+    const platforms = csPlatforms.values();
+    const projects  = csProjects.values();
+    const days      = (document.getElementById('bu-days').value || '').trim();
+
     const params = new URLSearchParams();
-    platforms.forEach(p=>params.append('platform', p));
-    projects.forEach(p=>params.append('project', p));
+    platforms.forEach(p => params.append('platform', p));
+    projects.forEach(p => params.append('project', p));
+    if (days && /^\d+$/.test(days) && parseInt(days, 10) > 0){
+        params.set('min_days_inactive', days);
+    }
 
     const out = document.getElementById('bu-results');
     out.innerHTML = '<div class="bu-loading">Loading users…</div>';
@@ -213,18 +401,16 @@ async function apply(){
     }
 }
 
-/* ── Client-side search filter ──────────────────────────────────── */
-function applyClientFilter(){
-    const q = document.getElementById('bu-search').value.toLowerCase().trim();
-    if (!q){ renderResults(lastResults); return; }
-    const filtered = lastResults.filter(u =>
-        (u.email||'').toLowerCase().includes(q) ||
-        (u.name ||'').toLowerCase().includes(q) ||
-        (u.company||'').toLowerCase().includes(q));
-    renderResults(filtered);
+function fmtLastActive(rec){
+    if (rec.last_active_days == null) return '<span class="bu-pill muted">—</span>';
+    const d = rec.last_active_days;
+    if (d === 0) return 'Today';
+    if (d === 1) return 'Yesterday';
+    if (d < 30)  return `${d} days ago`;
+    if (d < 365) return `${Math.floor(d/30)} months ago`;
+    return `${Math.floor(d/365)}y ago`;
 }
 
-/* ── Result rendering ───────────────────────────────────────────── */
 function renderResults(users){
     document.getElementById('bu-count').textContent =
         users.length === 1 ? '1 user' : `${users.length} users`;
@@ -246,32 +432,33 @@ function renderResults(users){
         <div>${pill('forma',   u.forma   && u.forma.role)}</div>
         <div>${pill('morta',   u.morta   && u.morta.role)}</div>
         <div>${u.project_count ?? 0}</div>
+        <div title="${esc(u.last_active_ts||'')}">${fmtLastActive(u)}</div>
     </div>`).join('');
     out.innerHTML = `<div class="bu-grid">
         <div class="bu-row header">
             <div>User</div><div>Company</div>
             <div>Revizto</div><div>Forma</div><div>Morta</div>
-            <div>Projects</div>
+            <div>Projects</div><div>Last Active</div>
         </div>
         ${rows}
     </div>`;
 }
 
-/* ── Wire up ────────────────────────────────────────────────────── */
 document.getElementById('bu-apply').addEventListener('click', apply);
-document.getElementById('bu-reset').addEventListener('click', ()=>{
-    document.getElementById('bu-platforms').querySelectorAll('option')
-        .forEach(o => o.selected = true);
-    Array.from(document.getElementById('bu-projects').selectedOptions)
-        .forEach(o => o.selected = false);
-    document.getElementById('bu-search').value = '';
+document.getElementById('bu-reset').addEventListener('click', () => {
+    csPlatforms.clear();
+    csProjects.clear();
+    document.getElementById('bu-days').value = '';
     document.getElementById('bu-results').innerHTML =
-        '<div class="bu-loading">Click <strong>Apply</strong> to load users from the selected platforms.</div>';
+        '<div class="bu-loading">Click <strong>Apply</strong> to load users.</div>';
     document.getElementById('bu-count').textContent = '—';
     lastResults = [];
 });
-document.getElementById('bu-search').addEventListener('input', applyClientFilter);
+document.getElementById('bu-days').addEventListener('keydown', e => {
+    if (e.key === 'Enter') apply();
+});
 
+initFilters();
 loadProjects();
 </script>
 {% endblock %}

@@ -3825,12 +3825,16 @@ async def api_browse_users(
     Query params (multi-valued):
       platform: revizto | forma | morta   (default: all three)
       project:  "<platform>:<id>"          (default: all visible projects)
+      min_days_inactive: integer N (optional). Drops users whose newest
+        last-active timestamp across all platforms is less than N days old.
+        N=60 keeps only users last active 60+ days ago. Empty/0 disables.
 
     Returns:
       { users: [{
           email, name, company,
-          revizto: { role, projects: [{ id, name, role }] } | null,
-          forma:   { role, projects: [...] } | null,
+          last_active_ts, last_active_days,   // newest across platforms
+          revizto: { role, last_active, projects: [{ id, name, role }] } | null,
+          forma:   { role, last_active, projects: [...] } | null,
           morta:   { role, projects: [...] } | null,
           project_count: int
         }] }
@@ -3843,6 +3847,14 @@ async def api_browse_users(
     qp = request.query_params
     platforms = set(qp.getlist("platform")) or {"revizto", "forma", "morta"}
     project_filters = qp.getlist("project")    # ["platform:id", ...]
+    # Inactivity threshold in days. The UI sends an integer; we treat any
+    # non-positive value (or unparseable input) as "no filter".
+    try:
+        min_days_inactive = int(qp.get("min_days_inactive", "0") or "0")
+    except (TypeError, ValueError):
+        min_days_inactive = 0
+    if min_days_inactive < 0:
+        min_days_inactive = 0
 
     # Index project filters by platform for cheap membership checks below.
     pf_by_platform: dict = {"revizto": set(), "forma": set(), "morta": set()}
@@ -3866,13 +3878,15 @@ async def api_browse_users(
         rec = users_by_email.get(key)
         if rec is None:
             rec = {
-                "email":         email,
-                "name":          "",
-                "company":       "",
-                "revizto":       None,
-                "forma":         None,
-                "morta":         None,
-                "project_count": 0,
+                "email":            email,
+                "name":             "",
+                "company":          "",
+                "revizto":          None,
+                "forma":            None,
+                "morta":            None,
+                "last_active_ts":   "",   # newest ISO timestamp across platforms
+                "last_active_days": None, # days since newest ts (None = unknown)
+                "project_count":    0,
             }
             users_by_email[key] = rec
         for k, v in fields.items():
@@ -3934,15 +3948,23 @@ async def api_browse_users(
                     full_name = ent.get("fullname") or (
                         f"{ent.get('firstname','')} {ent.get('lastname','')}".strip()
                     )
+                    last_active = ent.get("lastActive", "") or ""
                     rec = upsert(em, name=full_name, company=ent.get("company", ""))
                     if not rec:
                         continue
                     if rec["revizto"] is None:
-                        rec["revizto"] = {"role": role, "projects": []}
+                        rec["revizto"] = {"role": role, "last_active": last_active, "projects": []}
+                    else:
+                        # Keep the newest timestamp seen across this user's
+                        # Revizto projects (string compare works for ISO-ish
+                        # timestamps; falls back gracefully if formats differ).
+                        if last_active and last_active > (rec["revizto"].get("last_active") or ""):
+                            rec["revizto"]["last_active"] = last_active
                     rec["revizto"]["projects"].append({
                         "id":   pid,
                         "name": proj.get("title", pid),
                         "role": role,
+                        "last_active": last_active,
                     })
                     rec["project_count"] = (rec["project_count"] or 0) + 1
         except Exception as e:
@@ -4010,13 +4032,21 @@ async def api_browse_users(
                         rec = upsert(em, name=full_name, company=company_name)
                         if not rec:
                             continue
+                        # Forma exposes last sign-in via `last_sign_in` (ISO).
+                        # Older accounts can also surface `lastSignIn`; check
+                        # both, take whichever is non-empty.
+                        last_active = u_.get("last_sign_in") or u_.get("lastSignIn") or ""
                         if rec["forma"] is None:
-                            rec["forma"] = {"role": role_str, "projects": []}
+                            rec["forma"] = {"role": role_str, "last_active": last_active, "projects": []}
+                        else:
+                            if last_active and last_active > (rec["forma"].get("last_active") or ""):
+                                rec["forma"]["last_active"] = last_active
                         rec["forma"]["projects"].append({
                             "id":   fpid,
                             "name": rp.get("name", k),
                             "role": role_str,
                             "status": u_.get("status", ""),
+                            "last_active": last_active,
                         })
                         rec["project_count"] = (rec["project_count"] or 0) + 1
                     offset += len(batch)
@@ -4037,7 +4067,63 @@ async def api_browse_users(
         # offered so phase 3 wires up cleanly without a UI change.
         pass
 
+    # ── Post-aggregation: newest last-active timestamp + inactivity filter ──
+    # Each user may have last-active info from multiple platforms (Revizto's
+    # lastActive, Forma's last_sign_in). We pick the NEWEST across all of
+    # them — that's "most recently active anywhere". Then for the inactivity
+    # filter (e.g. "show me users last active 60+ days ago"), we drop any
+    # user whose newest timestamp is younger than the threshold. Users with
+    # no usable timestamp anywhere keep last_active_days=None and are
+    # excluded from the filter (since "unknown" can't satisfy "≥60 days").
+    now_utc = datetime.now(timezone.utc)
+    def _parse_ts(s: str):
+        if not s or not isinstance(s, str):
+            return None
+        s = s.strip()
+        if not s:
+            return None
+        # Revizto returns "2026-05-01 04:49:45" (no TZ); Forma returns
+        # "2026-05-04T08:32:11.000Z" (full ISO). Accept both.
+        try:
+            # ISO with possible trailing Z
+            iso = s.replace("Z", "+00:00")
+            dt = datetime.fromisoformat(iso)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt
+        except (ValueError, TypeError):
+            pass
+        try:
+            # Revizto's space-separated "YYYY-MM-DD HH:MM:SS"
+            dt = datetime.strptime(s, "%Y-%m-%d %H:%M:%S")
+            return dt.replace(tzinfo=timezone.utc)
+        except (ValueError, TypeError):
+            return None
+
     users = list(users_by_email.values())
+    for rec in users:
+        candidates = []
+        for plat_key in ("revizto", "forma", "morta"):
+            sub = rec.get(plat_key) or {}
+            ts = sub.get("last_active") if isinstance(sub, dict) else None
+            dt = _parse_ts(ts)
+            if dt is not None:
+                candidates.append((dt, ts))
+        if candidates:
+            # Newest wins (max by datetime)
+            best_dt, best_str = max(candidates, key=lambda x: x[0])
+            rec["last_active_ts"] = best_str
+            rec["last_active_days"] = max(0, (now_utc - best_dt).days)
+
+    # Inactivity filter: keep users whose newest activity is ≥ N days old.
+    # The brief: "if user fills 60, give me users last active more than 59
+    # days ago" — so the predicate is `last_active_days >= 60` (exclusive
+    # 59). Users with unknown timestamps are dropped when the filter is on.
+    if min_days_inactive > 0:
+        users = [u for u in users
+                 if isinstance(u.get("last_active_days"), int)
+                 and u["last_active_days"] >= min_days_inactive]
+
     # Sort by email — predictable, easy to scan.
     users.sort(key=lambda u: u["email"].lower())
     return {"users": users}
