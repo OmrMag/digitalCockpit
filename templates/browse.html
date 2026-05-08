@@ -54,19 +54,11 @@
 .bu-phase-banner{padding:8px 12px;background:#fff8e1;border:1px solid #f5c842;border-radius:4px;font-size:var(--fs-xs);color:#8a6d00;margin-bottom:14px;display:flex;gap:8px;align-items:center}
 
 /* ── Table chrome ───────────────────────────────────────────────── */
-/* The wrapper IS the scroll container — fixed max-height tied to the
-   viewport. This is what makes the sticky header work reliably across
-   page layouts: sticky <thead> anchors to the wrapper's top edge, and
-   the wrapper has a defined height to scroll within. The page outside
-   the wrapper doesn't need to scroll vertically because the wrapper
-   fills the available height. Horizontal overflow is on the same
-   element since both axes share a scroll context anyway. */
+/* Wrapper just bounds the table visually. Page handles scrolling.
+   Header stickiness via the wrapper-as-scroll-container approach was
+   reverted — we'll revisit sticky with a different technique later. */
 .bu-table-wrap{
-    width:100%;
-    max-height:calc(100vh - 240px);
-    overflow:auto;
-    border:1px solid var(--border-cream);
-    border-radius:4px
+    width:100%
 }
 .bu-table{
     border-collapse:separate;
@@ -81,7 +73,6 @@
     font-size:9px;color:var(--text-dark-muted);text-transform:uppercase;
     letter-spacing:.5px;font-weight:600;white-space:nowrap;
     vertical-align:middle;
-    position:sticky;top:0;z-index:5;
     background:var(--cream);
     border-bottom:1px solid var(--navy)
 }
