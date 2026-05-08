@@ -391,14 +391,6 @@ function sectionCells(row){
 
 /* ── Table render ───────────────────────────────────────────────── */
 function renderTable(){
-    // DEBUG PILL — visible on the page so we don't need DevTools console.
-    // Shows the raw row count + active tab. Will be removed after we
-    // figure out why "No rows match" displays even when data is loaded.
-    const dbgEl = document.getElementById('bu-source');
-    if (dbgEl) {
-        const dbg = `[debug] lastRows=${lastRows.length}, tab=${activeTab}, first=${lastRows[0] ? lastRows[0].email : 'none'}`;
-        dbgEl.textContent = (dbgEl.textContent || '') + ' · ' + dbg;
-    }
     document.getElementById('bu-count').textContent =
         lastRows.length === 1 ? '1 row' : `${lastRows.length} rows`;
     const out = document.getElementById('bu-results');

@@ -3910,7 +3910,6 @@ async def api_browse_users(
             pf_by_platform[plat].add(pid)
 
     config = load_config(user)
-    print(f"[browse/users] start: user={user} platforms={platforms} project_filters={len(project_filters)} min_days_inactive={min_days_inactive}")
 
     # ── Build the registry's project lookup tables ──────────────────
     # Used to:
@@ -3971,10 +3970,7 @@ async def api_browse_users(
     if "revizto" in platforms:
         try:
             rev_projects = fetch_revizto_projects(config, email=user) or []
-            print(f"[browse/users] revizto: {len(rev_projects)} projects to sweep")
             rev_tokens: dict = {}
-            rev_team_count = 0
-            rev_rows_added = 0
             for proj in rev_projects:
                 pid = proj.get("uuid", "")
                 if not pid:
@@ -4009,18 +4005,14 @@ async def api_browse_users(
                     print(f"[browse/users] revizto /team {pid[:8]} raised: {e}")
                     continue
                 if tr.status_code != 200:
-                    print(f"[browse/users] revizto /team {pid[:8]} HTTP {tr.status_code}")
                     continue
                 try:
                     body = tr.json()
                 except Exception:
-                    print(f"[browse/users] revizto /team {pid[:8]} json parse failed")
                     continue
                 if body.get("result", 0) != 0:
-                    print(f"[browse/users] revizto /team {pid[:8]} result={body.get('result')}")
                     continue
                 ents = (body.get("data") or {}).get("entities") or []
-                rev_team_count += len(ents)
                 for ent in ents:
                     if not isinstance(ent, dict):
                         continue
@@ -4049,8 +4041,6 @@ async def api_browse_users(
                         "on_license":   True,
                         "on_project":   True,
                     }
-                    rev_rows_added += 1
-            print(f"[browse/users] revizto: {rev_team_count} entities seen, {rev_rows_added} rows touched")
         except Exception as e:
             print(f"[browse/users] revizto sweep failed: {e}")
 
@@ -4060,8 +4050,6 @@ async def api_browse_users(
             forma_token = forma_get_token(config)
             forma_headers = {"Authorization": f"Bearer {forma_token}",
                              "Accept": "application/json"} if forma_token else None
-            print(f"[browse/users] forma: token_ok={bool(forma_token)} admin_projects={len(admin_projects)}")
-            forma_users_seen = 0
             for k, rp in admin_projects.items():
                 forma = (rp.get("platforms", {}) or {}).get("forma", {}) or {}
                 fpid = forma.get("project_id", "")
@@ -4088,7 +4076,6 @@ async def api_browse_users(
                     batch = (rr.json() or {}).get("results", [])
                     if not batch:
                         break
-                    forma_users_seen += len(batch)
                     for u_ in batch:
                         em = (u_.get("email") or "").strip()
                         if not em:
@@ -4131,7 +4118,6 @@ async def api_browse_users(
                     offset += len(batch)
                     if len(batch) < 200:
                         break
-            print(f"[browse/users] forma: {forma_users_seen} user records seen")
         except Exception as e:
             print(f"[browse/users] forma sweep failed: {e}")
 
@@ -4147,8 +4133,6 @@ async def api_browse_users(
             morta_hubs = fetch_morta_hubs(config) or []
             api_key = (config.get("morta", {}) or {}).get("api_key", "")
             morta_headers = {"Authorization": f"Bearer {api_key}"} if api_key else None
-            print(f"[browse/users] morta: token_ok={bool(api_key)} hubs={len(morta_hubs)}")
-            morta_members_seen = 0
             for h in morta_hubs:
                 hub_id   = h.get("id", "")
                 hub_name = h.get("name", hub_id)
@@ -4180,7 +4164,6 @@ async def api_browse_users(
                 for m in body.get("data", []) or []:
                     if not isinstance(m, dict):
                         continue
-                    morta_members_seen += 1
                     u_ = m.get("user", {}) or {}
                     em = (u_.get("email") or "").strip()
                     if not em:
@@ -4204,7 +4187,6 @@ async def api_browse_users(
                         "last_active": "",   # not exposed by Morta API
                         "on_hub":      True,
                     }
-            print(f"[browse/users] morta: {morta_members_seen} members seen")
         except Exception as e:
             print(f"[browse/users] morta sweep failed: {e}")
 
@@ -4231,7 +4213,6 @@ async def api_browse_users(
             return None
 
     rows = list(rows_by_key.values())
-    print(f"[browse/users] aggregator: {len(rows)} unique (user,project) rows built")
     for rec in rows:
         candidates = []
         for plat_key in ("revizto", "forma", "morta"):
@@ -4247,17 +4228,12 @@ async def api_browse_users(
 
     # Inactivity filter
     if min_days_inactive > 0:
-        before_count = len(rows)
         rows = [r for r in rows
                 if isinstance(r.get("last_active_days"), int)
                 and r["last_active_days"] >= min_days_inactive]
-        print(f"[browse/users] inactivity filter: {before_count} → {len(rows)} (threshold={min_days_inactive} days)")
-    else:
-        print(f"[browse/users] no inactivity filter, total rows={len(rows)}")
 
     # Sort: email, then project name, so the same user's projects cluster.
     rows.sort(key=lambda r: (r["email"].lower(), (r["project_name"] or "").lower()))
-    print(f"[browse/users] end: returning {len(rows)} rows")
     return {"rows": rows}
 
 
