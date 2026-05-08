@@ -69,7 +69,7 @@
     table-layout:fixed
 }
 .bu-table thead th{
-    text-align:left;padding:8px 10px;
+    text-align:center;padding:8px 10px;
     font-size:9px;color:var(--text-dark-muted);text-transform:uppercase;
     letter-spacing:.5px;font-weight:600;white-space:nowrap;
     vertical-align:middle;
@@ -105,6 +105,47 @@
 .bu-lock:hover{background:var(--cream-mid);color:var(--navy)}
 .bu-lock.unlocked{color:#c47a00}
 .bu-lock svg{display:block}
+
+/* ── Bulk-select switch (lives in lock-column header) ──────────── */
+/* A small toggle in the otherwise-empty <th> above the lock column.
+   When on, lock icons throughout the table are replaced with checkboxes
+   and any platform-toggle change applies to every selected row. */
+.bu-bulk-switch{
+    display:inline-flex;align-items:center;gap:6px;
+    cursor:pointer;user-select:none;
+    padding:3px 6px;border-radius:3px
+}
+.bu-bulk-switch:hover{background:rgba(0,0,0,.04)}
+.bu-bulk-switch-pill{
+    width:24px;height:13px;border-radius:7px;
+    background:#c8c8c8;
+    position:relative;
+    transition:background .18s ease
+}
+.bu-bulk-switch-pill::before{
+    content:"";
+    position:absolute;
+    top:2px;left:2px;
+    width:9px;height:9px;
+    border-radius:50%;
+    background:white;
+    transition:transform .18s ease;
+    box-shadow:0 1px 2px rgba(0,0,0,.18)
+}
+.bu-bulk-switch.active .bu-bulk-switch-pill{background:#c44d4d}      /* red when active */
+.bu-bulk-switch.active .bu-bulk-switch-pill::before{transform:translateX(11px)}
+.bu-bulk-switch-label{
+    font-size:8px;color:var(--text-dark-muted);
+    text-transform:uppercase;letter-spacing:.5px
+}
+.bu-bulk-switch.active .bu-bulk-switch-label{color:#c44d4d;font-weight:700}
+
+/* Selection checkbox shown in lock column when bulk mode is active */
+.bu-bulk-cb{
+    width:14px;height:14px;
+    accent-color:#c44d4d;
+    cursor:pointer;display:block;margin:0 auto
+}
 
 /* ── Column width definitions ──────────────────────────────────── */
 /* Column widths via <col> elements — clean separation from cell
@@ -252,13 +293,6 @@
 
 {% block content %}
 
-<div class="bu-phase-banner">
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
-    </svg>
-    <span>Phase 2: read-only. Lock unlocks the row visually; toggles flip but don't write back yet. Faded toggles mean the user isn't on that platform — you can't add them from this view.</span>
-</div>
-
 <div class="bu-filter-bar">
     <div class="bu-field">
         <label>Platforms</label>
@@ -397,6 +431,19 @@ const unlocked         = new Set();
    Key shape: `${rowKey}|${platform}`. Value isn't used yet — Set semantics
    are enough to know "this toggle is in a pending state vs. the data". */
 const pendingToggles   = new Set();
+/* Bulk-select mode. Switch on the lock-column header turns this on. While
+   on:
+     - Each row's lock cell renders a checkbox instead.
+     - Ticked rows are collected in `bulkSelected` (a Set of row keys).
+     - Toggles on ticked rows are interactive WITHOUT needing an unlock.
+     - Flipping a toggle on any ticked row applies the same flip to
+       every other ticked row that has that platform (faded ones skip).
+     - Switching off clears `bulkSelected` and reverts to single-row
+       lock-gated behavior.
+   This is the universal-change mode the user described as "click 1 lock,
+   all selected unlock together" — the switch makes it explicit. */
+let bulkMode           = false;
+const bulkSelected     = new Set();
 let csPlatforms, csProjects;
 
 const PLATFORMS = ['revizto', 'forma', 'morta'];
@@ -499,7 +546,10 @@ function lastActiveLabel(ts, days){
 
 const PROP_SPECS = {
     revizto: [
-        { key:'company',      label:'Company',      col:'col-prop-company',
+        /* Company is the slack-absorber for Revizto: when expanded, this
+           column gets no fixed width and grows to fill remaining page
+           width. All other Reviz columns hold their declared widths. */
+        { key:'company',      label:'Company',      col:'col-prop-company',     absorber:true,
           render: row => textCellHtml(row.revizto?.company) },
         { key:'department',   label:'Department',   col:'col-prop-department',
           render: row => textCellHtml(row.revizto?.department) },
@@ -516,14 +566,9 @@ const PROP_SPECS = {
         { key:'last_active',  label:'Last Active',  col:'col-prop-last-active',
           render: row => textCellHtml(row.revizto ? lastActiveLabel(row.revizto.last_active, row.last_active_days) : '') },
     ],
-    /* Forma columns mirror the platform's own Members UI:
-       Company · Role · Access Level · Docs · Design · Model · Last Active.
-       The three product columns (Docs/Design/Model) are checkboxes — the
-       backend gives us "member" or "" for each, we just need truthy
-       to render a checked box. Access Level is the project-level admin
-       flag from Forma's accessLevels.projectAdmin. */
     forma: [
-        { key:'company',      label:'Company',      col:'col-prop-company',
+        /* Company also absorbs slack for Forma. */
+        { key:'company',      label:'Company',      col:'col-prop-company',     absorber:true,
           render: row => textCellHtml(row.forma?.company) },
         { key:'role',         label:'Role',         col:'col-prop-role',
           render: row => textCellHtml(row.forma?.role) },
@@ -539,7 +584,9 @@ const PROP_SPECS = {
           render: row => textCellHtml(row.forma ? lastActiveLabel(row.forma.last_active, row.last_active_days) : '') },
     ],
     morta: [
-        { key:'tag',          label:'Tag',          col:'col-prop-tag',
+        /* Tag absorbs slack for Morta — useful since users can carry many
+           tags and the column genuinely benefits from extra width. */
+        { key:'tag',          label:'Tag',          col:'col-prop-tag',         absorber:true,
           render: row => textCellHtml(row.morta?.tag) },
         { key:'last_active',  label:'Last Active',  col:'col-prop-last-active',
           render: row => textCellHtml(row.morta ? lastActiveLabel(row.morta.last_active, row.last_active_days) : '') },
@@ -631,25 +678,57 @@ const COL_WIDTHS = {
 };
 
 function buildColspec(){
-    /* Returns { html, total } — html is the <colgroup> string,
-       total is the summed pixel width. */
+    /* Build the <colgroup> + the table's min-width.
+
+       Each platform expansion designates one property as the absorber
+       (Company for Reviz/Forma, Tag for Morta). The absorber's <col>
+       is emitted with NO width class, so when the table is set to
+       width:100% the browser distributes leftover horizontal space to
+       that column. All other cols hit their declared widths exactly
+       thanks to table-layout:fixed.
+
+       Returns:
+         html      — the colgroup string
+         minWidth  — sum of all NON-absorber col widths plus a sensible
+                     minimum for the absorber. The table sets this as
+                     min-width so it never collapses below readable
+                     when the page is narrow. */
     const cols = [
-        { cls:'col-lock' },
-        { cls:'col-user' },
+        { cls:'col-lock', absorber:false },
+        { cls:'col-user', absorber:false },
     ];
     PLATFORMS.forEach(p => {
-        cols.push({ cls:'col-plat' });
+        cols.push({ cls:'col-plat', absorber:false });
         if (expandedPlatform === p){
-            PROP_SPECS[p].forEach(s => cols.push({ cls:s.col }));
+            PROP_SPECS[p].forEach(s => cols.push({ cls:s.col, absorber:!!s.absorber }));
         }
     });
-    const total = cols.reduce((sum, c) => sum + (COL_WIDTHS[c.cls] || 0), 0);
-    const html  = `<colgroup>${cols.map(c => `<col class="${c.cls}">`).join('')}</colgroup>`;
-    return { html, total };
+    /* Min-width: declared widths of fixed cols + 160px floor for the
+       absorber so it stays usable on narrow viewports. */
+    const minWidth = cols.reduce((sum, c) => {
+        if (c.absorber) return sum + 160;
+        return sum + (COL_WIDTHS[c.cls] || 0);
+    }, 0);
+    /* HTML: emit width style only on non-absorber cols. The absorber
+       col stays width-free so :100% on the table shares space with it. */
+    const html = `<colgroup>${cols.map(c => {
+        if (c.absorber) return `<col>`;     // no class, no width — absorbs
+        return `<col class="${c.cls}">`;
+    }).join('')}</colgroup>`;
+    return { html, minWidth };
 }
 
 function headerRowHtml(){
-    const cells = [`<th></th>`, `<th class="user-cell-th">User</th>`];
+    /* The lock-column <th> hosts the bulk-select switch — clicking it
+       flips bulkMode on the global state. The switch shows a small
+       pill + label. We deliberately keep the label tiny ("BULK") so
+       the column doesn't have to grow beyond its 36px allotment. */
+    const bulkSwitchHtml = `<th>
+        <div class="bu-bulk-switch ${bulkMode ? 'active' : ''}" id="bu-bulk-switch" title="Bulk mode — select rows and apply changes to all selected at once">
+            <span class="bu-bulk-switch-pill"></span>
+        </div>
+    </th>`;
+    const cells = [bulkSwitchHtml, `<th class="user-cell-th">User</th>`];
     PLATFORMS.forEach(p => {
         const isExp = (expandedPlatform === p);
         const cls   = ['bu-plat-th'];
@@ -705,10 +784,30 @@ function renderTable(){
         return;
     }
     const rowsHtml = lastRows.map(r => {
-        const isUnlocked = unlocked.has(rowKey(r));
-        const lockHtml = `<span class="bu-lock ${isUnlocked ? 'unlocked' : ''}" data-row="${esc(rowKey(r))}" title="${isUnlocked ? 'Click to lock (cancel edit)' : 'Click to unlock for editing'}">${isUnlocked ? lockSvgOpen : lockSvgClosed}</span>`;
+        const k = rowKey(r);
+        /* Decide what goes in the lock column AND whether toggles are
+           interactive on this row.
+
+           Single-row mode (bulkMode = false):
+             - Cell shows the lock icon (closed or open).
+             - Toggles are interactive iff this row is in `unlocked`.
+
+           Bulk mode (bulkMode = true):
+             - Cell shows a checkbox (ticked iff in `bulkSelected`).
+             - Toggles are interactive iff this row is ticked. The same
+               toggle click then propagates to every other ticked row. */
+        let lockCellHtml, isInteractive;
+        if (bulkMode){
+            const isSelected = bulkSelected.has(k);
+            lockCellHtml = `<input type="checkbox" class="bu-bulk-cb" data-row="${esc(k)}" ${isSelected ? 'checked' : ''}>`;
+            isInteractive = isSelected;
+        } else {
+            const isUnlocked = unlocked.has(k);
+            lockCellHtml = `<span class="bu-lock ${isUnlocked ? 'unlocked' : ''}" data-row="${esc(k)}" title="${isUnlocked ? 'Click to lock (cancel edit)' : 'Click to unlock for editing'}">${isUnlocked ? lockSvgOpen : lockSvgClosed}</span>`;
+            isInteractive = isUnlocked;
+        }
         const cells = [
-            `<td>${lockHtml}</td>`,
+            `<td>${lockCellHtml}</td>`,
             `<td class="user-cell">
                 <div class="bu-user-name">${esc(r.name||r.email)}</div>
                 <div class="bu-user-email">${esc(r.email)}</div>
@@ -716,48 +815,99 @@ function renderTable(){
             </td>`,
         ];
         PLATFORMS.forEach(p => {
-            cells.push(platformBodyToggleHtml(r, p, isUnlocked));
+            cells.push(platformBodyToggleHtml(r, p, isInteractive));
             if (expandedPlatform === p){
                 PROP_SPECS[p].forEach(spec => cells.push(spec.render(r)));
             }
         });
         return `<tr>${cells.join('')}</tr>`;
     }).join('');
-    const { html: colHtml, total: tableWidth } = buildColspec();
-    out.innerHTML = `<div class="bu-table-wrap"><table class="bu-table" style="width:${tableWidth}px;min-width:${tableWidth}px">
+    const { html: colHtml, minWidth } = buildColspec();
+    out.innerHTML = `<div class="bu-table-wrap"><table class="bu-table" style="width:100%;min-width:${minWidth}px">
         ${colHtml}
         <thead>${headerRowHtml()}</thead>
         <tbody>${rowsHtml}</tbody>
     </table></div>`;
 
-    // Wire up lock toggles. Phase 2: visual state only — see comment at
-    // top of file for the phase 3 plan.
-    out.querySelectorAll('.bu-lock').forEach(el => {
-        el.addEventListener('click', () => {
-            const k = el.dataset.row;
-            if (unlocked.has(k)) unlocked.delete(k);
-            else unlocked.add(k);
+    /* ── Wire-up below — split by mode for clarity. ─────────────── */
+
+    // Bulk-mode switch in the lock-column header. Always wired up since
+    // the switch itself is always rendered.
+    const switchEl = document.getElementById('bu-bulk-switch');
+    if (switchEl){
+        switchEl.addEventListener('click', () => {
+            bulkMode = !bulkMode;
+            if (!bulkMode){
+                // Switching off clears selection — locks come back from the
+                // single-row `unlocked` set, which is independent.
+                bulkSelected.clear();
+            }
             renderTable();
         });
-    });
+    }
 
-    // Wire up platform header clicks (drives expansion).
+    if (!bulkMode){
+        // Single-row mode: each lock toggles its own row's unlocked state.
+        out.querySelectorAll('.bu-lock').forEach(el => {
+            el.addEventListener('click', () => {
+                const k = el.dataset.row;
+                if (unlocked.has(k)) unlocked.delete(k);
+                else unlocked.add(k);
+                renderTable();
+            });
+        });
+    } else {
+        // Bulk mode: each checkbox toggles its row's membership in the
+        // selection set.
+        out.querySelectorAll('.bu-bulk-cb').forEach(el => {
+            el.addEventListener('change', () => {
+                const k = el.dataset.row;
+                if (el.checked) bulkSelected.add(k);
+                else bulkSelected.delete(k);
+                renderTable();
+            });
+        });
+    }
+
+    // Platform-header clicks (drives expansion). Same in both modes.
     out.querySelectorAll('.bu-plat-th').forEach(el => {
         el.addEventListener('click', () => {
             const plat = el.dataset.plat;
+            if (!plat) return;            // bulk-switch <th> has no data-plat
             if (expandedPlatform === plat) return;
             expandedPlatform = plat;
             renderTable();
         });
     });
 
-    // Wire up toggle clicks. Faded/locked toggles are skipped.
+    // Toggle clicks. Faded/locked are skipped (same as before).
+    // In bulk mode: a click on any ticked row's toggle propagates to
+    // every other ticked row that has that platform.
     out.querySelectorAll('.bu-toggle').forEach(el => {
         if (el.classList.contains('faded') || el.classList.contains('locked')) return;
         el.addEventListener('click', () => {
-            const k = `${el.dataset.row}|${el.dataset.plat}`;
-            if (pendingToggles.has(k)) pendingToggles.delete(k);
-            else pendingToggles.add(k);
+            const clickedRowKey = el.dataset.row;
+            const plat          = el.dataset.plat;
+
+            // Decide which row keys this click affects.
+            const affectedKeys = bulkMode
+                ? Array.from(bulkSelected)
+                : [clickedRowKey];
+
+            // Build a lookup of the rows we actually have data for, so
+            // we can skip propagation to rows where the user isn't on
+            // this platform (faded). We use the displayed lastRows list
+            // because the row needs to be visible to be acted on.
+            const rowByKey = new Map(lastRows.map(r => [rowKey(r), r]));
+
+            affectedKeys.forEach(k => {
+                const row = rowByKey.get(k);
+                if (!row) return;                  // out-of-view (filtered)
+                if (row[plat] == null) return;     // faded — user not on platform
+                const tk = `${k}|${plat}`;
+                if (pendingToggles.has(tk)) pendingToggles.delete(tk);
+                else pendingToggles.add(tk);
+            });
             renderTable();
         });
     });
@@ -775,6 +925,7 @@ document.getElementById('bu-reset').addEventListener('click', () => {
     document.getElementById('bu-count').textContent = '—';
     document.getElementById('bu-source').textContent = '';
     lastRows = []; unlocked.clear(); pendingToggles.clear();
+    bulkMode = false; bulkSelected.clear();
 });
 document.getElementById('bu-days').addEventListener('keydown', e => { if (e.key === 'Enter') apply(); });
 
