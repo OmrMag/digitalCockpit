@@ -54,33 +54,45 @@
 .bu-phase-banner{padding:8px 12px;background:#fff8e1;border:1px solid #f5c842;border-radius:4px;font-size:var(--fs-xs);color:#8a6d00;margin-bottom:14px;display:flex;gap:8px;align-items:center}
 
 /* ── Table chrome ───────────────────────────────────────────────── */
-/* No overflow on the wrapper — the page handles horizontal scroll if
-   the table overflows. This is what makes position:sticky work on the
-   <thead> cells: sticky anchors to the nearest scrolling ancestor, and
-   if the wrapper has overflow:auto, sticky anchors there and never
-   fires (because the wrapper has no defined height). Letting the page
-   own the scroll context lets sticky anchor to the viewport. */
-.bu-table-wrap{width:100%}
+/* The wrapper IS the scroll container — fixed max-height tied to the
+   viewport. This is what makes the sticky header work reliably across
+   page layouts: sticky <thead> anchors to the wrapper's top edge, and
+   the wrapper has a defined height to scroll within. The page outside
+   the wrapper doesn't need to scroll vertically because the wrapper
+   fills the available height. Horizontal overflow is on the same
+   element since both axes share a scroll context anyway. */
+.bu-table-wrap{
+    width:100%;
+    max-height:calc(100vh - 240px);
+    overflow:auto;
+    border:1px solid var(--border-cream);
+    border-radius:4px
+}
 .bu-table{
-    width:100%;border-collapse:collapse;font-size:11px;
+    border-collapse:separate;
+    border-spacing:0;
+    font-size:11px;
     font-family:'JetBrains Mono', 'SF Mono', Consolas, monospace;
     color:var(--text-dark);
     table-layout:fixed
 }
 .bu-table thead th{
-    text-align:left;padding:8px 10px;border-bottom:1px solid var(--navy);
+    text-align:left;padding:8px 10px;
     font-size:9px;color:var(--text-dark-muted);text-transform:uppercase;
     letter-spacing:.5px;font-weight:600;white-space:nowrap;
     vertical-align:middle;
     position:sticky;top:0;z-index:5;
     background:var(--cream);
-    box-shadow:0 1px 0 var(--navy)
+    border-bottom:1px solid var(--navy)
 }
 .bu-table tbody td{
     padding:7px 10px;border-bottom:1px solid var(--border-cream);
     vertical-align:middle;
-    overflow:hidden
+    overflow:hidden;
+    text-align:center
 }
+.bu-table tbody td.user-cell,
+.bu-table thead th.user-cell-th{text-align:left}
 .bu-table tbody tr:hover td{background:var(--cream-mid)}
 .bu-table tbody td.muted{color:var(--text-dark-muted);font-style:italic}
 
@@ -109,7 +121,7 @@
    honored exactly. Tune per-column as needed. */
 .col-lock{width:36px}
 .col-user{width:220px}
-.col-plat{width:60px}             /* Reviz / Forma / Morta — toggle column */
+.col-plat{width:60px}             /* Reviz / Forma / Morta — toggle column, locked constant */
 .col-prop-company{width:120px}
 .col-prop-department{width:110px}
 .col-prop-location{width:90px}
@@ -119,7 +131,8 @@
 .col-prop-p{width:36px}
 .col-prop-last-active{width:90px}
 .col-prop-role{width:120px}        /* Forma role */
-.col-prop-docs{width:70px}
+.col-prop-access-level{width:130px}/* Forma access level (Project Admin / Member) */
+.col-prop-docs{width:60px}         /* Forma checkbox columns — narrower */
 .col-prop-design{width:70px}
 .col-prop-model{width:70px}
 .col-prop-tag{width:280px}         /* Morta tag */
@@ -466,6 +479,33 @@ const lockSvgOpen   = `<svg width="14" height="14" viewBox="0 0 24 24" fill="non
    building blocks; both produce wrap-friendly cells with a 2-line clamp.
    ───────────────────────────────────────────────────────────────── */
 
+/* Body-cell HTML helpers. Each returns a complete <td>. */
+function textCellHtml(value){
+    if (!value) return `<td class="bu-prop-cell muted"><div class="bu-prop-cell-content">—</div></td>`;
+    return `<td class="bu-prop-cell" title="${esc(value)}"><div class="bu-prop-cell-content">${esc(value)}</div></td>`;
+}
+function flagHtml(b){
+    return b
+        ? `<td class="bu-prop-cell flag">✓</td>`
+        : `<td class="bu-prop-cell flag off">·</td>`;
+}
+/* Boolean checkbox cell — empty box when granted (Forma Docs/Design/Model
+   only flag whether the user has access to that product, not what level).
+   Phase 2: read-only. Phase 3 may make it clickable to toggle product
+   access. We render a real <input type=checkbox> so it inherits browser
+   styling and reads correctly to assistive tech. */
+function checkboxCellHtml(granted){
+    return `<td class="bu-prop-cell"><input type="checkbox" class="bu-prop-cb" ${granted ? 'checked' : ''} disabled></td>`;
+}
+function lastActiveLabel(ts, days){
+    if (days == null) return '';
+    if (days === 0) return 'Today';
+    if (days === 1) return 'Yesterday';
+    if (days < 30)  return `${days} days ago`;
+    if (days < 365) return `${Math.floor(days/30)} months ago`;
+    return `${Math.floor(days/365)}y ago`;
+}
+
 const PROP_SPECS = {
     revizto: [
         { key:'company',      label:'Company',      col:'col-prop-company',
@@ -478,24 +518,32 @@ const PROP_SPECS = {
           render: row => textCellHtml(row.revizto?.license_role) },
         { key:'project_role', label:'Project Role', col:'col-prop-project-role',
           render: row => textCellHtml(row.revizto?.role) },
-        { key:'l',            label:'L',            col:'col-prop-l',           cellCls:'flag',
+        { key:'l',            label:'L',            col:'col-prop-l',
           render: row => flagHtml(row.revizto?.on_license) },
-        { key:'p',            label:'P',            col:'col-prop-p',           cellCls:'flag',
+        { key:'p',            label:'P',            col:'col-prop-p',
           render: row => flagHtml(row.revizto?.on_project) },
         { key:'last_active',  label:'Last Active',  col:'col-prop-last-active',
           render: row => textCellHtml(row.revizto ? lastActiveLabel(row.revizto.last_active, row.last_active_days) : '') },
     ],
+    /* Forma columns mirror the platform's own Members UI:
+       Company · Role · Access Level · Docs · Design · Model · Last Active.
+       The three product columns (Docs/Design/Model) are checkboxes — the
+       backend gives us "member" or "" for each, we just need truthy
+       to render a checked box. Access Level is the project-level admin
+       flag from Forma's accessLevels.projectAdmin. */
     forma: [
         { key:'company',      label:'Company',      col:'col-prop-company',
           render: row => textCellHtml(row.forma?.company) },
         { key:'role',         label:'Role',         col:'col-prop-role',
           render: row => textCellHtml(row.forma?.role) },
+        { key:'access_level', label:'Access Level', col:'col-prop-access-level',
+          render: row => textCellHtml(row.forma?.access_level) },
         { key:'docs',         label:'Docs',         col:'col-prop-docs',
-          render: row => textCellHtml(row.forma?.docs) },
+          render: row => checkboxCellHtml(!!row.forma?.docs) },
         { key:'design',       label:'Design',       col:'col-prop-design',
-          render: row => textCellHtml(row.forma?.design) },
+          render: row => checkboxCellHtml(!!row.forma?.design) },
         { key:'model',        label:'Model',        col:'col-prop-model',
-          render: row => textCellHtml(row.forma?.model) },
+          render: row => checkboxCellHtml(!!row.forma?.model) },
         { key:'last_active',  label:'Last Active',  col:'col-prop-last-active',
           render: row => textCellHtml(row.forma ? lastActiveLabel(row.forma.last_active, row.last_active_days) : '') },
     ],
@@ -506,25 +554,6 @@ const PROP_SPECS = {
           render: row => textCellHtml(row.morta ? lastActiveLabel(row.morta.last_active, row.last_active_days) : '') },
     ],
 };
-
-/* Body-cell HTML helpers. Each returns a complete <td>. */
-function textCellHtml(value){
-    if (!value) return `<td class="bu-prop-cell muted"><div class="bu-prop-cell-content">—</div></td>`;
-    return `<td class="bu-prop-cell" title="${esc(value)}"><div class="bu-prop-cell-content">${esc(value)}</div></td>`;
-}
-function flagHtml(b){
-    return b
-        ? `<td class="bu-prop-cell flag">✓</td>`
-        : `<td class="bu-prop-cell flag off">·</td>`;
-}
-function lastActiveLabel(ts, days){
-    if (days == null) return '';
-    if (days === 0) return 'Today';
-    if (days === 1) return 'Yesterday';
-    if (days < 30)  return `${days} days ago`;
-    if (days < 365) return `${Math.floor(days/30)} months ago`;
-    return `${Math.floor(days/365)}y ago`;
-}
 
 /* ─────────────────────────────────────────────────────────────────
    Toggle state logic
@@ -586,19 +615,50 @@ function renderToggle(row, plat, isUnlocked){
    honored exactly, and content wraps inside cells at fixed widths.
    ───────────────────────────────────────────────────────────────── */
 
-function colgroupHtml(){
-    const cols = ['<col class="col-lock">', '<col class="col-user">'];
+/* Column width registry — drives both the .col-* CSS class and the
+   computed table-width sum so columns lock to their declared widths
+   instead of the browser proportionally distributing them. Keep in
+   sync with the CSS at the top of the file. */
+const COL_WIDTHS = {
+    'col-lock': 36,
+    'col-user': 220,
+    'col-plat': 60,
+    'col-prop-company': 120,
+    'col-prop-department': 110,
+    'col-prop-location': 90,
+    'col-prop-license-role': 110,
+    'col-prop-project-role': 140,
+    'col-prop-l': 36,
+    'col-prop-p': 36,
+    'col-prop-last-active': 90,
+    'col-prop-role': 120,
+    'col-prop-access-level': 130,
+    'col-prop-docs': 60,
+    'col-prop-design': 70,
+    'col-prop-model': 70,
+    'col-prop-tag': 280,
+};
+
+function buildColspec(){
+    /* Returns { html, total } — html is the <colgroup> string,
+       total is the summed pixel width. */
+    const cols = [
+        { cls:'col-lock' },
+        { cls:'col-user' },
+    ];
     PLATFORMS.forEach(p => {
-        cols.push('<col class="col-plat">');
+        cols.push({ cls:'col-plat' });
         if (expandedPlatform === p){
-            PROP_SPECS[p].forEach(s => cols.push(`<col class="${s.col}">`));
+            PROP_SPECS[p].forEach(s => cols.push({ cls:s.col }));
         }
     });
-    return `<colgroup>${cols.join('')}</colgroup>`;
+    const total = cols.reduce((sum, c) => sum + (COL_WIDTHS[c.cls] || 0), 0);
+    const html  = `<colgroup>${cols.map(c => `<col class="${c.cls}">`).join('')}</colgroup>`;
+    return { html, total };
 }
 
 function headerRowHtml(){
-    const cells = [`<th></th>`, `<th>User</th>`];
+    const cells = [`<th></th>`, `<th class="user-cell-th">User</th>`];
     PLATFORMS.forEach(p => {
         const isExp = (expandedPlatform === p);
         const cls   = ['bu-plat-th'];
@@ -672,8 +732,9 @@ function renderTable(){
         });
         return `<tr>${cells.join('')}</tr>`;
     }).join('');
-    out.innerHTML = `<div class="bu-table-wrap"><table class="bu-table">
-        ${colgroupHtml()}
+    const { html: colHtml, total: tableWidth } = buildColspec();
+    out.innerHTML = `<div class="bu-table-wrap"><table class="bu-table" style="width:${tableWidth}px;min-width:${tableWidth}px">
+        ${colHtml}
         <thead>${headerRowHtml()}</thead>
         <tbody>${rowsHtml}</tbody>
     </table></div>`;
