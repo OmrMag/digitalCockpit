@@ -1843,33 +1843,19 @@ function renderMorta(m){
 function renderRevizto(r){
     const c=document.getElementById('reviztoContent'),t=document.getElementById('reviztoTitle');
     if(!r){t.textContent='';c.innerHTML='<div class="not-found">Not found in Revizto</div>';return;}
-    t.textContent=r.license_role;
-    const phtml=r.projects&&r.projects.length
+    t.textContent=`${r.projects?r.projects.length:0} project${r.projects&&r.projects.length===1?'':'s'}`;
+    c.innerHTML=r.projects&&r.projects.length
         ?'<div class="project-list">'+r.projects.map(p=>`<div class="project-row"><span class="proj-name">${esc(p.name||p.uuid)}</span><span class="proj-meta">${esc(p.role)}</span></div>`).join('')+'</div>'
         :'<div class="not-found">No project assignments found in your registry projects</div>';
-    c.innerHTML=`<div class="detail-grid">
-        <div class="detail-item"><label>License Role</label><div class="value hacker-animate">${esc(r.license_role)}</div></div>
-        <div class="detail-item"><label>Status</label><div class="value hacker-animate">${esc(r.status)}</div></div>
-        <div class="detail-item"><label>Company</label><div class="value hacker-animate">${esc(r.company||'—')}</div></div>
-        <div class="detail-item"><label>Region</label><div class="value hacker-animate">${esc(r.region||'—')}</div></div>
-        <div class="detail-item"><label>Last Active</label><div class="value hacker-animate">${r.last_active?r.last_active.split(' ')[0]:'—'}</div></div>
-    </div><div style="margin-top:10px"><label style="font-size:var(--fs-xs);color:var(--text-dark-muted);text-transform:uppercase;letter-spacing:.3px;font-weight:600">Projects (${r.projects?r.projects.length:0})</label>${phtml}</div>`;
 }
 
 function renderForma(f){
     const c=document.getElementById('formaContent'),t=document.getElementById('formaTitle');
     if(!f){t.textContent='';c.innerHTML='<div class="not-found">Not found in Forma/ACC</div>';return;}
-    t.textContent=f.hub_role;
-    const phtml=f.projects&&f.projects.length
+    t.textContent=`${f.projects?f.projects.length:0} project${f.projects&&f.projects.length===1?'':'s'}`;
+    c.innerHTML=f.projects&&f.projects.length
         ?'<div class="project-list">'+f.projects.map(p=>`<div class="project-row"><span class="proj-name">${esc(p.name||p.project_id)}</span><span class="proj-meta">${esc(p.access_levels)}</span><span class="proj-meta">${esc(p.status)}</span></div>`).join('')+'</div>'
         :'<div class="not-found">No project assignments found in your registry projects</div>';
-    c.innerHTML=`<div class="detail-grid">
-        <div class="detail-item"><label>Hub Role</label><div class="value hacker-animate">${esc(f.hub_role)}</div></div>
-        <div class="detail-item"><label>Status</label><div class="value hacker-animate">${esc(f.hub_status)}</div></div>
-        <div class="detail-item"><label>Company</label><div class="value hacker-animate">${esc(f.company||'—')}</div></div>
-        <div class="detail-item"><label>Job Title</label><div class="value hacker-animate">${esc(f.job_title||'—')}</div></div>
-        <div class="detail-item"><label>Last Sign In</label><div class="value hacker-animate">${f.last_sign_in?f.last_sign_in.split('T')[0]:'—'}</div></div>
-    </div><div style="margin-top:10px"><label style="font-size:var(--fs-xs);color:var(--text-dark-muted);text-transform:uppercase;letter-spacing:.3px;font-weight:600">Projects (${f.projects?f.projects.length:0})</label>${phtml}</div>`;
 }
 
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
