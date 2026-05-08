@@ -3781,10 +3781,9 @@ async def api_browse_projects(user: str = Depends(require_user)):
     except Exception as e:
         print(f"[browse/projects] revizto failed: {e}")
 
-    # Forma — pull from the cached registry. The registry holds the
-    # admin's known-good Forma project set; an unrestricted "all visible"
-    # sweep would require an extra ACC call we can defer to phase 3 if
-    # someone asks for it. For phase 1+2, registry-scoped is enough.
+    # Forma — registry-scoped only. The user explicitly chose to apply
+    # the registry constraint to Forma alone; Revizto and Morta sweep
+    # whatever the admin's account can see.
     try:
         registry       = load_registry()
         admin_projects = registry if is_owner(user) else {
@@ -3799,16 +3798,33 @@ async def api_browse_projects(user: str = Depends(require_user)):
                     "id":       pid,
                     "name":     rp.get("name", k),
                 })
-            morta = (rp.get("platforms", {}) or {}).get("morta", {}) or {}
-            mhub  = morta.get("hub_id", "") or morta.get("project_id", "")
-            if mhub:
-                out.append({
-                    "platform": "morta",
-                    "id":       mhub,
-                    "name":     rp.get("name", k),
-                })
     except Exception as e:
         print(f"[browse/projects] registry walk failed: {e}")
+
+    # Morta — full sweep of every hub favourited on the admin's account.
+    # Mirrors the Revizto behaviour: registry constraint applies to Forma
+    # only. Registered hubs reuse the registry's display name; the rest
+    # surface their Morta hub name as-is.
+    try:
+        morta_hubs = fetch_morta_hubs(config) or []
+        # Build hub_id -> registry name map for nicer labels on registered hubs.
+        morta_id_to_regname: dict = {}
+        for k, rp in admin_projects.items():
+            morta_p = (rp.get("platforms", {}) or {}).get("morta", {}) or {}
+            mh = morta_p.get("hub_id", "") or morta_p.get("project_id", "")
+            if mh:
+                morta_id_to_regname[mh] = rp.get("name", k)
+        for h in morta_hubs:
+            hid = h.get("id", "")
+            if not hid:
+                continue
+            out.append({
+                "platform": "morta",
+                "id":       hid,
+                "name":     morta_id_to_regname.get(hid, h.get("name", hid)),
+            })
+    except Exception as e:
+        print(f"[browse/projects] morta failed: {e}")
 
     # Sort: platform first (revizto, forma, morta), name alpha second.
     plat_order = {"revizto": 0, "forma": 1, "morta": 2}
@@ -3820,35 +3836,64 @@ async def api_browse_users(
     request: Request,
     user: str = Depends(require_user),
 ):
-    """Aggregate users across the selected platforms + projects.
+    """Emit a flat list of (user × project) rows for the Browse Users grid.
+
+    The Browse Users page uses a row-per-(user, project) model so that a
+    single user appearing in N projects shows up as N rows. This is
+    fundamentally different from the search page (one record per user with
+    nested platforms) — the row model lets the table act as an editable
+    grid where each row is a single per-project membership.
+
+    Project scope rules (intentionally hybrid):
+      • Forma:   registry-only — admin's known-good Forma projects
+      • Revizto: license-based sweep — every project visible to the admin's
+                 Revizto license, including projects not in the registry
+                 (e.g. Stargate). Out-of-registry Revizto projects produce
+                 Revizto-only rows; their Forma/Morta sub-objects are blank.
+      • Morta:   full hub sweep — every Morta hub favourited on the admin's
+                 account. Same pattern as Revizto: registered hubs collapse
+                 onto registry rows; license-only hubs use synthetic
+                 "morta:<hub_id>" keys.
+
+      Rationale: the user's stated rule is "registry constraint applies to
+      Forma only." Revizto and Morta both use the admin's full visible set.
+
+    Row dedup:
+      Within a row, a (email, project_key) pair is unique. project_key is
+      the registry slug if the project is registered, else "revizto:<uuid>"
+      for license-only Revizto projects. Same user on the same project
+      across multiple platforms collapses into one row with merged data.
 
     Query params (multi-valued):
-      platform: revizto | forma | morta   (default: all three)
-      project:  "<platform>:<id>"          (default: all visible projects)
-      min_days_inactive: integer N (optional). Drops users whose newest
-        last-active timestamp across all platforms is less than N days old.
-        N=60 keeps only users last active 60+ days ago. Empty/0 disables.
+      platform: revizto | forma | morta   (default: all three; controls
+                                            which platform's data populates,
+                                            not row identity)
+      project:  "<platform>:<id>"         (default: all visible projects)
+      min_days_inactive: integer N (optional). Drops rows whose newest
+        last-active timestamp across selected platforms is < N days old.
+        N=60 keeps only rows last active 60+ days ago. Empty/0 disables.
 
     Returns:
-      { users: [{
-          email, name, company,
-          last_active_ts, last_active_days,   // newest across platforms
-          revizto: { role, last_active, projects: [{ id, name, role }] } | null,
-          forma:   { role, last_active, projects: [...] } | null,
-          morta:   { role, projects: [...] } | null,
-          project_count: int
-        }] }
+      {
+        rows: [{
+          email, name,
+          project_key, project_name,
+          last_active_ts, last_active_days,
+          revizto: { role, license_role, company, department, location,
+                     last_active, on_license, on_project } | null,
+          forma:   { role, company, docs, design, model,
+                     last_active, on_project } | null,
+          morta:   { role, tag, last_active, on_hub } | null,
+        }]
+      }
 
-    Phase 1+2 contract: read-only, deduplicated by lower(email). If a user
-    is on two platforms, both objects populate; if only one, the others
-    are null. Designed so phase 3 can attach edit affordances per platform
-    without restructuring the payload.
+    Phase 1+2 contract: read-only. The on_license / on_project / on_hub
+    booleans drive the L/P checkboxes (which are disabled in the UI).
+    Phase 3 will wire those toggles to actual write-back endpoints.
     """
     qp = request.query_params
     platforms = set(qp.getlist("platform")) or {"revizto", "forma", "morta"}
-    project_filters = qp.getlist("project")    # ["platform:id", ...]
-    # Inactivity threshold in days. The UI sends an integer; we treat any
-    # non-positive value (or unparseable input) as "no filter".
+    project_filters = qp.getlist("project")
     try:
         min_days_inactive = int(qp.get("min_days_inactive", "0") or "0")
     except (TypeError, ValueError):
@@ -3856,7 +3901,6 @@ async def api_browse_users(
     if min_days_inactive < 0:
         min_days_inactive = 0
 
-    # Index project filters by platform for cheap membership checks below.
     pf_by_platform: dict = {"revizto": set(), "forma": set(), "morta": set()}
     for raw in project_filters:
         if ":" not in raw:
@@ -3866,45 +3910,66 @@ async def api_browse_users(
             pf_by_platform[plat].add(pid)
 
     config = load_config(user)
-    # Aggregator keyed by lowercase email. Each entry merges fields from
-    # every platform we found this user on. The merge is shallow — we
-    # take the first non-empty value for top-level fields like company.
-    users_by_email: dict = {}
 
-    def upsert(email: str, **fields):
-        if not email:
+    # ── Build the registry's project lookup tables ──────────────────
+    # Used to:
+    #   1. Map a Revizto/Forma/Morta platform-id back to a registry key
+    #      (so cross-platform rows for "Sphere Abu Dhabi" collapse).
+    #   2. Decide whether a Revizto project is in-registry (registered
+    #      slug) or license-only (key = "revizto:<uuid>").
+    registry       = load_registry()
+    admin_projects = registry if is_owner(user) else {
+        k: v for k, v in registry.items() if user in v.get("admins", [])
+    }
+    rev_uuid_to_key:  dict = {}
+    forma_id_to_key:  dict = {}
+    morta_hub_to_key: dict = {}
+    for k, rp in admin_projects.items():
+        plats = rp.get("platforms", {}) or {}
+        rev   = plats.get("revizto", {}) or {}
+        forma = plats.get("forma", {})   or {}
+        morta = plats.get("morta", {})   or {}
+        if rev.get("project_uuid"):
+            rev_uuid_to_key[rev["project_uuid"]] = k
+        if forma.get("project_id"):
+            forma_id_to_key[forma["project_id"]] = k
+        mhub = morta.get("hub_id") or morta.get("project_id")
+        if mhub:
+            morta_hub_to_key[mhub] = k
+
+    # ── Row aggregator keyed by (lower-email, project_key) ─────────
+    # Each row is a single (user, project) tuple. Sub-platform objects
+    # populate as we walk Revizto / Forma / Morta. Identity fields (name)
+    # take first-non-empty winner across all sources for that row.
+    rows_by_key: dict = {}
+
+    def upsert_row(email: str, project_key: str, project_name: str, **fields):
+        if not email or not project_key:
             return None
-        key = email.lower()
-        rec = users_by_email.get(key)
+        key = (email.lower(), project_key)
+        rec = rows_by_key.get(key)
         if rec is None:
             rec = {
                 "email":            email,
                 "name":             "",
-                "company":          "",
+                "project_key":      project_key,
+                "project_name":     project_name,
                 "revizto":          None,
                 "forma":            None,
                 "morta":            None,
-                "last_active_ts":   "",   # newest ISO timestamp across platforms
-                "last_active_days": None, # days since newest ts (None = unknown)
-                "project_count":    0,
+                "last_active_ts":   "",
+                "last_active_days": None,
             }
-            users_by_email[key] = rec
-        for k, v in fields.items():
-            # Only fill blanks for shared identity fields; platform sub-
-            # objects are written once each.
-            if k in ("name", "company") and v and not rec.get(k):
-                rec[k] = v
-            elif k in ("revizto", "forma", "morta"):
-                rec[k] = v
+            rows_by_key[key] = rec
+        for fk, fv in fields.items():
+            if fk == "name" and fv and not rec["name"]:
+                rec["name"] = fv
         return rec
 
-    # ── Revizto ────────────────────────────────────────────────────
-    # Walk licenses → projects → /team. Same pattern revizto_search_user
-    # uses, but unbounded: every user, not one email lookup.
+    # ── Revizto sweep ──────────────────────────────────────────────
     if "revizto" in platforms:
         try:
             rev_projects = fetch_revizto_projects(config, email=user) or []
-            # Cache one token per region.
             rev_tokens: dict = {}
             for proj in rev_projects:
                 pid = proj.get("uuid", "")
@@ -3912,6 +3977,17 @@ async def api_browse_users(
                     continue
                 if pf_by_platform["revizto"] and pid not in pf_by_platform["revizto"]:
                     continue
+                # Resolve to registry key if known; else use a license-only
+                # synthetic key so out-of-registry Revizto projects still
+                # produce rows (per the brief: registry constraint applies
+                # to Forma/Morta only, not Revizto).
+                project_key  = rev_uuid_to_key.get(pid, f"revizto:{pid}")
+                project_name = (
+                    admin_projects.get(rev_uuid_to_key[pid], {}).get("name")
+                    if pid in rev_uuid_to_key
+                    else proj.get("title", pid)
+                )
+
                 region = proj.get("region", "dubai")
                 token  = rev_tokens.get(region)
                 if token is None:
@@ -3923,7 +3999,7 @@ async def api_browse_users(
                     tr = http_requests.get(
                         f"https://api.{region}.revizto.com/v5/project/{pid}/team",
                         headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
-                        timeout=15
+                        timeout=15,
                     )
                 except Exception as e:
                     print(f"[browse/users] revizto /team {pid[:8]} raised: {e}")
@@ -3943,75 +4019,37 @@ async def api_browse_users(
                     em = (ent.get("email") or "").strip()
                     if not em:
                         continue
-                    role = ((ent.get("accessRole") or {}).get("name", "")
-                            if isinstance(ent.get("accessRole"), dict) else "")
+                    role_obj = ent.get("accessRole") if isinstance(ent.get("accessRole"), dict) else {}
+                    role = role_obj.get("name", "") if role_obj else ""
                     full_name = ent.get("fullname") or (
                         f"{ent.get('firstname','')} {ent.get('lastname','')}".strip()
                     )
                     last_active = ent.get("lastActive", "") or ""
-                    # Per-team-entity values for the invite-table fields. Revizto
-                    # exposes company / department / location at the team-entity
-                    # top level (same fields the user-search detail uses).
-                    rev_company    = ent.get("company", "") or ""
-                    rev_department = ent.get("department", "") or ""
-                    rev_location   = ent.get("location", "") or ""
-                    # License role: phase 2 doesn't have a reliable source for
-                    # this (see prior debugging). Leave blank for now; phase 3
-                    # will resolve via /v5/license/{uuid}/team once that lookup
-                    # lands.
-                    rev_license_role = ""
-                    rec = upsert(em, name=full_name, company=rev_company)
+                    rec = upsert_row(em, project_key, project_name, name=full_name)
                     if not rec:
                         continue
-                    if rec["revizto"] is None:
-                        rec["revizto"] = {
-                            "role":         role,
-                            "license_role": rev_license_role,
-                            "company":      rev_company,
-                            "department":   rev_department,
-                            "location":     rev_location,
-                            "last_active":  last_active,
-                            "projects":     [],
-                        }
-                    else:
-                        # Keep the newest timestamp seen across this user's
-                        # Revizto projects (string compare works for ISO-ish
-                        # timestamps; falls back gracefully if formats differ).
-                        if last_active and last_active > (rec["revizto"].get("last_active") or ""):
-                            rec["revizto"]["last_active"] = last_active
-                        # Fill blanks at user level if this entity has values
-                        # the previous one didn't. We don't overwrite, since
-                        # different projects can show different values for
-                        # the same user; first non-empty wins.
-                        for k, v in (("company", rev_company), ("department", rev_department),
-                                     ("location", rev_location)):
-                            if v and not rec["revizto"].get(k):
-                                rec["revizto"][k] = v
-                    rec["revizto"]["projects"].append({
-                        "id":          pid,
-                        "name":        proj.get("title", pid),
-                        "role":        role,
-                        "company":     rev_company,
-                        "department":  rev_department,
-                        "location":    rev_location,
-                        "last_active": last_active,
-                    })
-                    rec["project_count"] = (rec["project_count"] or 0) + 1
+                    rec["revizto"] = {
+                        "role":         role,
+                        # License role: phase 2 leaves this blank pending
+                        # the /v5/license/{uuid}/team lookup. Frontend
+                        # renders a "—" gracefully.
+                        "license_role": "",
+                        "company":      ent.get("company", "") or "",
+                        "department":   ent.get("department", "") or "",
+                        "location":     ent.get("location", "") or "",
+                        "last_active":  last_active,
+                        "on_license":   True,
+                        "on_project":   True,
+                    }
         except Exception as e:
             print(f"[browse/users] revizto sweep failed: {e}")
 
-    # ── Forma ──────────────────────────────────────────────────────
-    # Walk registry-known Forma projects, hit /projects/{id}/users for each.
+    # ── Forma sweep — registry only ────────────────────────────────
     if "forma" in platforms:
         try:
-            registry       = load_registry()
-            admin_projects = registry if is_owner(user) else {
-                k: v for k, v in registry.items() if user in v.get("admins", [])
-            }
             forma_token = forma_get_token(config)
             forma_headers = {"Authorization": f"Bearer {forma_token}",
                              "Accept": "application/json"} if forma_token else None
-
             for k, rp in admin_projects.items():
                 forma = (rp.get("platforms", {}) or {}).get("forma", {}) or {}
                 fpid = forma.get("project_id", "")
@@ -4019,16 +4057,16 @@ async def api_browse_users(
                     continue
                 if pf_by_platform["forma"] and fpid not in pf_by_platform["forma"]:
                     continue
-                # Roles map for this project so we can resolve role IDs to names
-                roles = {r["id"]: r["name"] for r in (forma.get("roles") or []) if r.get("id")}
-                companies = {c["id"]: c["name"] for c in (forma.get("companies") or []) if c.get("id")}
+                roles_cat     = {r["id"]: r["name"] for r in (forma.get("roles") or [])     if r.get("id")}
+                companies_cat = {c["id"]: c["name"] for c in (forma.get("companies") or []) if c.get("id")}
+                project_name  = rp.get("name", k)
 
                 offset = 0
                 while True:
                     try:
                         rr = http_requests.get(
                             f"https://developer.api.autodesk.com/construction/admin/v1/projects/{fpid}/users",
-                            headers=forma_headers, params={"limit": 200, "offset": offset}, timeout=15
+                            headers=forma_headers, params={"limit": 200, "offset": offset}, timeout=15,
                         )
                     except Exception as e:
                         print(f"[browse/users] forma users {fpid[:8]} raised: {e}")
@@ -4042,105 +4080,117 @@ async def api_browse_users(
                         em = (u_.get("email") or "").strip()
                         if not em:
                             continue
-                        # Resolve role names: prefer inline {id,name} pairs,
-                        # else look up role IDs in the registry catalog.
                         rnames = []
                         for ro in (u_.get("roles") or []):
                             if isinstance(ro, dict) and ro.get("name"):
                                 rnames.append(ro["name"])
                             elif isinstance(ro, dict) and ro.get("id"):
-                                rnames.append(roles.get(ro["id"], ro["id"]))
+                                rnames.append(roles_cat.get(ro["id"], ro["id"]))
                             elif isinstance(ro, str):
-                                rnames.append(roles.get(ro, ro))
+                                rnames.append(roles_cat.get(ro, ro))
                         role_str = ", ".join(rnames)
                         company_id = u_.get("companyId", "")
-                        company_name = companies.get(company_id, company_id) if company_id else ""
+                        company_name = companies_cat.get(company_id, company_id) if company_id else ""
                         full_name = (
                             (u_.get("name") or "").strip() or
                             f"{u_.get('firstName','')} {u_.get('lastName','')}".strip()
                         )
-                        # Forma product access flags. The /projects/{id}/users
-                        # endpoint returns an `accessLevels` object with keys
-                        # like docs / designCollaboration / modelCoordination
-                        # mapped to a level string ("administrator", "user")
-                        # or None. We surface the per-product level if it's
-                        # truthy, blank otherwise. Some tenants nest these
-                        # under `products` instead — handle both shapes.
                         access_levels = u_.get("accessLevels") or {}
                         if not isinstance(access_levels, dict):
                             access_levels = {}
-                        # Older API shape: products = [{key, access}]
                         for p in (u_.get("products") or []):
                             if isinstance(p, dict) and p.get("key"):
                                 access_levels.setdefault(p["key"], p.get("access") or "user")
-                        forma_docs   = access_levels.get("docs") or ""
-                        forma_design = access_levels.get("designCollaboration") or ""
-                        forma_model  = access_levels.get("modelCoordination") or ""
-                        rec = upsert(em, name=full_name, company=company_name)
+                        last_active = u_.get("last_sign_in") or u_.get("lastSignIn") or ""
+
+                        rec = upsert_row(em, k, project_name, name=full_name)
                         if not rec:
                             continue
-                        # Forma exposes last sign-in via `last_sign_in` (ISO).
-                        # Older accounts can also surface `lastSignIn`; check
-                        # both, take whichever is non-empty.
-                        last_active = u_.get("last_sign_in") or u_.get("lastSignIn") or ""
-                        if rec["forma"] is None:
-                            rec["forma"] = {
-                                "role":        role_str,
-                                "company":     company_name,
-                                "docs":        forma_docs,
-                                "design":      forma_design,
-                                "model":       forma_model,
-                                "last_active": last_active,
-                                "projects":    [],
-                            }
-                        else:
-                            if last_active and last_active > (rec["forma"].get("last_active") or ""):
-                                rec["forma"]["last_active"] = last_active
-                            # First non-empty wins for top-level access flags
-                            for k, v in (("company", company_name),
-                                         ("docs",   forma_docs),
-                                         ("design", forma_design),
-                                         ("model",  forma_model)):
-                                if v and not rec["forma"].get(k):
-                                    rec["forma"][k] = v
-                        rec["forma"]["projects"].append({
-                            "id":          fpid,
-                            "name":        rp.get("name", k),
+                        rec["forma"] = {
                             "role":        role_str,
                             "company":     company_name,
-                            "docs":        forma_docs,
-                            "design":      forma_design,
-                            "model":       forma_model,
-                            "status":      u_.get("status", ""),
+                            "docs":        access_levels.get("docs") or "",
+                            "design":      access_levels.get("designCollaboration") or "",
+                            "model":       access_levels.get("modelCoordination") or "",
                             "last_active": last_active,
-                        })
-                        rec["project_count"] = (rec["project_count"] or 0) + 1
+                            "on_project":  True,
+                        }
                     offset += len(batch)
                     if len(batch) < 200:
                         break
         except Exception as e:
             print(f"[browse/users] forma sweep failed: {e}")
 
-    # ── Morta ──────────────────────────────────────────────────────
-    # Phase 1 stub: registry-known hubs only. The existing fetch_morta_hubs
-    # gives hub-level info but not member rosters; pulling member rosters
-    # requires a separate Morta API call we can defer until phase 3 or a
-    # proper "Morta in browse" follow-up. For now, if morta is selected,
-    # we don't error — we just don't add Morta entries to the result.
-    # This keeps the UI honest about what's actually fetched.
+    # ── Morta sweep — full hub list (favourites on the admin's account) ──
+    # Registered hubs collapse onto registry rows (project_key = registry slug);
+    # license-only hubs use a synthetic key "morta:<hub_id>" so they still
+    # appear with whatever data we have, with empty Forma/Revizto cells.
+    # The Morta members API doesn't expose last-active, so morta.last_active
+    # stays blank — the row's overall last_active_days will fall through to
+    # whatever Revizto/Forma reports for that same person on that project.
     if "morta" in platforms:
-        # No-op for now. See above comment. The platform option is still
-        # offered so phase 3 wires up cleanly without a UI change.
-        pass
+        try:
+            morta_hubs = fetch_morta_hubs(config) or []
+            api_key = (config.get("morta", {}) or {}).get("api_key", "")
+            morta_headers = {"Authorization": f"Bearer {api_key}"} if api_key else None
+            for h in morta_hubs:
+                hub_id   = h.get("id", "")
+                hub_name = h.get("name", hub_id)
+                if not hub_id or not morta_headers:
+                    continue
+                if pf_by_platform["morta"] and hub_id not in pf_by_platform["morta"]:
+                    continue
+                # Resolve to registry key if known; else use a synthetic key.
+                project_key  = morta_hub_to_key.get(hub_id, f"morta:{hub_id}")
+                project_name = (
+                    admin_projects.get(morta_hub_to_key[hub_id], {}).get("name")
+                    if hub_id in morta_hub_to_key
+                    else hub_name
+                )
+                try:
+                    mr = http_requests.get(
+                        f"https://api.morta.io/v1/hub/{hub_id}/members",
+                        headers=morta_headers, timeout=15,
+                    )
+                except Exception as e:
+                    print(f"[browse/users] morta /members {hub_id[:8]} raised: {e}")
+                    continue
+                if mr.status_code != 200:
+                    continue
+                try:
+                    body = mr.json()
+                except Exception:
+                    continue
+                for m in body.get("data", []) or []:
+                    if not isinstance(m, dict):
+                        continue
+                    u_ = m.get("user", {}) or {}
+                    em = (u_.get("email") or "").strip()
+                    if not em:
+                        continue
+                    full_name = (u_.get("name") or "").strip()
+                    role      = m.get("projectRole", "") or ""
+                    # Morta tags: list of {value, publicId}. Surface as a
+                    # single comma-joined string for the Tag column.
+                    tags = []
+                    for t in (u_.get("tags") or []):
+                        if isinstance(t, dict) and t.get("value"):
+                            tags.append(t["value"])
+                    tag_str = ", ".join(tags)
 
-    # ── Post-aggregation: newest last-active timestamp + inactivity filter ──
-    # Each user may have last-active info from multiple platforms (Revizto's
-    # lastActive, Forma's last_sign_in). We pick the NEWEST across all of
-    # them — that's "most recently active anywhere". Then for the inactivity
-    # filter (e.g. "show me users last active 60+ days ago"), we drop any
-    # user whose newest timestamp is younger than the threshold. Users with
-    # no usable timestamp anywhere keep last_active_days=None and are
-    # excluded from the filter (since "unknown" can't satisfy "≥60 days").
+                    rec = upsert_row(em, project_key, project_name, name=full_name)
+                    if not rec:
+                        continue
+                    rec["morta"] = {
+                        "role":        role,
+                        "tag":         tag_str,
+                        "last_active": "",   # not exposed by Morta API
+                        "on_hub":      True,
+                    }
+        except Exception as e:
+            print(f"[browse/users] morta sweep failed: {e}")
+
+    # ── Newest last-active per row ─────────────────────────────────
     now_utc = datetime.now(timezone.utc)
     def _parse_ts(s: str):
         if not s or not isinstance(s, str):
@@ -4148,10 +4198,7 @@ async def api_browse_users(
         s = s.strip()
         if not s:
             return None
-        # Revizto returns "2026-05-01 04:49:45" (no TZ); Forma returns
-        # "2026-05-04T08:32:11.000Z" (full ISO). Accept both.
         try:
-            # ISO with possible trailing Z
             iso = s.replace("Z", "+00:00")
             dt = datetime.fromisoformat(iso)
             if dt.tzinfo is None:
@@ -4160,14 +4207,13 @@ async def api_browse_users(
         except (ValueError, TypeError):
             pass
         try:
-            # Revizto's space-separated "YYYY-MM-DD HH:MM:SS"
             dt = datetime.strptime(s, "%Y-%m-%d %H:%M:%S")
             return dt.replace(tzinfo=timezone.utc)
         except (ValueError, TypeError):
             return None
 
-    users = list(users_by_email.values())
-    for rec in users:
+    rows = list(rows_by_key.values())
+    for rec in rows:
         candidates = []
         for plat_key in ("revizto", "forma", "morta"):
             sub = rec.get(plat_key) or {}
@@ -4176,23 +4222,20 @@ async def api_browse_users(
             if dt is not None:
                 candidates.append((dt, ts))
         if candidates:
-            # Newest wins (max by datetime)
             best_dt, best_str = max(candidates, key=lambda x: x[0])
-            rec["last_active_ts"] = best_str
+            rec["last_active_ts"]   = best_str
             rec["last_active_days"] = max(0, (now_utc - best_dt).days)
 
-    # Inactivity filter: keep users whose newest activity is ≥ N days old.
-    # The brief: "if user fills 60, give me users last active more than 59
-    # days ago" — so the predicate is `last_active_days >= 60` (exclusive
-    # 59). Users with unknown timestamps are dropped when the filter is on.
+    # Inactivity filter
     if min_days_inactive > 0:
-        users = [u for u in users
-                 if isinstance(u.get("last_active_days"), int)
-                 and u["last_active_days"] >= min_days_inactive]
+        rows = [r for r in rows
+                if isinstance(r.get("last_active_days"), int)
+                and r["last_active_days"] >= min_days_inactive]
 
-    # Sort by email — predictable, easy to scan.
-    users.sort(key=lambda u: u["email"].lower())
-    return {"users": users}
+    # Sort: email, then project name, so the same user's projects cluster.
+    rows.sort(key=lambda r: (r["email"].lower(), (r["project_name"] or "").lower()))
+    return {"rows": rows}
+
 
 @app.get("/scheduler", response_class=HTMLResponse)
 async def scheduler_page(request: Request, user: str = Depends(require_user)):
