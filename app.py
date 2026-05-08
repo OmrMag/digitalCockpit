@@ -2001,22 +2001,38 @@ def revizto_search_user(email, config, allowed_project_uuids: list = None, admin
     if not user_info:
         return None
 
-    # Check project membership — only within registry-allowed projects
+    # Check project membership — only within registry-allowed projects.
+    # Endpoint: GET /v5/project/{uuid}/team. Same endpoint used by the
+    # members-count refresh and project-roles sync, so the response shape
+    # is well-known: {result: 0, data: {entities: [...]}} where each entity
+    # has a top-level email and an accessRole {id, uuid, name, system}.
+    # The older /role/member/list endpoint started returning 404 across
+    # the dubai region — see /api/_diag/revizto/{key} for evidence.
     def check_project(project_uuid):
         pr = http_requests.get(
-            f"{base_url}/project/{project_uuid}/role/member/list",
+            f"{base_url}/project/{project_uuid}/team",
             headers=headers, timeout=10
         )
-        if pr.status_code == 200:
-            pm_data = pr.json().get("data", {})
-            if isinstance(pm_data, dict):
-                for pid, pm in pm_data.items():
-                    if pm.get("user", {}).get("email", "").lower() == email.lower():
-                        role = pm.get("role", {})
-                        return {
-                            "uuid": project_uuid,
-                            "role": role.get("name", "") if isinstance(role, dict) else str(role),
-                        }
+        if pr.status_code != 200:
+            return None
+        body = pr.json()
+        if body.get("result", 0) != 0:
+            return None
+        data = body.get("data") or {}
+        entities = data.get("entities") or []
+        if not isinstance(entities, list):
+            return None
+        for ent in entities:
+            if not isinstance(ent, dict):
+                continue
+            if (ent.get("email") or "").lower() != email.lower():
+                continue
+            role = ent.get("accessRole") or {}
+            role_name = role.get("name", "") if isinstance(role, dict) else str(role)
+            return {
+                "uuid": project_uuid,
+                "role": role_name,
+            }
         return None
 
     with ThreadPoolExecutor(max_workers=8) as pool:
