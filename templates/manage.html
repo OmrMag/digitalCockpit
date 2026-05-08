@@ -189,10 +189,10 @@
     .detail-item label{font-size:var(--fs-xs);color:var(--text-dark-muted);text-transform:uppercase;letter-spacing:.3px}
     .detail-item .value{font-size:var(--fs-sm);color:var(--text-dark);font-weight:500;margin-top:1px}
     .project-list{margin-top:8px}
-    .project-row{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:baseline;padding:8px 10px;border-radius:4px;font-size:var(--fs-xs)}
-    .project-row:nth-child(even){background:var(--cream-mid)}
-    .proj-name{font-weight:500;color:var(--navy);flex:0 0 auto;min-width:160px}
-    .proj-meta{color:var(--text-dark-muted)}
+    .project-row{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:baseline;padding:10px}
+    .project-row + .project-row{border-top:1px solid var(--border-cream)}
+    .proj-name{font-weight:500;color:var(--navy);flex:0 0 auto;min-width:160px;font-size:var(--fs-xs)}
+    .proj-meta{color:var(--text-dark-muted);font-size:var(--fs-xs)}
     .proj-field{display:inline-flex;flex-direction:column;gap:1px;line-height:1.2}
     .proj-field-label{font-size:9px;color:var(--text-dark-muted);text-transform:uppercase;letter-spacing:.4px;font-weight:600}
     .proj-field-value{font-size:var(--fs-xs);color:var(--text-dark)}
@@ -1857,8 +1857,8 @@ function renderRevizto(r){
             ${fld('Company',p.company)}
             ${fld('Department',p.department)}
             ${fld('Location',p.location)}
-            ${fld('License',p.license_role)}
-            ${fld('Project',p.role)}
+            ${fld('License Role',p.license_role)}
+            ${fld('Project Role',p.role)}
         </div>`).join('')+'</div>'
         :'<div class="not-found">No project assignments found in your registry projects</div>';
 }
@@ -1867,18 +1867,16 @@ function renderForma(f){
     const c=document.getElementById('formaContent'),t=document.getElementById('formaTitle');
     if(!f){t.textContent='';c.innerHTML='<div class="not-found">Not found in Forma/ACC</div>';return;}
     t.textContent=`${f.projects?f.projects.length:0} project${f.projects&&f.projects.length===1?'':'s'}`;
-    // Per-project columns mirror the Forma half of the invite compose table:
-    // Company · Role · Docs/Design/Model (from product_keys) · plus Status.
+    // Per-project columns: Company · Role · Access · Status. Products dropped
+    // intentionally — too long to fit in one line; the invite flow is where
+    // products get configured.
     const fld=(label,val)=>`<span class="proj-field"><span class="proj-field-label">${label}</span><span class="proj-field-value${val?'':' muted'}">${esc(val||'—')}</span></span>`;
-    const productLabels={docs:'Docs',designCollaboration:'Design',modelCoordination:'Model'};
     c.innerHTML=f.projects&&f.projects.length
         ?'<div class="project-list">'+f.projects.map(p=>{
-            const products=(p.product_keys||[]).map(k=>productLabels[k]||k).join(', ');
             return `<div class="project-row">
                 <span class="proj-name">${esc(p.name||p.project_id)}</span>
                 ${fld('Company',p.company)}
                 ${fld('Role',p.role)}
-                ${fld('Products',products)}
                 ${fld('Access',p.access_levels)}
                 ${fld('Status',p.status)}
             </div>`;

@@ -1927,74 +1927,119 @@ def morta_search_user(email, config, allowed_hub_ids: list = None):
     }
 
 def revizto_search_user(email, config, allowed_project_uuids: list = None, admin_email: str = None, registry_projects: dict = None):
-    """Search for a user in Revizto, scoped to the registry-allowed projects.
+    """Search for a user in Revizto using a license-based project sweep.
 
-    There is no working license-level member endpoint anymore — Revizto's
-    /v5/license/{uuid}/member/list and /v5/project/{uuid}/role/member/list
-    both 404. The only member endpoint we can confirm works is
-    /v5/project/{uuid}/team, which the rest of the cockpit (members
-    refresh, registry sync, project-team suggestions) already speaks.
+    Mirrors the working extraction pattern (Revizto_GET_License_Projects.py
+    and fetch_revizto_projects above):
+      1. GET /v5/user/licenses           — all licenses the *admin* can see
+      2. GET /v5/project/list/{lic}/paged — every project under each license
+      3. GET /v5/project/{uuid}/team      — check membership per project
 
-    So we drive the search entirely off /team across the registry's
-    allowed projects. Each project lives in exactly one region; we look
-    up the region per-project from the registry entry rather than picking
-    a single global region (which would silently skip cross-region
-    projects). The user's display fields (name, status, company,
-    department, last_active) come from the first /team entry that
-    matches their email.
+    The earlier registry-only sweep silently missed projects whose
+    revizto.project_uuid wasn't filled in yet — admins saw fewer projects
+    than the extraction scripts did. This version walks the admin's actual
+    license access, so any project the admin can see in Revizto is a
+    candidate, regardless of registry completeness.
 
-    Returns None if the user isn't found in any allowed project; otherwise
-    returns the same shape the manage.html search UI expects:
+    `allowed_project_uuids` and `registry_projects` are still accepted for
+    backward compatibility but are now unused — search scope is the
+    admin's license access. Owner and admin both see the same scope here;
+    the separation of concerns ("admins see fewer projects") is enforced
+    elsewhere (e.g. the project picker in base.html).
+
+    Returns None if the user isn't found in any license-accessible project;
+    otherwise returns the same shape as before:
       { found, region, name, email, license_role, status, company,
-        department, last_active, projects: [{uuid, role}, ...] }
-
-    Notes on the shape:
-    - `region` is the region of whichever project surfaced the user first.
-      For users on multiple projects across regions, this is somewhat
-      arbitrary, but matches what the UI displays today.
-    - `license_role` is no longer fetched — left blank rather than guessed.
-      The Manage UI shows it inline if present and "—" otherwise.
+        department, last_active, projects: [{uuid, name, region, role,
+        license_role, company, department, location}, ...] }
     """
-    # Strictly registry-scoped — no projects, no search.
-    if not allowed_project_uuids or not registry_projects:
+    role_map_license = {0: "Owner", 1: "License Admin", 2: "Collaborator", 3: "Content Creator", 4: "Guest"}
+
+    # Step 1+2: enumerate all (project_uuid, region, name) triples across
+    # both regions by walking the admin's licenses. Per-region token cache.
+    project_pool: list = []   # [{uuid, region, name, license_uuid, license_name}]
+    seen_uuids = set()
+
+    for region in ["dubai", "ireland"]:
+        rc = config.get(f"revizto_{region}", {})
+        has_tokens = bool(load_revizto_tokens(region, admin_email)) if admin_email else (BASE_DIR / f"revizto_tokens_{region}.json").exists()
+        if not rc.get("access_code") and not has_tokens:
+            continue
+        try:
+            token = revizto_get_token_for_region(config, region, email=admin_email)
+        except Exception as e:
+            print(f"[revizto-search] token fetch for {region} raised: {e}")
+            continue
+        if not token:
+            continue
+
+        base_url = f"https://api.{region}.revizto.com/v5"
+        headers  = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+
+        # Licenses the admin has access to in this region
+        try:
+            r = http_requests.get(f"{base_url}/user/licenses", headers=headers, timeout=15)
+        except Exception as e:
+            print(f"[revizto-search] /user/licenses {region} raised: {e}")
+            continue
+        if r.status_code != 200:
+            continue
+        try:
+            licenses = r.json()["data"]["entities"]
+        except (KeyError, TypeError):
+            continue
+
+        # Projects under each license
+        for lic in licenses:
+            lic_uuid = lic.get("uuid", "")
+            lic_name = lic.get("name", lic_uuid)
+            if not lic_uuid:
+                continue
+            try:
+                r2 = http_requests.get(
+                    f"{base_url}/project/list/{lic_uuid}/paged",
+                    headers=headers, timeout=15
+                )
+            except Exception as e:
+                print(f"[revizto-search] /project/list {lic_name} raised: {e}")
+                continue
+            if r2.status_code != 200:
+                continue
+            try:
+                projects = r2.json()["data"]["data"]
+            except (KeyError, TypeError):
+                continue
+            for p in projects:
+                uuid = p.get("uuid", "")
+                if uuid and uuid not in seen_uuids:
+                    seen_uuids.add(uuid)
+                    project_pool.append({
+                        "uuid":         uuid,
+                        "region":       region,
+                        "name":         p.get("title", uuid),
+                        "license_uuid": lic_uuid,
+                        "license_name": lic_name,
+                    })
+
+    if not project_pool:
         return None
 
-    # Build a {project_uuid → (region, project_key)} map from the registry
-    # so each /team call uses the correct region. Skip any project missing
-    # a UUID (defensive — the caller already filters these but a registry
-    # in transition could have stragglers).
-    project_meta: dict = {}
-    for k, rp in registry_projects.items():
-        rev = rp.get("platforms", {}).get("revizto", {}) or {}
-        u   = rev.get("project_uuid", "")
-        r   = rev.get("region", "") or "dubai"
-        if u:
-            project_meta[u] = {"region": r, "key": k}
-
-    # Cache one token per region — fetching once per call is enough.
-    # If a region has no token (admin doesn't have access), every project
-    # in that region just gets skipped silently.
+    # Token cache for the membership sweep — reuse what we just fetched.
     tokens: dict = {}
     def get_token(region: str) -> str:
         if region in tokens:
             return tokens[region]
         try:
             t = revizto_get_token_for_region(config, region, email=admin_email)
-        except Exception as e:
-            print(f"[revizto-search] token fetch for {region} raised: {e}")
+        except Exception:
             t = ""
         tokens[region] = t or ""
         return tokens[region]
 
-    role_map_license = {0: "Owner", 1: "License Admin", 2: "Collaborator", 3: "Content Creator", 4: "Guest"}
-
-    def check_project(project_uuid: str):
-        """Return {project_match, user_record} where project_match is the
-        per-project hit (for the `projects` array) and user_record is the
-        full user info synthesised from this /team entity (used by the
-        first-match-wins synthesis below). None if no match or skipped."""
-        meta   = project_meta.get(project_uuid) or {}
-        region = meta.get("region") or "dubai"
+    # Step 3: check membership on each project in parallel
+    def check_project(proj: dict):
+        """Return {project_match, user_record} when email matches /team, else None."""
+        region = proj["region"]
         token  = get_token(region)
         if not token:
             return None
@@ -2002,11 +2047,11 @@ def revizto_search_user(email, config, allowed_project_uuids: list = None, admin
         headers  = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
         try:
             pr = http_requests.get(
-                f"{base_url}/project/{project_uuid}/team",
-                headers=headers, timeout=10,
+                f"{base_url}/project/{proj['uuid']}/team",
+                headers=headers, timeout=10
             )
         except Exception as e:
-            print(f"[revizto-search] /team {project_uuid[:8]} raised: {e}")
+            print(f"[revizto-search] /team {proj['uuid'][:8]} raised: {e}")
             return None
         if pr.status_code != 200:
             return None
@@ -2016,8 +2061,7 @@ def revizto_search_user(email, config, allowed_project_uuids: list = None, admin
             return None
         if body.get("result", 0) != 0:
             return None
-        data = body.get("data") or {}
-        entities = data.get("entities") or []
+        entities = (body.get("data") or {}).get("entities") or []
         if not isinstance(entities, list):
             return None
         for ent in entities:
@@ -2030,8 +2074,8 @@ def revizto_search_user(email, config, allowed_project_uuids: list = None, admin
                 access_role.get("name", "") if isinstance(access_role, dict)
                 else str(access_role or "")
             )
-            # License role enum (0–4) — sometimes echoed on team entities as
-            # `licenseRole` or `license_role`. Fixed mapping in role_map_license.
+            # License role enum (0–4) — sometimes echoed on team entities
+            # as `licenseRole` or `license_role`. Best-effort; blank if absent.
             license_role_id = ent.get("licenseRole")
             if license_role_id is None:
                 license_role_id = ent.get("license_role")
@@ -2040,25 +2084,20 @@ def revizto_search_user(email, config, allowed_project_uuids: list = None, admin
                 if isinstance(license_role_id, int)
                 else ""
             )
-            # Build the project hit (for the `projects` list). Carry every
-            # field the manage.html user-info pane needs to render the
-            # invite-table-equivalent columns: company, department, location,
-            # license role, project role.
             project_match = {
-                "uuid":         project_uuid,
+                "uuid":         proj["uuid"],
+                "name":         proj["name"],
+                "region":       proj["region"],
                 "role":         project_role_name,
                 "license_role": license_role_label,
                 "company":      ent.get("company", ""),
                 "department":   ent.get("department", ""),
                 "location":     ent.get("location", ""),
             }
-            # Build a candidate user record. License-level fields aren't
-            # available from /team; we fall back to the project-level
-            # accessRole.name so the UI doesn't show a blank role pill.
             user_record = {
                 "found":        True,
-                "region":       region,
-                "license_uuid": "",
+                "region":       proj["region"],
+                "license_uuid": proj["license_uuid"],
                 "name":         ent.get("fullname", "")
                                   or (f"{ent.get('firstname','')} {ent.get('lastname','')}".strip()),
                 "email":        ent.get("email", ""),
@@ -2073,17 +2112,13 @@ def revizto_search_user(email, config, allowed_project_uuids: list = None, admin
                 "invited_at":   ent.get("invitedAt", ""),
                 "last_active":  ent.get("lastActive", ""),
                 "user_uuid":    ent.get("uuid", ""),
-                "projects":     [],   # populated by the caller after gather
+                "projects":     [],
             }
             return {"project_match": project_match, "user_record": user_record}
         return None
 
-    # Run all the /team calls in parallel — same pattern as before.
-    # Order is preserved by ThreadPoolExecutor.map, which we rely on to
-    # pick a deterministic "first match wins" for the user_record (the
-    # earliest project in allowed_project_uuids that contains the user).
     with ThreadPoolExecutor(max_workers=8) as pool:
-        results = list(pool.map(check_project, allowed_project_uuids))
+        results = list(pool.map(check_project, project_pool))
 
     user_record = None
     project_hits = []
@@ -6475,10 +6510,17 @@ async def api_user_search(email: str, user: str = Depends(require_user)):
             morta_fut, revizto_fut, forma_fut
         )
 
-    # Enrich Revizto project results with names from registry
+    # Enrich Revizto project results: prefer the registry's display name
+    # (e.g. "Sphere Abu Dhabi") if the project is registered; otherwise
+    # keep the Revizto API title we already fetched (e.g. "Sphere Abu
+    # Dhabi Design Phase"). This way projects outside the registry still
+    # show a meaningful name instead of a UUID.
     if revizto_result and revizto_result.get("projects"):
         for p in revizto_result["projects"]:
-            p["name"] = revizto_name_map.get(p.get("uuid"), p.get("uuid", ""))
+            reg_name = revizto_name_map.get(p.get("uuid"))
+            if reg_name:
+                p["name"] = reg_name
+            # else: keep p["name"] as-is (set by revizto_search_user)
 
     # Enrich Forma project results with names + resolved company/role labels.
     # The registry stores per-project forma.companies and forma.roles as
