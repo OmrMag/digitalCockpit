@@ -448,12 +448,22 @@ async function loadCache(){
 }
 
 /* Load the per-project registry so each row can render its platform-
-   specific dropdown lists when unlocked. Same endpoint manage.html
-   uses, scoped to the logged-in admin's projects. Failure here is
-   non-fatal: rows still render, but unlock-edit will fall back to
-   plain text inputs (no dropdowns). */
+   specific dropdown lists when unlocked. base.html already fetches
+   /api/registry once at page load and exposes it on window.cockpit.registry
+   after window.cockpit.ready resolves; we wait on that promise instead
+   of doing our own fetch. Falls back to a direct /api/registry call if
+   base.html's setup didn't run for any reason. Failure here is non-fatal:
+   rows still render, but unlock-edit will fall back to plain text inputs
+   (no dropdowns). */
 async function loadRegistry(){
     try {
+        if (window.cockpit && window.cockpit.ready){
+            await window.cockpit.ready;
+            if (window.cockpit.registry){
+                registryByKey = window.cockpit.registry;
+                return;
+            }
+        }
         const r = await fetch('/api/registry');
         if (!r.ok) throw new Error('HTTP '+r.status);
         registryByKey = await r.json() || {};

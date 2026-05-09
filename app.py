@@ -90,6 +90,17 @@ class ServerTimingMiddleware:
 
 app.add_middleware(ServerTimingMiddleware)
 
+# ── Response compression ───────────────────────────────────────────────
+# GZip every response body bigger than 1 KB. Crucial for /api/browse/users
+# which is multi-MB JSON; compression typically takes the wire payload
+# down by 85-90% (e.g. 2.7 MB → ~350 KB). Without this, slow clients
+# spend serialization time on the connection that should be freeing up
+# the worker for the next request. FastAPI ships GZipMiddleware ready
+# to use; the minimum_size threshold spares small JSON responses where
+# compression cost would outweigh savings.
+from starlette.middleware.gzip import GZipMiddleware
+app.add_middleware(GZipMiddleware, minimum_size=1024)
+
 BASE_DIR    = Path(__file__).parent
 EXPORTS_DIR = BASE_DIR / "exports"
 EXPORTS_DIR.mkdir(exist_ok=True)
