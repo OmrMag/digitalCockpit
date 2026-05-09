@@ -271,6 +271,26 @@ select.bu-cell-input{padding:2px 4px;cursor:pointer}
     cursor:pointer;margin:0;vertical-align:middle
 }
 
+/* Revizto invite-mode gate checkboxes — shown above the Company input
+   when a faded row is unlocked. Tiny labels, two stacked, so the admin
+   can opt out of either license or project invite calls. Backend
+   defaults both to true if the gates are absent. */
+.bu-invite-gates{
+    display:flex;flex-direction:column;gap:2px;
+    margin-bottom:5px;padding:4px 5px;
+    border:1px dashed var(--border-cream);border-radius:3px;
+    font-size:10px;color:var(--text-dark-muted);
+    text-transform:uppercase;letter-spacing:.4px;
+    line-height:1.3;
+}
+.bu-invite-gates label{
+    display:flex;align-items:center;gap:5px;cursor:pointer;
+}
+.bu-invite-gates input[type="checkbox"]{
+    width:11px;height:11px;
+    accent-color:var(--navy);margin:0;
+}
+
 /* ── Apple-style toggle ────────────────────────────────────────── */
 /* States, in priority order:
    - faded:    user isn't on this platform. Greyed, not interactive.
@@ -767,13 +787,35 @@ const PROP_SPECS = {
            width. All other Reviz columns hold their declared widths. */
         { key:'company',      label:'Company',      col:'col-prop-company',     absorber:true,
           editKey: 'company',
-          render: (row, isUnlocked, reg) => isUnlocked
-              ? inputCellHtml(rowKey(row), 'revizto', 'company',
+          render: (row, isUnlocked, reg) => {
+              if (!isUnlocked) return textCellHtml(row.revizto?.company);
+              // Invite mode: render gate checkboxes above the input. The
+              // checkboxes write into pendingEdits[k].revizto._invite_to_*
+              // (underscore prefix → backend treats them as gates, not
+              // as fields to apply).
+              let preface = '';
+              if (row.revizto == null){
+                  const k = rowKey(row);
+                  const pe = pendingEdits.get(k)?.revizto || {};
+                  // Default both to true if the admin hasn't unchecked them.
+                  const lic  = (pe._invite_to_license  !== undefined) ? !!pe._invite_to_license  : true;
+                  const proj = (pe._invite_to_project !== undefined) ? !!pe._invite_to_project : true;
+                  preface = `
+                    <div class="bu-invite-gates">
+                        <label><input type="checkbox" data-rk="${esc(k)}" data-plat="revizto" data-ek="_invite_to_license"  ${lic  ? 'checked' : ''}> license</label>
+                        <label><input type="checkbox" data-rk="${esc(k)}" data-plat="revizto" data-ek="_invite_to_project" ${proj ? 'checked' : ''}> project</label>
+                    </div>`;
+              }
+              const inputTd = inputCellHtml(rowKey(row), 'revizto', 'company',
                               currentEditValue(row, 'revizto', 'company', 'company'),
                               'Company',
                               suggestionsFor(row.project_key, 'revizto', 'company',
-                                  reg?.platforms?.revizto?.member_suggestions?.companies))
-              : textCellHtml(row.revizto?.company) },
+                                  reg?.platforms?.revizto?.member_suggestions?.companies));
+              if (!preface) return inputTd;
+              // Inject the preface inside the existing <td> by string-splicing.
+              return inputTd.replace('<td class="bu-prop-cell">',
+                                     '<td class="bu-prop-cell">' + preface);
+          } },
         { key:'department',   label:'Department',   col:'col-prop-department',
           editKey: 'department',
           render: (row, isUnlocked, reg) => isUnlocked
@@ -1164,12 +1206,12 @@ function renderTable(){
         PLATFORMS.forEach(p => {
             cells.push(platformBodyToggleHtml(r, p, isInteractive));
             if (expandedPlatform === p){
-                // Property cells render edit controls when isEditing AND the
-                // user is on this platform (regMeta has dropdown options for
-                // the row's specific project). When the row's user is NOT on
-                // this platform (faded toggle), keep cells read-only — there's
-                // nothing to edit.
-                const cellsEditable = isEditing && r[p] != null;
+                // Property cells render edit controls when isEditing.
+                // Faded rows (user not yet on platform) ALSO get edit
+                // controls — that's the add-from-browse flow. The cells
+                // start empty for the admin to fill in; commit triggers
+                // an invite call instead of an edit call.
+                const cellsEditable = isEditing;
                 PROP_SPECS[p].forEach(spec => cells.push(spec.render(r, cellsEditable, regMeta)));
             }
         });
@@ -1287,8 +1329,10 @@ function renderTable(){
             });
         });
         /* Editable checkboxes don't carry the bu-cell-input class; bind
-           them separately. Same data-* contract. */
-        out.querySelectorAll('.bu-cell-check input[type="checkbox"]').forEach(el => {
+           them separately. Covers both .bu-cell-check (Forma docs/design/
+           model) AND .bu-invite-gates (Revizto invite gates). Same
+           data-* contract: data-rk, data-plat, data-ek. */
+        out.querySelectorAll('.bu-cell-check input[type="checkbox"], .bu-invite-gates input[type="checkbox"]').forEach(el => {
             el.addEventListener('change', () => {
                 const k    = el.dataset.rk;
                 const plat = el.dataset.plat;
@@ -1477,114 +1521,184 @@ async function commitRowEdits(k){
     if (!pe) return;  // nothing to do
     const orig = originalsByKey.get(k) || {revizto:null, forma:null, morta:null};
 
-    // Build a clean diff per platform: only fields whose value differs
-    // from the original. Empty platform objects are dropped entirely.
+    // Build a clean diff per platform.
+    //
+    // Two modes per platform:
+    //   - EDIT (orig.PLATFORM truthy): only fields whose value differs
+    //     from the original go into the diff.
+    //   - INVITE (orig.PLATFORM null + admin entered something): every
+    //     non-empty pending field goes into the diff verbatim, plus the
+    //     gate flags for Revizto.
+    //
+    // Empty platform objects are dropped at the end so the backend
+    // doesn't spin up an HTTP call for nothing.
     const diff = {revizto:{}, forma:{}, morta:{}};
     let hasAny = false;
 
     function addIfChanged(platform, editKey, newVal, originalVal){
-        // Treat null/undefined/'' as equivalent for "unset" comparisons —
-        // an empty input that matches an empty cache value isn't a change.
         const a = (newVal === undefined || newVal === null) ? '' : newVal;
         const b = (originalVal === undefined || originalVal === null) ? '' : originalVal;
         if (String(a) === String(b)) return;
         diff[platform][editKey] = newVal;
         hasAny = true;
     }
+    function addIfNotEmpty(platform, editKey, newVal){
+        // Used in invite mode: any non-empty value goes in. Booleans pass
+        // through as-is so unchecked checkboxes (false) don't get dropped.
+        if (newVal === undefined) return;
+        if (typeof newVal === 'boolean'){
+            diff[platform][editKey] = newVal;
+            hasAny = true;
+            return;
+        }
+        const v = (newVal === null) ? '' : String(newVal);
+        if (!v.trim()) return;
+        diff[platform][editKey] = newVal;
+        hasAny = true;
+    }
 
-    // Revizto
+    const row     = lastRows.find(r => rowKey(r) === k);
+    const regMeta = registryByKey[row?.project_key] || {};
+
+    // ── Revizto ─────────────────────────────────────────────────────
+    const pRev = pe.revizto || {};
     if (orig.revizto){
+        // EDIT mode
         const o = orig.revizto;
-        const p = pe.revizto || {};
-        addIfChanged('revizto', 'company',    p.company,    o.company);
-        addIfChanged('revizto', 'department', p.department, o.department);
-        addIfChanged('revizto', 'location',   p.location,   o.location);
-        // For the role IDs: the original is the LABEL (cache stores label,
-        // not id). Look up the original's id from regMeta and compare.
-        const row     = lastRows.find(r => rowKey(r) === k);
-        const regMeta = registryByKey[row?.project_key] || {};
-        if (p.license_role_id !== undefined){
+        addIfChanged('revizto', 'company',    pRev.company,    o.company);
+        addIfChanged('revizto', 'department', pRev.department, o.department);
+        addIfChanged('revizto', 'location',   pRev.location,   o.location);
+        if (pRev.license_role_id !== undefined){
             const opts = (regMeta?.platforms?.revizto?.license_roles) || [];
             const origMatch = opts.find(opt => opt.name === o.license_role);
             const origId    = origMatch ? origMatch.id : null;
-            if (String(p.license_role_id) !== String(origId)){
-                diff.revizto.license_role_id = p.license_role_id;
+            if (String(pRev.license_role_id) !== String(origId)){
+                diff.revizto.license_role_id = pRev.license_role_id;
                 hasAny = true;
             }
         }
-        if (p.project_role_id !== undefined){
+        if (pRev.project_role_id !== undefined){
             const opts = (regMeta?.platforms?.revizto?.roles) || [];
             const origMatch = opts.find(opt => opt.name === o.role);
             const origId    = origMatch ? origMatch.id : null;
-            if (String(p.project_role_id) !== String(origId || '')){
-                diff.revizto.project_role_id = p.project_role_id;
-                if (p.project_role_label != null) diff.revizto.project_role_label = p.project_role_label;
+            if (String(pRev.project_role_id) !== String(origId || '')){
+                diff.revizto.project_role_id = pRev.project_role_id;
+                if (pRev.project_role_label != null) diff.revizto.project_role_label = pRev.project_role_label;
                 hasAny = true;
             }
+        }
+    } else if (Object.keys(pRev).length > 0){
+        // INVITE mode — admin filled at least one field on a faded row.
+        // Pass every non-empty field plus gate flags through. Even an
+        // empty company input is fine (Revizto allows blank profile fields).
+        addIfNotEmpty('revizto', 'company',          pRev.company);
+        addIfNotEmpty('revizto', 'department',       pRev.department);
+        addIfNotEmpty('revizto', 'location',         pRev.location);
+        addIfNotEmpty('revizto', 'license_role_id',  pRev.license_role_id);
+        addIfNotEmpty('revizto', 'project_role_id',  pRev.project_role_id);
+        if (pRev.project_role_label != null) diff.revizto.project_role_label = pRev.project_role_label;
+        // Gate flags. Default both to true if the admin didn't explicitly
+        // uncheck one. The backend will reject if both end up false.
+        diff.revizto._invite_to_license  = (pRev._invite_to_license  !== undefined) ? !!pRev._invite_to_license  : true;
+        diff.revizto._invite_to_project = (pRev._invite_to_project !== undefined) ? !!pRev._invite_to_project : true;
+        hasAny = true;
+        // If the admin left BOTH gates off, refuse client-side with a
+        // clear toast — saves a round trip.
+        if (!diff.revizto._invite_to_license && !diff.revizto._invite_to_project){
+            toast('Revizto invite needs at least one gate (license or project)', 'error');
+            return;
         }
     }
 
-    // Forma
+    // ── Forma ───────────────────────────────────────────────────────
+    const pFo = pe.forma || {};
     if (orig.forma){
+        // EDIT mode
         const o = orig.forma;
-        const p = pe.forma || {};
-        if (p.company_id !== undefined && String(p.company_id) !== String(o.company_id || '')){
-            diff.forma.company_id    = p.company_id;
-            if (p.company_label != null) diff.forma.company_label = p.company_label;
+        if (pFo.company_id !== undefined && String(pFo.company_id) !== String(o.company_id || '')){
+            diff.forma.company_id = pFo.company_id;
+            if (pFo.company_label != null) diff.forma.company_label = pFo.company_label;
             hasAny = true;
         }
-        if (p.role_id !== undefined){
+        if (pFo.role_id !== undefined){
             const origRoleId = (Array.isArray(o.role_ids) && o.role_ids[0]) ? o.role_ids[0] : '';
-            if (String(p.role_id) !== String(origRoleId)){
-                // Backend takes role_ids (list), so wrap.
-                diff.forma.role_ids = p.role_id ? [p.role_id] : [];
-                if (p.role_label != null) diff.forma.role_label = p.role_label;
+            if (String(pFo.role_id) !== String(origRoleId)){
+                diff.forma.role_ids = pFo.role_id ? [pFo.role_id] : [];
+                if (pFo.role_label != null) diff.forma.role_label = pFo.role_label;
                 hasAny = true;
             }
         }
-        // Product checkboxes — if any of docs/design/model changed, send
-        // the FULL products list (Forma's import endpoint replaces the
-        // product list, not patches it).
         const productChanged = ['docs', 'design', 'model'].some(f =>
-            p[f] !== undefined && !!p[f] !== !!o[f]
+            pFo[f] !== undefined && !!pFo[f] !== !!o[f]
         );
         if (productChanged){
-            const docs   = (p.docs   !== undefined) ? !!p.docs   : !!o.docs;
-            const design = (p.design !== undefined) ? !!p.design : !!o.design;
-            const model  = (p.model  !== undefined) ? !!p.model  : !!o.model;
+            const docs   = (pFo.docs   !== undefined) ? !!pFo.docs   : !!o.docs;
+            const design = (pFo.design !== undefined) ? !!pFo.design : !!o.design;
+            const model  = (pFo.model  !== undefined) ? !!pFo.model  : !!o.model;
             const products = [];
             if (docs)   products.push({key: 'docs',   access: 'member'});
             if (design) products.push({key: 'design', access: 'member'});
             if (model)  products.push({key: 'model',  access: 'member'});
             diff.forma.products = products;
-            // Also include the per-flag booleans so the backend's
-            // applied[] tracking knows which fields the admin changed.
-            if (p.docs   !== undefined) diff.forma.docs   = !!p.docs;
-            if (p.design !== undefined) diff.forma.design = !!p.design;
-            if (p.model  !== undefined) diff.forma.model  = !!p.model;
+            if (pFo.docs   !== undefined) diff.forma.docs   = !!pFo.docs;
+            if (pFo.design !== undefined) diff.forma.design = !!pFo.design;
+            if (pFo.model  !== undefined) diff.forma.model  = !!pFo.model;
             hasAny = true;
+        }
+    } else if (Object.keys(pFo).length > 0){
+        // INVITE mode. Build the products list from whichever flags the
+        // admin checked. Send role_ids as a list (Forma's contract).
+        if (pFo.company_id){
+            diff.forma.company_id = pFo.company_id;
+            if (pFo.company_label != null) diff.forma.company_label = pFo.company_label;
+            hasAny = true;
+        }
+        if (pFo.role_id){
+            diff.forma.role_ids = [pFo.role_id];
+            if (pFo.role_label != null) diff.forma.role_label = pFo.role_label;
+            hasAny = true;
+        }
+        const docs   = !!pFo.docs;
+        const design = !!pFo.design;
+        const model  = !!pFo.model;
+        if (docs || design || model){
+            const products = [];
+            if (docs)   products.push({key: 'docs',   access: 'member'});
+            if (design) products.push({key: 'design', access: 'member'});
+            if (model)  products.push({key: 'model',  access: 'member'});
+            diff.forma.products = products;
+            diff.forma.docs   = docs;
+            diff.forma.design = design;
+            diff.forma.model  = model;
+            hasAny = true;
+        } else {
+            // No products checked = nothing to invite to. Skip Forma but
+            // keep going on other platforms. Toast warning so the admin
+            // knows why it was a no-op.
+            toast('Forma invite needs at least one product (docs/design/model) — skipping Forma', 'error');
         }
     }
 
-    // Morta
+    // ── Morta ───────────────────────────────────────────────────────
+    const pMo = pe.morta || {};
     if (orig.morta){
-        const p = pe.morta || {};
-        if (p.tag_reference_id !== undefined){
-            // Compare against the FIRST tag name on the cache row (if any),
-            // resolved to its id via regMeta. Sweep stores tags as a
-            // comma-joined name string, so this is best-effort.
-            const row     = lastRows.find(r => rowKey(r) === k);
-            const regMeta = registryByKey[row?.project_key] || {};
-            const opts    = (regMeta?.platforms?.morta?.tags) || [];
+        // EDIT mode — tag swap.
+        if (pMo.tag_reference_id !== undefined){
+            const opts = (regMeta?.platforms?.morta?.tags) || [];
             const firstName = ((orig.morta.tag || '').split(',')[0] || '').trim();
             const origMatch = opts.find(t => t.name === firstName);
             const origId    = origMatch ? origMatch.tag_reference_id : '';
-            if (String(p.tag_reference_id) !== String(origId)){
-                diff.morta.tag_reference_id = p.tag_reference_id;
-                if (p.tag_label != null) diff.morta.tag_label = p.tag_label;
+            if (String(pMo.tag_reference_id) !== String(origId)){
+                diff.morta.tag_reference_id = pMo.tag_reference_id;
+                if (pMo.tag_label != null) diff.morta.tag_label = pMo.tag_label;
                 hasAny = true;
             }
         }
+    } else if (Object.keys(pMo).length > 0){
+        // INVITE mode — call morta_invite. Tag is optional.
+        diff.morta.tag_reference_id = pMo.tag_reference_id || '';
+        if (pMo.tag_label != null) diff.morta.tag_label = pMo.tag_label;
+        hasAny = true;
     }
 
     // Drop empty platforms so the backend doesn't waste time on no-ops.
@@ -1596,7 +1710,6 @@ async function commitRowEdits(k){
         return;
     }
 
-    const row = lastRows.find(r => rowKey(r) === k);
     if (!row) return;
 
     let resp;

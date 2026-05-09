@@ -4933,92 +4933,168 @@ async def api_browse_edit(request: Request, user: str = Depends(require_user)):
     failed:  list = []
 
     # ── Revizto edits ──────────────────────────────────────────────
+    # Two operating modes share this block:
+    #   - EDIT: the row already has a `revizto` sub-object. We use
+    #     revizto_invite() with preserve_roles tied to whether the admin
+    #     touched license_role_id, and the existing user gets updated.
+    #   - INVITE (add-from-browse): row.revizto is None — the user isn't
+    #     on this Revizto project today. Frontend signals invite intent
+    #     by including `_invite_to_license` and/or `_invite_to_project`
+    #     boolean flags in the rev_edits payload. At least one must be
+    #     true; if both are false (or absent), we treat this as an
+    #     edit-with-no-row error rather than silently doing nothing.
     rev_edits = edits.get("revizto") or {}
-    if rev_edits and row.get("revizto"):
+    rev_is_invite = (row.get("revizto") is None) and bool(rev_edits)
+    if rev_edits and (row.get("revizto") or rev_is_invite):
         rev_pid = (proj.get("platforms", {}).get("revizto", {}) or {}).get("project_uuid") or ""
         if not rev_pid:
             failed.append({"platform": "revizto", "field": "*",
                            "error": "project has no Revizto UUID in registry"})
         else:
-            # Build a single revizto_invite call that bundles every requested
-            # change. revizto_invite with preserve_roles=False overwrites the
-            # license-side fields (role, company, department, location) for
-            # an existing member, and the chained project-role call updates
-            # project role + project-side company/department.
-            #
-            # Splitting names from full_name: revizto_invite signature wants
-            # firstName + lastName. We don't currently edit names from browse,
-            # so reuse what's already on the row.
             full_name = (row.get("name") or "").strip()
             parts     = full_name.split(" ", 1) if full_name else []
             first     = parts[0] if parts else ""
             last      = parts[1] if len(parts) > 1 else ""
 
             cur_rev = row.get("revizto") or {}
-            # Build the args. Use the new value where the admin changed
-            # something, otherwise fall back to what's already on the row
-            # so we don't blank out fields the admin didn't touch.
             new_company    = rev_edits.get("company",    cur_rev.get("company",    "")) or ""
             new_department = rev_edits.get("department", cur_rev.get("department", "")) or ""
             new_location   = rev_edits.get("location",   cur_rev.get("location",   "")) or ""
             new_lic_role   = rev_edits.get("license_role_id")  # int or None
             new_proj_role  = rev_edits.get("project_role_id")  # int or None
 
-            try:
-                res = revizto_invite(
-                    email          = email,
-                    first_name     = first,
-                    last_name      = last,
-                    company        = new_company,
-                    department     = new_department,
-                    location       = new_location,
-                    config         = config,
-                    project_uuid   = rev_pid,
-                    license_role_id= new_lic_role,
-                    project_role_id= new_proj_role,
-                    invite_to_license = True,
-                    invite_to_project = bool(new_proj_role) or any(
-                        k in rev_edits for k in ("company", "department", "location")
-                    ),
-                    admin_email    = user,
-                    preserve_roles = False,   # browse-edit semantics
-                )
-            except Exception as e:
-                res = {"status": "error", "detail": f"{type(e).__name__}: {e}"}
+            if rev_is_invite:
+                # INVITE mode: gate flags from the frontend choose which
+                # Revizto invite calls fire. Default both to True if the
+                # frontend forgot to send them — matches the "default
+                # checked" UX. At least one must end up True; if both
+                # are False, the admin explicitly opted out of doing
+                # anything, which is an error worth surfacing.
+                inv_lic   = rev_edits.get("_invite_to_license", True)
+                inv_proj  = rev_edits.get("_invite_to_project", True)
+                inv_lic   = bool(inv_lic)
+                inv_proj  = bool(inv_proj)
+                if not (inv_lic or inv_proj):
+                    failed.append({"platform": "revizto", "field": "*",
+                                   "error": "Revizto invite requires at least one of license/project gates to be checked"})
+                else:
+                    # Default license role to Collaborator (2) if the admin
+                    # didn't pick one. Mirrors the manage-page invite default.
+                    if inv_lic and new_lic_role is None:
+                        new_lic_role = 2
+                    try:
+                        res = revizto_invite(
+                            email          = email,
+                            first_name     = first,
+                            last_name      = last,
+                            company        = new_company,
+                            department     = new_department,
+                            location       = new_location,
+                            config         = config,
+                            project_uuid   = rev_pid,
+                            license_role_id= new_lic_role,
+                            project_role_id= new_proj_role,
+                            invite_to_license = inv_lic,
+                            invite_to_project = inv_proj,
+                            admin_email    = user,
+                            preserve_roles = True,   # invite semantics: don't blow away role for already-on-license users
+                        )
+                    except Exception as e:
+                        res = {"status": "error", "detail": f"{type(e).__name__}: {e}"}
 
-            if res.get("status") == "success":
-                # Apply changes to the cache row + tag what was applied.
-                if "company" in rev_edits:
-                    cur_rev["company"] = new_company
-                    applied["revizto"].append("company")
-                if "department" in rev_edits:
-                    cur_rev["department"] = new_department
-                    applied["revizto"].append("department")
-                if "location" in rev_edits:
-                    cur_rev["location"] = new_location
-                    applied["revizto"].append("location")
-                if new_lic_role is not None:
-                    cur_rev["license_role"] = REVIZTO_LICENSE_ROLE_MAP.get(int(new_lic_role), cur_rev.get("license_role", ""))
-                    applied["revizto"].append("license_role")
-                if new_proj_role is not None:
-                    # project_role label needs lookup — admin sent the id,
-                    # frontend already knows the label. We store whatever
-                    # we have; next refresh will canonicalize.
-                    label = rev_edits.get("project_role_label") or cur_rev.get("role", "")
-                    cur_rev["role"] = label
-                    applied["revizto"].append("project_role")
-                row["revizto"] = cur_rev
+                    if res.get("status") == "success":
+                        # Build a fresh revizto sub-object from the values
+                        # we just sent. The next sweep will canonicalize
+                        # fields we don't have (like user_uuid, last_active);
+                        # for now, the row reflects the admin's choices.
+                        new_sub = {
+                            "company":      new_company,
+                            "department":   new_department,
+                            "location":     new_location,
+                            "license_role": (REVIZTO_LICENSE_ROLE_MAP.get(int(new_lic_role), "")
+                                             if new_lic_role is not None else ""),
+                            "role":         rev_edits.get("project_role_label", ""),
+                            "last_active":  "",
+                            "user_uuid":    "",
+                            "on_license":   inv_lic,
+                            "on_project":   inv_proj,
+                        }
+                        row["revizto"] = new_sub
+                        # Tag every requested field as applied so the
+                        # frontend renders the new state correctly.
+                        for k in rev_edits.keys():
+                            if k.startswith("_") or k.endswith("_label"):
+                                continue
+                            applied["revizto"].append(k)
+                        applied["revizto"].append("_invited")
+                    else:
+                        detail = res.get("detail", "Revizto invite failed")
+                        for k in rev_edits.keys():
+                            if k.startswith("_") or k.endswith("_label"):
+                                continue
+                            failed.append({"platform": "revizto", "field": k, "error": detail})
+
             else:
-                # Whole-call failure: report every requested field as failed.
-                detail = res.get("detail", "unknown error")
-                for k in rev_edits.keys():
-                    if k.endswith("_label"):
-                        continue
-                    failed.append({"platform": "revizto", "field": k, "error": detail})
+                # EDIT mode (original behaviour, preserved unchanged).
+                # Build a single revizto_invite call that bundles every
+                # requested change. Project-side fires only when project-
+                # adjacent fields were touched.
+                try:
+                    res = revizto_invite(
+                        email          = email,
+                        first_name     = first,
+                        last_name      = last,
+                        company        = new_company,
+                        department     = new_department,
+                        location       = new_location,
+                        config         = config,
+                        project_uuid   = rev_pid,
+                        license_role_id= new_lic_role,
+                        project_role_id= new_proj_role,
+                        invite_to_license = True,
+                        invite_to_project = bool(new_proj_role) or any(
+                            k in rev_edits for k in ("company", "department", "location")
+                        ),
+                        admin_email    = user,
+                        preserve_roles = (new_lic_role is None),  # only overwrite role if admin changed it
+                    )
+                except Exception as e:
+                    res = {"status": "error", "detail": f"{type(e).__name__}: {e}"}
+
+                if res.get("status") == "success":
+                    if "company" in rev_edits:
+                        cur_rev["company"] = new_company
+                        applied["revizto"].append("company")
+                    if "department" in rev_edits:
+                        cur_rev["department"] = new_department
+                        applied["revizto"].append("department")
+                    if "location" in rev_edits:
+                        cur_rev["location"] = new_location
+                        applied["revizto"].append("location")
+                    if new_lic_role is not None:
+                        cur_rev["license_role"] = REVIZTO_LICENSE_ROLE_MAP.get(int(new_lic_role), cur_rev.get("license_role", ""))
+                        applied["revizto"].append("license_role")
+                    if new_proj_role is not None:
+                        label = rev_edits.get("project_role_label") or cur_rev.get("role", "")
+                        cur_rev["role"] = label
+                        applied["revizto"].append("project_role")
+                    row["revizto"] = cur_rev
+                else:
+                    detail = res.get("detail", "unknown error")
+                    for k in rev_edits.keys():
+                        if k.startswith("_") or k.endswith("_label"):
+                            continue
+                        failed.append({"platform": "revizto", "field": k, "error": detail})
 
     # ── Forma edits ────────────────────────────────────────────────
+    # forma_invite() hits the /admin/v2/projects/{pid}/users:import
+    # endpoint, which is upsert-by-design — it adds new users AND
+    # updates existing ones. So the EDIT and INVITE paths share the
+    # same call; the only difference is whether we have an existing
+    # `forma` sub-object to merge into vs. building one from scratch.
     fo_edits = edits.get("forma") or {}
-    if fo_edits and row.get("forma"):
+    fo_is_invite = (row.get("forma") is None) and bool(fo_edits)
+    if fo_edits and (row.get("forma") or fo_is_invite):
         fo_pid = (proj.get("platforms", {}).get("forma", {}) or {}).get("project_id") or ""
         if not fo_pid:
             failed.append({"platform": "forma", "field": "*",
@@ -5042,6 +5118,21 @@ async def api_browse_edit(request: Request, user: str = Depends(require_user)):
                 res = {"status": "error", "detail": f"{type(e).__name__}: {e}"}
 
             if res.get("status") == "success":
+                if fo_is_invite:
+                    # Build a fresh forma sub-object. The next sweep fills in
+                    # user_id, access_level, last_active.
+                    cur_fo = {
+                        "company_id":   new_company_id or "",
+                        "company":      fo_edits.get("company_label") or "",
+                        "role_ids":     new_role_ids or [],
+                        "role":         fo_edits.get("role_label") or "",
+                        "access_level": "",
+                        "docs":         False,
+                        "design":       False,
+                        "model":        False,
+                        "user_id":      "",
+                        "last_active":  "",
+                    }
                 if "company_id" in fo_edits:
                     cur_fo["company_id"]   = new_company_id or ""
                     cur_fo["company"]      = fo_edits.get("company_label") or cur_fo.get("company", "")
@@ -5051,8 +5142,6 @@ async def api_browse_edit(request: Request, user: str = Depends(require_user)):
                     cur_fo["role"]         = fo_edits.get("role_label") or cur_fo.get("role", "")
                     applied["forma"].append("role")
                 if "products" in fo_edits:
-                    # Translate products list back to per-flag booleans for
-                    # the cache row (frontend renders these as checkboxes).
                     prod_keys = {p.get("key") for p in (new_products or []) if isinstance(p, dict)}
                     cur_fo["docs"]   = "docs"   in prod_keys
                     cur_fo["design"] = "design" in prod_keys
@@ -5061,20 +5150,52 @@ async def api_browse_edit(request: Request, user: str = Depends(require_user)):
                         if k in fo_edits:
                             applied["forma"].append(k)
                 row["forma"] = cur_fo
+                if fo_is_invite:
+                    applied["forma"].append("_invited")
             else:
                 detail = res.get("detail", "unknown error")
                 for k in fo_edits.keys():
-                    if k.endswith("_label"):
+                    if k.startswith("_") or k.endswith("_label"):
                         continue
                     failed.append({"platform": "forma", "field": k, "error": detail})
 
     # ── Morta edits ────────────────────────────────────────────────
+    # Two paths:
+    #   - EDIT: row already has `morta`; change tag via morta_set_user_tag.
+    #   - INVITE (add-from-browse): row.morta is None — call morta_invite()
+    #     to add the user to the hub (default projectRole=member) and
+    #     chain a tag assignment if a tag was selected.
     mo_edits = edits.get("morta") or {}
-    if mo_edits and row.get("morta"):
+    mo_is_invite = (row.get("morta") is None) and bool(mo_edits)
+    if mo_edits and (row.get("morta") or mo_is_invite):
         mo_hub = (proj.get("platforms", {}).get("morta", {}) or {}).get("hub_id") or ""
         if not mo_hub:
             failed.append({"platform": "morta", "field": "*",
                            "error": "project has no Morta hub_id in registry"})
+        elif mo_is_invite:
+            # Invite path: morta_invite handles the hub-member add and
+            # an optional tag chain. Tag is optional — empty tag_id is fine.
+            new_tag_id = (mo_edits.get("tag_reference_id") or "").strip()
+            try:
+                res = morta_invite(email, config, hub_id=mo_hub,
+                                   tag_reference_id=new_tag_id or None)
+            except Exception as e:
+                res = {"status": "error", "detail": f"{type(e).__name__}: {e}"}
+            if res.get("status") == "success":
+                row["morta"] = {
+                    "role":        "member",
+                    "tag":         mo_edits.get("tag_label") or "",
+                    "public_id":   "",
+                    "hub_id":      mo_hub,
+                    "last_active": "",
+                    "on_hub":      True,
+                }
+                applied["morta"].append("_invited")
+                if "tag_reference_id" in mo_edits:
+                    applied["morta"].append("tag")
+            else:
+                failed.append({"platform": "morta", "field": "*",
+                               "error": res.get("detail", "Morta invite failed")})
         elif "tag_reference_id" in mo_edits:
             new_tag_id = (mo_edits.get("tag_reference_id") or "").strip()
             try:
