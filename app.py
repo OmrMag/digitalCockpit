@@ -4371,6 +4371,11 @@ def _sweep_browse_rows(user: str):
                     "role":        role,
                     "tag":         tag_str,
                     "public_id":   u_.get("publicId", ""),
+                    # Morta's hub-member delete endpoint addresses the user
+                    # by Firebase UID, not publicId. Capture both — public_id
+                    # is the user's Morta-side UUID (used for tag swap),
+                    # firebase_id is the auth identity (used for delete).
+                    "firebase_id": u_.get("firebaseUserId", "") or u_.get("firebase_id", "") or "",
                     "hub_id":      hub_id,
                     "last_active": "",
                     "on_hub":      True,
@@ -4474,41 +4479,29 @@ def _do_deactivate(user, config, email, platform, project_key, proj, row):
         morta = plats.get("morta", {}) or {}
         hub_id = morta.get("hub_id", "")
         msub   = row.get("morta") or {}
-        public_id = msub.get("public_id", "")
+        firebase_id = msub.get("firebase_id", "")
         if not hub_id:
             return False, "Morta hub_id not in registry"
-        if not public_id:
-            return False, "Morta public_id missing on row — refresh first"
+        if not firebase_id:
+            # Fallback for cache rows swept before firebase_id was being
+            # captured. Tell the admin to refresh so the new sweep populates it.
+            return False, "Morta firebase_id missing on row — refresh first"
         api_key = (config.get("morta", {}) or {}).get("api_key", "")
         if not api_key:
             return False, "Morta API key not set in Settings"
-        # Endpoint shape uncertainty: Morta's listing/invite endpoints
-        # use plural /members. The original deactivate code used singular
-        # /member which returns 404 in production. Try plural first; if
-        # that 404s too, fall back to the singular path before giving up.
-        # This way whichever shape Morta actually exposes, we hit it.
-        headers = {"Authorization": f"Bearer {api_key}"}
-        candidate_urls = [
-            f"https://api.morta.io/v1/hub/{hub_id}/members/{public_id}",
-            f"https://api.morta.io/v1/hub/{hub_id}/member/{public_id}",
-        ]
-        last_error = ""
-        for url in candidate_urls:
-            try:
-                r = http_requests.delete(url, headers=headers, timeout=15)
-            except Exception as e:
-                last_error = f"Morta request failed: {e}"
-                continue
-            if r.status_code in (200, 204):
-                print(f"[browse-toggle] morta delete succeeded via {url}")
-                return True, ""
-            if r.status_code == 404:
-                # Try the next candidate path.
-                last_error = f"Morta HTTP 404 at {url.split('/v1/')[-1]}"
-                continue
-            # Non-404 error — surface it without trying the other path.
-            return False, f"Morta HTTP {r.status_code}: {r.text[:200]}"
-        return False, last_error or "Morta delete failed (both endpoint shapes 404)"
+        # Documented endpoint: DELETE /v1/hub/{hub_id}/remove-user/{firebase_id}
+        # The user is identified by Firebase UID (auth identity), not the
+        # publicId we use elsewhere. Source: Morta API docs "Delete a User
+        # from a Hub" page.
+        url = f"https://api.morta.io/v1/hub/{hub_id}/remove-user/{firebase_id}"
+        try:
+            r = http_requests.delete(url,
+                headers={"Authorization": f"Bearer {api_key}"}, timeout=15)
+        except Exception as e:
+            return False, f"Morta request failed: {e}"
+        if r.status_code in (200, 204):
+            return True, ""
+        return False, f"Morta HTTP {r.status_code}: {r.text[:200]}"
 
     return False, f"unknown platform {platform}"
 
