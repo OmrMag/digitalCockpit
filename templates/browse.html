@@ -303,6 +303,11 @@ select.bu-cell-input{padding:2px 4px;cursor:pointer}
 .bu-toggle.on::before{transform:translateX(13px)}
 .bu-toggle.off{background:#b56565}              /* faded dark red — pending deactivate */
 .bu-toggle.off::before{transform:translateX(0)} /* knob stays left */
+/* Pending invite — user invited but hasn't accepted yet. Yellow signals
+   "they're in the list but not yet a real member". Knob sits to the
+   right (same as .on) since technically they're enrolled-pending. */
+.bu-toggle.pending{background:#d4a64a}
+.bu-toggle.pending::before{transform:translateX(13px)}
 .bu-toggle.faded{opacity:.28;cursor:not-allowed}
 .bu-toggle.locked{cursor:not-allowed;opacity:.55}
 .bu-toggle:not(.faded):not(.locked):hover{filter:brightness(.95)}
@@ -985,15 +990,33 @@ function toggleState(row, plat){
 function renderToggle(row, plat, isUnlocked){
     const { currentlyOn, currentlyOff, faded } = toggleState(row, plat);
     const cls = ['bu-toggle'];
-    if (currentlyOn)            cls.push('on');
-    else if (currentlyOff)      cls.push('off');
+    // Revizto-only: an existing user with pending=true (invited but not
+    // yet accepted) gets a yellow toggle. Overrides .on for the pending
+    // state since "active green" would lie about their status.
+    const isPending = plat === 'revizto' && row?.revizto?.pending === true;
+    if (isPending && !currentlyOff) {
+        cls.push('pending');
+    } else if (currentlyOn) {
+        cls.push('on');
+    } else if (currentlyOff) {
+        cls.push('off');
+    }
     if (faded)                  cls.push('faded');
     if (!isUnlocked && !faded)  cls.push('locked');
-    const title = faded
-        ? 'User is not on this platform — cannot be added from this view'
-        : (isUnlocked
-            ? (currentlyOn ? 'Click to deactivate' : 'Click to reactivate')
-            : 'Unlock the row first to edit');
+    let title;
+    if (faded) {
+        title = isUnlocked
+            ? 'Unlock and edit this row to invite the user to this platform'
+            : 'User is not on this platform — unlock to add';
+    } else if (isPending) {
+        title = isUnlocked
+            ? 'Click to withdraw pending invite'
+            : 'Pending — user has been invited but has not accepted yet';
+    } else if (isUnlocked) {
+        title = currentlyOn ? 'Click to deactivate' : 'Click to reactivate';
+    } else {
+        title = 'Unlock the row first to edit';
+    }
     return `<button class="${cls.join(' ')}" data-row="${esc(rowKey(row))}" data-plat="${plat}" title="${esc(title)}" type="button" tabindex="${(faded||!isUnlocked) ? -1 : 0}"></button>`;
 }
 

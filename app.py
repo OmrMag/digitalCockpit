@@ -4263,14 +4263,28 @@ def _sweep_browse_rows(user: str):
                 # no further translation needed. Empty string means
                 # "not on this license" (or license-team fetch failed).
                 lic_role_label = license_index.get(em_lower, "")
-                # user_uuid: prefer the entity's top-level uuid (the
-                # membership record's UUID) but fall back to the nested
-                # user.uuid if absent. The /v5/project/{uuid}/role/member/
-                # delete endpoint accepts the user UUID, so either works.
-                ent_uuid = (ent.get("uuid") or "") or ""
-                if not ent_uuid:
-                    user_sub = ent.get("user") if isinstance(ent.get("user"), dict) else {}
-                    ent_uuid = (user_sub.get("uuid") or "") or ""
+                # Two distinct identifiers per entity:
+                #   - member_uuid: the membership record's UUID, present
+                #     even for invited-but-not-accepted users. Used for
+                #     withdrawing pending invites.
+                #   - user_uuid: the actual user's UUID (under entity.user
+                #     in Revizto's API). Empty until the user accepts the
+                #     invite. Used for removing active members.
+                # The DELETE endpoint /v5/project/{pid}/role/member/{X}
+                # accepts either form, so deactivate prefers user_uuid
+                # for active members and falls back to member_uuid for
+                # pending invites.
+                member_uuid = (ent.get("uuid") or "") or ""
+                user_sub    = ent.get("user") if isinstance(ent.get("user"), dict) else {}
+                user_uuid   = (user_sub.get("uuid") or "") or ""
+                # Pending detection: Revizto sets ent.pending=true for
+                # invitees who haven't yet accepted. As a safety net,
+                # treat "no user_uuid + has invitedAt" as pending too,
+                # since that's the same data shape regardless of whether
+                # the API explicitly tagged it.
+                pending = bool(ent.get("pending")) or (
+                    not user_uuid and bool(ent.get("invitedAt"))
+                )
                 rec["revizto"] = {
                     "role":         role,
                     "license_role": lic_role_label,
@@ -4278,7 +4292,9 @@ def _sweep_browse_rows(user: str):
                     "department":   ent.get("department", "") or "",
                     "location":     ent.get("location", "") or "",
                     "last_active":  ent.get("lastActive", "") or "",
-                    "user_uuid":    ent_uuid,
+                    "user_uuid":    user_uuid,
+                    "member_uuid":  member_uuid,
+                    "pending":      pending,
                     # on_license: true iff email appears in the parent
                     # license's team. False if the user was on the
                     # project but later removed from the license, OR
@@ -4482,21 +4498,30 @@ def _do_deactivate(user, config, email, platform, project_key, proj, row):
         project_uuid = rev.get("project_uuid", "")
         region       = rev.get("region", "dubai")
         rsub         = row.get("revizto") or {}
-        user_uuid    = rsub.get("user_uuid", "")
+        # Prefer user_uuid (active member) but fall back to member_uuid
+        # (pending invite — user.uuid not yet populated). The DELETE
+        # endpoint /v5/project/{pid}/role/member/{X} accepts either,
+        # so the same code path works for both "remove user" and
+        # "withdraw invite".
+        delete_uuid = rsub.get("user_uuid", "") or rsub.get("member_uuid", "")
+        is_pending  = bool(rsub.get("pending"))
         if not project_uuid or not region:
             return False, "Revizto project_uuid/region not in registry"
-        if not user_uuid:
-            return False, "user_uuid missing on row — refresh first"
+        if not delete_uuid:
+            return False, "Revizto user_uuid/member_uuid missing on row — refresh first"
         token = revizto_get_token_for_region(config, region, email=user)
         if not token:
             return False, "Revizto auth failed"
-        url = f"https://api.{region}.revizto.com/v5/project/{project_uuid}/role/member/{user_uuid}"
+        url = f"https://api.{region}.revizto.com/v5/project/{project_uuid}/role/member/{delete_uuid}"
         try:
             r = http_requests.delete(url,
                 headers={"Authorization": f"Bearer {token}"}, timeout=15)
         except Exception as e:
             return False, f"Revizto request failed: {e}"
         if r.status_code in (200, 204):
+            # Log which path we took for visibility — useful to confirm
+            # pending-invite withdraw is going through the right UUID.
+            print(f"[browse-toggle] revizto delete via {'member_uuid (pending)' if is_pending else 'user_uuid (active)'}")
             return True, ""
         return False, f"Revizto HTTP {r.status_code}: {r.text[:200]}"
 
