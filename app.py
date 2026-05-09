@@ -4207,6 +4207,14 @@ def _sweep_browse_rows(user: str):
                 # no further translation needed. Empty string means
                 # "not on this license" (or license-team fetch failed).
                 lic_role_label = license_index.get(em_lower, "")
+                # user_uuid: prefer the entity's top-level uuid (the
+                # membership record's UUID) but fall back to the nested
+                # user.uuid if absent. The /v5/project/{uuid}/role/member/
+                # delete endpoint accepts the user UUID, so either works.
+                ent_uuid = (ent.get("uuid") or "") or ""
+                if not ent_uuid:
+                    user_sub = ent.get("user") if isinstance(ent.get("user"), dict) else {}
+                    ent_uuid = (user_sub.get("uuid") or "") or ""
                 rec["revizto"] = {
                     "role":         role,
                     "license_role": lic_role_label,
@@ -4214,7 +4222,7 @@ def _sweep_browse_rows(user: str):
                     "department":   ent.get("department", "") or "",
                     "location":     ent.get("location", "") or "",
                     "last_active":  ent.get("lastActive", "") or "",
-                    "user_uuid":    ent.get("uuid", "") or "",
+                    "user_uuid":    ent_uuid,
                     # on_license: true iff email appears in the parent
                     # license's team. False if the user was on the
                     # project but later removed from the license, OR
@@ -4443,11 +4451,19 @@ def _do_deactivate(user, config, email, platform, project_key, proj, row):
         token = forma_get_token(config)
         if not token:
             return False, "Forma auth failed"
+        # Autodesk admin endpoints require a User-Id impersonation header
+        # so the API knows which admin is making the call. Without it,
+        # the request returns 401 Unauthorized even with a valid token —
+        # same as forma_invite() at line ~1864. The admin_user_id comes
+        # from config.forma.admin_user_id (set in Settings).
+        admin_user_id = (config.get("forma", {}) or {}).get("admin_user_id", "")
         clean_pid = fpid.lstrip("b.") if fpid.startswith("b.") else fpid
         url = f"https://developer.api.autodesk.com/construction/admin/v1/projects/{clean_pid}/users/{user_id}"
+        headers = {"Authorization": f"Bearer {token}"}
+        if admin_user_id:
+            headers["User-Id"] = admin_user_id
         try:
-            r = http_requests.delete(url,
-                headers={"Authorization": f"Bearer {token}"}, timeout=20)
+            r = http_requests.delete(url, headers=headers, timeout=20)
         except Exception as e:
             return False, f"Forma request failed: {e}"
         if r.status_code in (200, 204):
@@ -4466,15 +4482,33 @@ def _do_deactivate(user, config, email, platform, project_key, proj, row):
         api_key = (config.get("morta", {}) or {}).get("api_key", "")
         if not api_key:
             return False, "Morta API key not set in Settings"
-        url = f"https://api.morta.io/v1/hub/{hub_id}/member/{public_id}"
-        try:
-            r = http_requests.delete(url,
-                headers={"Authorization": f"Bearer {api_key}"}, timeout=15)
-        except Exception as e:
-            return False, f"Morta request failed: {e}"
-        if r.status_code in (200, 204):
-            return True, ""
-        return False, f"Morta HTTP {r.status_code}: {r.text[:200]}"
+        # Endpoint shape uncertainty: Morta's listing/invite endpoints
+        # use plural /members. The original deactivate code used singular
+        # /member which returns 404 in production. Try plural first; if
+        # that 404s too, fall back to the singular path before giving up.
+        # This way whichever shape Morta actually exposes, we hit it.
+        headers = {"Authorization": f"Bearer {api_key}"}
+        candidate_urls = [
+            f"https://api.morta.io/v1/hub/{hub_id}/members/{public_id}",
+            f"https://api.morta.io/v1/hub/{hub_id}/member/{public_id}",
+        ]
+        last_error = ""
+        for url in candidate_urls:
+            try:
+                r = http_requests.delete(url, headers=headers, timeout=15)
+            except Exception as e:
+                last_error = f"Morta request failed: {e}"
+                continue
+            if r.status_code in (200, 204):
+                print(f"[browse-toggle] morta delete succeeded via {url}")
+                return True, ""
+            if r.status_code == 404:
+                # Try the next candidate path.
+                last_error = f"Morta HTTP 404 at {url.split('/v1/')[-1]}"
+                continue
+            # Non-404 error — surface it without trying the other path.
+            return False, f"Morta HTTP {r.status_code}: {r.text[:200]}"
+        return False, last_error or "Morta delete failed (both endpoint shapes 404)"
 
     return False, f"unknown platform {platform}"
 
