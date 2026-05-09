@@ -247,6 +247,30 @@
     accent-color:var(--navy);opacity:.55;display:block;margin:0 auto
 }
 
+/* ── Edit-mode cell controls (visible only on unlocked rows) ────── */
+/* Mirrors the .cell-input class on manage.html so the two pages have a
+   consistent inline-edit aesthetic. Inputs are flush with the cell when
+   idle and only outline themselves on hover/focus, so a row at rest
+   looks the same as a read-only row except for the unlock affordance. */
+.bu-cell-input{
+    width:100%;min-width:60px;
+    padding:3px 5px;
+    border:1px solid transparent;border-radius:3px;
+    background:transparent;
+    font:inherit;font-size:11px;
+    color:var(--text-dark);
+    box-sizing:border-box;
+}
+.bu-cell-input:hover{border-color:var(--border-cream);background:white}
+.bu-cell-input:focus{outline:none;border-color:var(--accent);background:white;box-shadow:0 0 0 2px rgba(74,158,255,.15)}
+select.bu-cell-input{padding:2px 4px;cursor:pointer}
+.bu-cell-check{text-align:center}
+.bu-cell-check input[type="checkbox"]{
+    width:13px;height:13px;
+    accent-color:var(--navy);
+    cursor:pointer;margin:0;vertical-align:middle
+}
+
 /* ── Apple-style toggle ────────────────────────────────────────── */
 /* States, in priority order:
    - faded:    user isn't on this platform. Greyed, not interactive.
@@ -331,6 +355,21 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
    ───────────────────────────────────────────────────────────────── */
 
 let lastRows           = [];
+/* Per-project registry metadata, keyed by project_key. Populated once
+   per page load by loadRegistry(). Each entry contains the platform
+   dropdown lists (revizto.license_roles, revizto.roles, forma.companies,
+   forma.roles, morta.tags) used by the editable property cells when a
+   row is unlocked. Same shape as manage.html consumes from /api/registry. */
+let registryByKey      = {};
+/* When a row is unlocked, snapshot its current revizto/forma/morta
+   sub-objects so we can revert any field whose edit-API call fails.
+   Keyed by rowKey(). Cleared when the row is locked again. */
+const originalsByKey   = new Map();
+/* While a row is unlocked, the admin's in-progress edits are held here.
+   Shape: rowKey → { revizto: {field:value}, forma: {...}, morta: {...} }
+   Cleared when the row is locked. The diff against the original snapshot
+   is what we send to /api/browse/edit. */
+const pendingEdits     = new Map();
 /* displayedRows is the filtered subset of lastRows that the table
    actually renders. Updated whenever the user types in either search
    input. The full lastRows array stays untouched so toggling filters
@@ -402,6 +441,22 @@ async function loadCache(){
     }
 }
 
+/* Load the per-project registry so each row can render its platform-
+   specific dropdown lists when unlocked. Same endpoint manage.html
+   uses, scoped to the logged-in admin's projects. Failure here is
+   non-fatal: rows still render, but unlock-edit will fall back to
+   plain text inputs (no dropdowns). */
+async function loadRegistry(){
+    try {
+        const r = await fetch('/api/registry');
+        if (!r.ok) throw new Error('HTTP '+r.status);
+        registryByKey = await r.json() || {};
+    } catch(e){
+        console.error('[browse] registry load failed — dropdowns will be empty', e);
+        registryByKey = {};
+    }
+}
+
 async function doRefresh(){
     const btn = document.getElementById('bu-refresh');
     if (!btn) return;
@@ -413,6 +468,12 @@ async function doRefresh(){
         if (!r.ok) throw new Error('HTTP '+r.status);
         const data = await r.json();
         toast(`Refreshed ${data.swept_projects.length} project(s) — ${data.rows_added} row(s) updated`, 'ok');
+        // Refresh wipes any in-progress edits — the new rows may not match
+        // the row keys those edits were against, and replaying stale edits
+        // would be both confusing and unsafe. Same for unlock state.
+        unlocked.clear();
+        pendingEdits.clear();
+        originalsByKey.clear();
         await loadCache();
     } catch(e){
         toast('Refresh failed: '+e.message, 'error');
@@ -573,21 +634,135 @@ function lastActiveLabel(ts, days){
     return `${Math.floor(days/365)}y ago`;
 }
 
+/* ─────────────────────────────────────────────────────────────────
+   Editable cell helpers — produce a full <td> containing a form
+   control. Used when a row is unlocked. The data-* attributes carry
+   enough context for the change handler to dispatch the value into
+   pendingEdits[rowKey][platform][field] without needing closures.
+
+   editKey on each spec is the field name in the /api/browse/edit
+   payload (e.g. "license_role_id"). The display name and the wire
+   field can differ — license_role (label) ↔ license_role_id (int).
+   ───────────────────────────────────────────────────────────────── */
+
+/* Plain text input. value is the current value (already-applied or
+   pending edit). placeholder shown when value is empty. */
+function inputCellHtml(rowKey, platform, editKey, value, placeholder=''){
+    const v = esc(value || '');
+    return `<td class="bu-prop-cell">
+        <input type="text" class="bu-cell-input"
+               data-rk="${esc(rowKey)}" data-plat="${platform}" data-ek="${esc(editKey)}"
+               value="${v}" placeholder="${esc(placeholder)}">
+    </td>`;
+}
+
+/* <select> dropdown. options is an array of {id, name} OR {value, name}.
+   selectedId is the currently-chosen value (may not match any option;
+   we still render it as the displayed selected so the admin sees what's
+   in the row even if it's stale). */
+function selectCellHtml(rowKey, platform, editKey, options, selectedId, includeNone=true, labelEditKey=''){
+    const opts = (options || []).map(o => {
+        const id   = o.id != null ? o.id : (o.value != null ? o.value : '');
+        const name = o.name || '';
+        const sel  = String(id) === String(selectedId) ? ' selected' : '';
+        return `<option value="${esc(String(id))}" data-label="${esc(name)}"${sel}>${esc(name)}</option>`;
+    }).join('');
+    const noneOpt = includeNone
+        ? `<option value="" data-label="">— None —</option>`
+        : '';
+    const labelAttr = labelEditKey ? ` data-label-ek="${esc(labelEditKey)}"` : '';
+    return `<td class="bu-prop-cell">
+        <select class="bu-cell-input"
+                data-rk="${esc(rowKey)}" data-plat="${platform}" data-ek="${esc(editKey)}"${labelAttr}>
+            ${noneOpt}${opts}
+        </select>
+    </td>`;
+}
+
+/* Editable checkbox. value is bool. */
+function checkCellHtml(rowKey, platform, editKey, checked){
+    return `<td class="bu-prop-cell bu-cell-check">
+        <input type="checkbox"
+               data-rk="${esc(rowKey)}" data-plat="${platform}" data-ek="${esc(editKey)}"
+               ${checked ? 'checked' : ''}>
+    </td>`;
+}
+
+/* Pull the "currently displayed" value for an editable field — i.e.
+   the pending-edit value if the admin has already typed something,
+   otherwise the value from the cache row. Used by edit-mode renders
+   so re-rendering the table (which happens on every state change)
+   doesn't blow away in-progress edits. */
+function currentEditValue(row, platform, fieldKeyOnRow, editKey){
+    const k = rowKey(row);
+    const pending = pendingEdits.get(k);
+    if (pending && pending[platform] && editKey in pending[platform]){
+        return pending[platform][editKey];
+    }
+    return (row[platform] || {})[fieldKeyOnRow];
+}
+
 const PROP_SPECS = {
     revizto: [
         /* Company is the slack-absorber for Revizto: when expanded, this
            column gets no fixed width and grows to fill remaining page
            width. All other Reviz columns hold their declared widths. */
         { key:'company',      label:'Company',      col:'col-prop-company',     absorber:true,
-          render: row => textCellHtml(row.revizto?.company) },
+          editKey: 'company',
+          render: (row, isUnlocked, reg) => isUnlocked
+              ? inputCellHtml(rowKey(row), 'revizto', 'company',
+                              currentEditValue(row, 'revizto', 'company', 'company'),
+                              'Company')
+              : textCellHtml(row.revizto?.company) },
         { key:'department',   label:'Department',   col:'col-prop-department',
-          render: row => textCellHtml(row.revizto?.department) },
+          editKey: 'department',
+          render: (row, isUnlocked, reg) => isUnlocked
+              ? inputCellHtml(rowKey(row), 'revizto', 'department',
+                              currentEditValue(row, 'revizto', 'department', 'department'),
+                              'Department')
+              : textCellHtml(row.revizto?.department) },
         { key:'location',     label:'Location',     col:'col-prop-location',
-          render: row => textCellHtml(row.revizto?.location) },
+          editKey: 'location',
+          render: (row, isUnlocked, reg) => isUnlocked
+              ? inputCellHtml(rowKey(row), 'revizto', 'location',
+                              currentEditValue(row, 'revizto', 'location', 'location'),
+                              'Location')
+              : textCellHtml(row.revizto?.location) },
         { key:'license_role', label:'License Role', col:'col-prop-license-role',
-          render: row => textCellHtml(row.revizto?.license_role) },
+          editKey: 'license_role_id',
+          render: (row, isUnlocked, reg) => {
+              if (!isUnlocked) return textCellHtml(row.revizto?.license_role);
+              const opts = (reg?.platforms?.revizto?.license_roles) || [];
+              // Resolve the current id from the displayed label (the cache
+              // row stores the label, not the id). Look it up in reg.
+              const currentLabel = currentEditValue(row, 'revizto', 'license_role', 'license_role_id');
+              let selectedId = '';
+              if (typeof currentLabel === 'number' || (typeof currentLabel === 'string' && /^\d+$/.test(currentLabel))){
+                  selectedId = String(currentLabel);
+              } else {
+                  const match = opts.find(o => o.name === (row.revizto?.license_role || ''));
+                  selectedId = match ? String(match.id) : '';
+              }
+              return selectCellHtml(rowKey(row), 'revizto', 'license_role_id',
+                                    opts, selectedId, /*includeNone*/false);
+          } },
         { key:'project_role', label:'Project Role', col:'col-prop-project-role',
-          render: row => textCellHtml(row.revizto?.role) },
+          editKey: 'project_role_id',
+          render: (row, isUnlocked, reg) => {
+              if (!isUnlocked) return textCellHtml(row.revizto?.role);
+              const opts = (reg?.platforms?.revizto?.roles) || [];
+              const pending = pendingEdits.get(rowKey(row))?.revizto?.project_role_id;
+              let selectedId = '';
+              if (pending != null && pending !== ''){
+                  selectedId = String(pending);
+              } else {
+                  const match = opts.find(o => o.name === (row.revizto?.role || ''));
+                  selectedId = match ? String(match.id) : '';
+              }
+              return selectCellHtml(rowKey(row), 'revizto', 'project_role_id',
+                                    opts, selectedId, /*includeNone*/true,
+                                    /*labelEditKey*/'project_role_label');
+          } },
         { key:'l',            label:'L',            col:'col-prop-l',
           render: row => flagHtml(row.revizto?.on_license) },
         { key:'p',            label:'P',            col:'col-prop-p',
@@ -598,17 +773,62 @@ const PROP_SPECS = {
     forma: [
         /* Company also absorbs slack for Forma. */
         { key:'company',      label:'Company',      col:'col-prop-company',     absorber:true,
-          render: row => textCellHtml(row.forma?.company) },
+          editKey: 'company_id',
+          render: (row, isUnlocked, reg) => {
+              if (!isUnlocked) return textCellHtml(row.forma?.company);
+              const opts = (reg?.platforms?.forma?.companies) || [];
+              const pending = pendingEdits.get(rowKey(row))?.forma?.company_id;
+              let selectedId = '';
+              if (pending != null){
+                  selectedId = String(pending);
+              } else if (row.forma?.company_id){
+                  selectedId = String(row.forma.company_id);
+              } else {
+                  const match = opts.find(o => o.name === (row.forma?.company || ''));
+                  selectedId = match ? String(match.id) : '';
+              }
+              return selectCellHtml(rowKey(row), 'forma', 'company_id',
+                                    opts, selectedId, true, 'company_label');
+          } },
         { key:'role',         label:'Role',         col:'col-prop-role',
-          render: row => textCellHtml(row.forma?.role) },
+          editKey: 'role_id',
+          render: (row, isUnlocked, reg) => {
+              if (!isUnlocked) return textCellHtml(row.forma?.role);
+              const opts = (reg?.platforms?.forma?.roles) || [];
+              const pending = pendingEdits.get(rowKey(row))?.forma?.role_id;
+              let selectedId = '';
+              if (pending != null){
+                  selectedId = String(pending);
+              } else if (Array.isArray(row.forma?.role_ids) && row.forma.role_ids[0]){
+                  selectedId = String(row.forma.role_ids[0]);
+              } else {
+                  const match = opts.find(o => o.name === (row.forma?.role || ''));
+                  selectedId = match ? String(match.id) : '';
+              }
+              return selectCellHtml(rowKey(row), 'forma', 'role_id',
+                                    opts, selectedId, true, 'role_label');
+          } },
         { key:'access_level', label:'Access Level', col:'col-prop-access-level',
+          /* Read-only — Forma access_level is account-scoped, not per-project. */
           render: row => textCellHtml(row.forma?.access_level) },
         { key:'docs',         label:'Docs',         col:'col-prop-docs',
-          render: row => checkboxCellHtml(!!row.forma?.docs) },
+          editKey: 'docs',
+          render: (row, isUnlocked, reg) => isUnlocked
+              ? checkCellHtml(rowKey(row), 'forma', 'docs',
+                              !!currentEditValue(row, 'forma', 'docs', 'docs'))
+              : checkboxCellHtml(!!row.forma?.docs) },
         { key:'design',       label:'Design',       col:'col-prop-design',
-          render: row => checkboxCellHtml(!!row.forma?.design) },
+          editKey: 'design',
+          render: (row, isUnlocked, reg) => isUnlocked
+              ? checkCellHtml(rowKey(row), 'forma', 'design',
+                              !!currentEditValue(row, 'forma', 'design', 'design'))
+              : checkboxCellHtml(!!row.forma?.design) },
         { key:'model',        label:'Model',        col:'col-prop-model',
-          render: row => checkboxCellHtml(!!row.forma?.model) },
+          editKey: 'model',
+          render: (row, isUnlocked, reg) => isUnlocked
+              ? checkCellHtml(rowKey(row), 'forma', 'model',
+                              !!currentEditValue(row, 'forma', 'model', 'model'))
+              : checkboxCellHtml(!!row.forma?.model) },
         { key:'last_active',  label:'Last Active',  col:'col-prop-last-active',
           render: row => textCellHtml(row.forma ? lastActiveLabel(row.forma.last_active, row.last_active_days) : '') },
     ],
@@ -616,7 +836,27 @@ const PROP_SPECS = {
         /* Tag absorbs slack for Morta — useful since users can carry many
            tags and the column genuinely benefits from extra width. */
         { key:'tag',          label:'Tag',          col:'col-prop-tag',         absorber:true,
-          render: row => textCellHtml(row.morta?.tag) },
+          editKey: 'tag_reference_id',
+          render: (row, isUnlocked, reg) => {
+              if (!isUnlocked) return textCellHtml(row.morta?.tag);
+              // Morta tags use {tag_reference_id, name} shape from /api/registry.
+              const rawTags = (reg?.platforms?.morta?.tags) || [];
+              const opts = rawTags.map(t => ({id: t.tag_reference_id, name: t.name}));
+              const pending = pendingEdits.get(rowKey(row))?.morta?.tag_reference_id;
+              let selectedId = '';
+              if (pending != null){
+                  selectedId = String(pending);
+              } else {
+                  // Cache row stores comma-joined tag names. Match the FIRST
+                  // one against options to seed the dropdown — that's the
+                  // best we can do until the sweep stores the IDs.
+                  const firstName = ((row.morta?.tag || '').split(',')[0] || '').trim();
+                  const match     = opts.find(o => o.name === firstName);
+                  selectedId      = match ? String(match.id) : '';
+              }
+              return selectCellHtml(rowKey(row), 'morta', 'tag_reference_id',
+                                    opts, selectedId, true, 'tag_label');
+          } },
         { key:'last_active',  label:'Last Active',  col:'col-prop-last-active',
           render: row => textCellHtml(row.morta ? lastActiveLabel(row.morta.last_active, row.last_active_days) : '') },
     ],
@@ -840,9 +1080,15 @@ function renderTable(){
             isInteractive = isSelected;
         } else {
             const isUnlocked = unlocked.has(k);
-            lockCellHtml = `<span class="bu-lock ${isUnlocked ? 'unlocked' : ''}" data-row="${esc(k)}" title="${isUnlocked ? 'Click to lock (cancel edit)' : 'Click to unlock for editing'}">${isUnlocked ? lockSvgOpen : lockSvgClosed}</span>`;
+            lockCellHtml = `<span class="bu-lock ${isUnlocked ? 'unlocked' : ''}" data-row="${esc(k)}" title="${isUnlocked ? 'Click to lock and apply edits' : 'Click to unlock for editing'}">${isUnlocked ? lockSvgOpen : lockSvgClosed}</span>`;
             isInteractive = isUnlocked;
         }
+        // isEditing controls property-cell rendering: editable inputs vs
+        // read-only text. Only true in single-row unlocked mode. Bulk mode
+        // never triggers cell-level editing — its purpose is multi-row
+        // toggle commits, not value edits.
+        const isEditing = !bulkMode && unlocked.has(k);
+        const regMeta   = registryByKey[r.project_key] || {};
         const cells = [
             `<td class="lock-cell">${lockCellHtml}</td>`,
             `<td class="user-cell">
@@ -854,7 +1100,13 @@ function renderTable(){
         PLATFORMS.forEach(p => {
             cells.push(platformBodyToggleHtml(r, p, isInteractive));
             if (expandedPlatform === p){
-                PROP_SPECS[p].forEach(spec => cells.push(spec.render(r)));
+                // Property cells render edit controls when isEditing AND the
+                // user is on this platform (regMeta has dropdown options for
+                // the row's specific project). When the row's user is NOT on
+                // this platform (faded toggle), keep cells read-only — there's
+                // nothing to edit.
+                const cellsEditable = isEditing && r[p] != null;
+                PROP_SPECS[p].forEach(spec => cells.push(spec.render(r, cellsEditable, regMeta)));
             }
         });
         return `<tr>${cells.join('')}</tr>`;
@@ -907,11 +1159,80 @@ function renderTable(){
 
     if (!bulkMode){
         out.querySelectorAll('.bu-lock').forEach(el => {
-            el.addEventListener('click', () => {
+            el.addEventListener('click', async () => {
                 const k = el.dataset.row;
-                if (unlocked.has(k)) unlocked.delete(k);
-                else unlocked.add(k);
-                renderTable();
+                if (unlocked.has(k)){
+                    /* Clicking the open lock means COMMIT. Fire any pending
+                       edits, then close. Even if there are no edits, we
+                       still close — clicking lock-open with no changes is
+                       "cancel edit", which is also fine. */
+                    await commitRowEdits(k);
+                    unlocked.delete(k);
+                    pendingEdits.delete(k);
+                    originalsByKey.delete(k);
+                    renderTable();
+                } else {
+                    /* Opening for edit. Snapshot the row's original sub-
+                       objects so a subsequent commit failure can revert
+                       individual fields cleanly. */
+                    const row = lastRows.find(r => rowKey(r) === k);
+                    if (row){
+                        originalsByKey.set(k, {
+                            revizto: JSON.parse(JSON.stringify(row.revizto || null)),
+                            forma:   JSON.parse(JSON.stringify(row.forma   || null)),
+                            morta:   JSON.parse(JSON.stringify(row.morta   || null)),
+                        });
+                    }
+                    unlocked.add(k);
+                    renderTable();
+                }
+            });
+        });
+        /* Capture in-progress edits as the admin types/selects. Each cell
+           input carries data-rk, data-plat, data-ek; for selects we ALSO
+           extract the chosen option's data-label so the cache can update
+           its display label without an extra registry round-trip. */
+        out.querySelectorAll('.bu-cell-input').forEach(el => {
+            const evt = (el.tagName === 'SELECT') ? 'change' : 'input';
+            el.addEventListener(evt, () => {
+                const k    = el.dataset.rk;
+                const plat = el.dataset.plat;
+                const ek   = el.dataset.ek;
+                if (!k || !plat || !ek) return;
+                let pe = pendingEdits.get(k);
+                if (!pe){ pe = {revizto:{}, forma:{}, morta:{}}; pendingEdits.set(k, pe); }
+                let value;
+                if (el.tagName === 'SELECT'){
+                    value = el.value;
+                    // Coerce numeric IDs (Revizto roles) to numbers so the
+                    // backend doesn't have to guess.
+                    if (/^\d+$/.test(value)) value = parseInt(value, 10);
+                    pe[plat][ek] = value;
+                    // Stash the chosen option's label too if a label-ek
+                    // was declared on the select. Backend reads *_label
+                    // fields to update the cache row's display value.
+                    const labelEk = el.dataset.labelEk;
+                    if (labelEk){
+                        const opt = el.options[el.selectedIndex];
+                        pe[plat][labelEk] = opt ? (opt.dataset.label || '') : '';
+                    }
+                } else {
+                    value = el.value;
+                    pe[plat][ek] = value;
+                }
+            });
+        });
+        /* Editable checkboxes don't carry the bu-cell-input class; bind
+           them separately. Same data-* contract. */
+        out.querySelectorAll('.bu-cell-check input[type="checkbox"]').forEach(el => {
+            el.addEventListener('change', () => {
+                const k    = el.dataset.rk;
+                const plat = el.dataset.plat;
+                const ek   = el.dataset.ek;
+                if (!k || !plat || !ek) return;
+                let pe = pendingEdits.get(k);
+                if (!pe){ pe = {revizto:{}, forma:{}, morta:{}}; pendingEdits.set(k, pe); }
+                pe[plat][ek] = !!el.checked;
             });
         });
     } else {
@@ -1074,6 +1395,192 @@ async function fireToggleChanges(changes, fromBulk){
 }
 
 /* ─────────────────────────────────────────────────────────────────
+   Edit commit — fires when an unlocked row is clicked closed.
+
+   Reads pendingEdits[k], strips out fields that match the original
+   value (no-op edits don't need to hit the API), and POSTs the diff
+   to /api/browse/edit. Updates lastRows in place from the response,
+   reverting any field whose write failed back to its original value.
+
+   Toast/error UX:
+     - All edits succeeded → green "Applied" toast.
+     - Some succeeded, some failed → orange toast listing failed fields.
+     - All failed → red toast with the first error.
+     - No diff → silent (lock just closes).
+   ───────────────────────────────────────────────────────────────── */
+async function commitRowEdits(k){
+    const pe = pendingEdits.get(k);
+    if (!pe) return;  // nothing to do
+    const orig = originalsByKey.get(k) || {revizto:null, forma:null, morta:null};
+
+    // Build a clean diff per platform: only fields whose value differs
+    // from the original. Empty platform objects are dropped entirely.
+    const diff = {revizto:{}, forma:{}, morta:{}};
+    let hasAny = false;
+
+    function addIfChanged(platform, editKey, newVal, originalVal){
+        // Treat null/undefined/'' as equivalent for "unset" comparisons —
+        // an empty input that matches an empty cache value isn't a change.
+        const a = (newVal === undefined || newVal === null) ? '' : newVal;
+        const b = (originalVal === undefined || originalVal === null) ? '' : originalVal;
+        if (String(a) === String(b)) return;
+        diff[platform][editKey] = newVal;
+        hasAny = true;
+    }
+
+    // Revizto
+    if (orig.revizto){
+        const o = orig.revizto;
+        const p = pe.revizto || {};
+        addIfChanged('revizto', 'company',    p.company,    o.company);
+        addIfChanged('revizto', 'department', p.department, o.department);
+        addIfChanged('revizto', 'location',   p.location,   o.location);
+        // For the role IDs: the original is the LABEL (cache stores label,
+        // not id). Look up the original's id from regMeta and compare.
+        const row     = lastRows.find(r => rowKey(r) === k);
+        const regMeta = registryByKey[row?.project_key] || {};
+        if (p.license_role_id !== undefined){
+            const opts = (regMeta?.platforms?.revizto?.license_roles) || [];
+            const origMatch = opts.find(opt => opt.name === o.license_role);
+            const origId    = origMatch ? origMatch.id : null;
+            if (String(p.license_role_id) !== String(origId)){
+                diff.revizto.license_role_id = p.license_role_id;
+                hasAny = true;
+            }
+        }
+        if (p.project_role_id !== undefined){
+            const opts = (regMeta?.platforms?.revizto?.roles) || [];
+            const origMatch = opts.find(opt => opt.name === o.role);
+            const origId    = origMatch ? origMatch.id : null;
+            if (String(p.project_role_id) !== String(origId || '')){
+                diff.revizto.project_role_id = p.project_role_id;
+                if (p.project_role_label != null) diff.revizto.project_role_label = p.project_role_label;
+                hasAny = true;
+            }
+        }
+    }
+
+    // Forma
+    if (orig.forma){
+        const o = orig.forma;
+        const p = pe.forma || {};
+        if (p.company_id !== undefined && String(p.company_id) !== String(o.company_id || '')){
+            diff.forma.company_id    = p.company_id;
+            if (p.company_label != null) diff.forma.company_label = p.company_label;
+            hasAny = true;
+        }
+        if (p.role_id !== undefined){
+            const origRoleId = (Array.isArray(o.role_ids) && o.role_ids[0]) ? o.role_ids[0] : '';
+            if (String(p.role_id) !== String(origRoleId)){
+                // Backend takes role_ids (list), so wrap.
+                diff.forma.role_ids = p.role_id ? [p.role_id] : [];
+                if (p.role_label != null) diff.forma.role_label = p.role_label;
+                hasAny = true;
+            }
+        }
+        // Product checkboxes — if any of docs/design/model changed, send
+        // the FULL products list (Forma's import endpoint replaces the
+        // product list, not patches it).
+        const productChanged = ['docs', 'design', 'model'].some(f =>
+            p[f] !== undefined && !!p[f] !== !!o[f]
+        );
+        if (productChanged){
+            const docs   = (p.docs   !== undefined) ? !!p.docs   : !!o.docs;
+            const design = (p.design !== undefined) ? !!p.design : !!o.design;
+            const model  = (p.model  !== undefined) ? !!p.model  : !!o.model;
+            const products = [];
+            if (docs)   products.push({key: 'docs',   access: 'member'});
+            if (design) products.push({key: 'design', access: 'member'});
+            if (model)  products.push({key: 'model',  access: 'member'});
+            diff.forma.products = products;
+            // Also include the per-flag booleans so the backend's
+            // applied[] tracking knows which fields the admin changed.
+            if (p.docs   !== undefined) diff.forma.docs   = !!p.docs;
+            if (p.design !== undefined) diff.forma.design = !!p.design;
+            if (p.model  !== undefined) diff.forma.model  = !!p.model;
+            hasAny = true;
+        }
+    }
+
+    // Morta
+    if (orig.morta){
+        const p = pe.morta || {};
+        if (p.tag_reference_id !== undefined){
+            // Compare against the FIRST tag name on the cache row (if any),
+            // resolved to its id via regMeta. Sweep stores tags as a
+            // comma-joined name string, so this is best-effort.
+            const row     = lastRows.find(r => rowKey(r) === k);
+            const regMeta = registryByKey[row?.project_key] || {};
+            const opts    = (regMeta?.platforms?.morta?.tags) || [];
+            const firstName = ((orig.morta.tag || '').split(',')[0] || '').trim();
+            const origMatch = opts.find(t => t.name === firstName);
+            const origId    = origMatch ? origMatch.tag_reference_id : '';
+            if (String(p.tag_reference_id) !== String(origId)){
+                diff.morta.tag_reference_id = p.tag_reference_id;
+                if (p.tag_label != null) diff.morta.tag_label = p.tag_label;
+                hasAny = true;
+            }
+        }
+    }
+
+    // Drop empty platforms so the backend doesn't waste time on no-ops.
+    Object.keys(diff).forEach(plat => {
+        if (Object.keys(diff[plat]).length === 0) delete diff[plat];
+    });
+    if (!hasAny){
+        // Lock click on an unlocked row with no real changes — silent close.
+        return;
+    }
+
+    const row = lastRows.find(r => rowKey(r) === k);
+    if (!row) return;
+
+    let resp;
+    try {
+        const r = await fetch('/api/browse/edit', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body:    JSON.stringify({
+                email:       row.email,
+                project_key: row.project_key,
+                edits:       diff,
+            }),
+        });
+        if (!r.ok) throw new Error('HTTP '+r.status);
+        resp = await r.json();
+    } catch(e){
+        toast('Edit failed: '+e.message, 'error');
+        console.error('[browse] edit fire failed', e);
+        return;
+    }
+
+    // Replace the row's sub-objects with what the server confirmed —
+    // the response payload includes the updated cache row.
+    if (resp.row){
+        const idx = lastRows.findIndex(r => rowKey(r) === k);
+        if (idx >= 0){
+            lastRows[idx] = resp.row;
+            applyClientFilters();
+        }
+    }
+
+    // Toast based on the response's failed[] list.
+    const failed = resp.failed || [];
+    if (failed.length === 0){
+        toast('Changes applied', 'ok');
+    } else {
+        const failList = failed.map(f => `${f.platform}.${f.field}`).join(', ');
+        const firstErr = failed[0].error || 'unknown error';
+        const appliedCount = Object.values(resp.applied || {}).reduce((n, arr) => n + (arr ? arr.length : 0), 0);
+        if (appliedCount > 0){
+            toast(`Applied some changes; ${failed.length} failed (${failList}): ${firstErr}`, 'error');
+        } else {
+            toast(`All edits failed: ${firstErr}`, 'error');
+        }
+    }
+}
+
+/* ─────────────────────────────────────────────────────────────────
    Wire-up
    ───────────────────────────────────────────────────────────────── */
 
@@ -1091,8 +1598,11 @@ document.getElementById('bu-q-user').addEventListener('input',  applyClientFilte
 document.getElementById('bu-q-values').addEventListener('input', applyClientFilters);
 document.getElementById('bu-days').addEventListener('input',     applyClientFilters);
 
-/* Boot: read the cache. If empty, the page shows "Refresh to populate"
-   and the Refresh button is the only thing that does work. */
+/* Boot: load the per-project registry metadata first (it feeds the
+   dropdowns when rows are unlocked), then read the cache. Both happen
+   in parallel since they're independent — the registry just needs to
+   land before the first unlock click, not before render. */
+loadRegistry();
 loadCache();
 </script>
 {% endblock %}

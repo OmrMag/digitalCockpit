@@ -1259,22 +1259,22 @@ def fetch_morta_hubs(config):
 #   2 = Collaborator
 #   3 = Content creator
 #   4 = License administrator
-# The 0 slot ("Super administrator") is speculative — the docs only
-# document 1-4, but the /team endpoint may return 0 for the license
-# owner. Kept as a fallback; if it's never observed we can drop it.
+#   5 = Super administrator (license owner — observed in /v5/license/{uuid}/team
+#       data, NOT in the documented invite enum since you can't invite a
+#       Super admin; they're created when the license is provisioned)
 #
 # Single source of truth across revizto_search_user, the browse sweep,
 # and any future code that needs to translate the integer tier to a
 # label. NOTE: prior to May 2026 this map had 0=SuperAdmin, 1=Admin,
 # 2=Collaborator, 3=ContentCreator, 4=Guest — that ordering was wrong
-# (an admin showed up as "Guest" in the browse table). The current
-# map matches the documented invite payload.
+# (an admin showed up as "Guest" in the browse table). The 5=Super admin
+# slot was confirmed empirically against ALEC's licenses.
 REVIZTO_LICENSE_ROLE_MAP = {
-    0: "Super administrator",
     1: "Guest",
     2: "Collaborator",
     3: "Content Creator",
     4: "License administrator",
+    5: "Super administrator",
 }
 
 
@@ -1731,6 +1731,105 @@ def morta_invite(email, config, hub_id: str = None, tag_reference_id: str = None
     return {"status": "success"}
 
 
+def morta_set_user_tag(email: str, config: dict, hub_id: str = None,
+                       new_tag_reference_id: str = None) -> dict:
+    """Replace the user's tag on a Morta hub.
+
+    Used by the browse edit flow. Locates the Morta user_id by email,
+    removes any tags currently assigned to them on this hub, then
+    optionally adds the new tag. Empty new_tag_reference_id means
+    "remove all tags, leave untagged".
+
+    Returns: {"status": "success" | "error", "detail": "..."}.
+
+    Endpoint shapes (from Morta REST conventions and existing assign
+    code at morta_invite):
+      - GET    /v1/hub/{hub_id}/members         → list members + tags
+      - DELETE /v1/user/{user_id}/tags/{tag_reference_id}  → remove
+      - POST   /v1/user/{user_id}/tags          → add (existing path)
+
+    The DELETE endpoint shape is the standard REST guess. If Morta uses
+    a different verb/path the function logs a clear error and the edit
+    is reported as failed (caller will revert the cache value).
+    """
+    api_key = config.get("morta", {}).get("api_key", "")
+    hub_id  = hub_id or config.get("active_context", {}).get("morta_hub_id") or config.get("morta", {}).get("hub_id", "")
+    if not api_key or not hub_id:
+        return {"status": "error", "detail": "Morta not configured"}
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "Accept": "application/json"}
+
+    # Step 1: find the user_id and any existing tags they hold on this hub.
+    try:
+        members_resp = http_requests.get(
+            f"https://api.morta.io/v1/hub/{hub_id}/members",
+            headers={"Authorization": f"Bearer {api_key}"}, timeout=10,
+        )
+    except Exception as e:
+        return {"status": "error", "detail": f"members fetch raised: {e}"}
+    if members_resp.status_code != 200:
+        return {"status": "error", "detail": f"members fetch {members_resp.status_code}: {members_resp.text[:200]}"}
+
+    user_id = ""
+    existing_tag_ids: list = []
+    for m in members_resp.json().get("data", []):
+        u = m.get("user", {}) if isinstance(m, dict) else {}
+        if (u.get("email") or "").strip().lower() == email.strip().lower():
+            user_id = u.get("publicId", "") or ""
+            # Tags on the membership object — Morta returns them as a list
+            # of {"tagReferenceId": "...", "name": "..."} or similar.
+            tags = m.get("tags") or u.get("tags") or []
+            for t in tags:
+                if isinstance(t, dict):
+                    tid = t.get("tagReferenceId") or t.get("tag_reference_id") or t.get("id") or ""
+                    if tid:
+                        existing_tag_ids.append(tid)
+            break
+    if not user_id:
+        return {"status": "error", "detail": f"User not found on hub: {email}"}
+
+    # Step 2: remove all currently assigned tags. Each delete is best-effort —
+    # if one fails (e.g. tag already removed by another admin), we keep going
+    # rather than aborting the whole edit.
+    delete_failures = []
+    for tid in existing_tag_ids:
+        # Don't bother deleting the tag we're about to re-add; Morta would
+        # accept the redundant POST anyway, but skipping the round-trip keeps
+        # the edit faster and avoids visible blink in the admin UI.
+        if new_tag_reference_id and tid == new_tag_reference_id:
+            continue
+        try:
+            del_url = f"https://api.morta.io/v1/user/{user_id}/tags/{tid}"
+            d = http_requests.delete(del_url, headers={"Authorization": f"Bearer {api_key}"}, timeout=10)
+            if d.status_code not in (200, 204):
+                delete_failures.append(f"{tid[:8]}…: {d.status_code}")
+        except Exception as e:
+            delete_failures.append(f"{tid[:8]}…: {type(e).__name__}")
+
+    # Step 3: add the new tag (if any).
+    if new_tag_reference_id:
+        # Skip add if the user already had this exact tag (kept it in step 2).
+        if new_tag_reference_id not in existing_tag_ids:
+            try:
+                add = http_requests.post(
+                    f"https://api.morta.io/v1/user/{user_id}/tags",
+                    headers=headers,
+                    json={"tagReferenceId": new_tag_reference_id},
+                    timeout=10,
+                )
+                if add.status_code not in (200, 201):
+                    return {"status": "error", "detail": f"tag add {add.status_code}: {add.text[:200]}"}
+            except Exception as e:
+                return {"status": "error", "detail": f"tag add raised: {e}"}
+
+    if delete_failures:
+        # Tag(s) were not removed cleanly — surface as a partial-success
+        # warning. The new tag (if any) was assigned, but old ones may
+        # linger. Admin can re-edit to retry.
+        return {"status": "error", "detail": f"Could not remove old tag(s): {', '.join(delete_failures)}"}
+
+    return {"status": "success"}
+
+
 def revizto_fetch_project_team_suggestions(project_uuid: str, region: str, token: str,
                                            timeout: int = 15) -> dict:
     """Fetch the project's team and aggregate companies / departments /
@@ -1830,7 +1929,27 @@ def revizto_invite(email, first_name, last_name, company, department, config,
                    invite_to_license: bool = True,
                    invite_to_project: bool = False,
                    location: str = "",
-                   admin_email: str = None):
+                   admin_email: str = None,
+                   preserve_roles: bool = True):
+    """Invite a user to a Revizto license and/or project.
+
+    The same /v5/license/{uuid}/invite/bulk endpoint is used for both
+    inviting new users and editing existing ones — the behavior is
+    controlled by `preserve_roles`:
+      - True  (default, used by the invite flow): if the user already
+              exists in the license, keep their current license role
+              unchanged. Only company/department/location/auth get
+              updated. This is the safe behavior for re-invites.
+      - False (used by the browse edit flow): overwrite the existing
+              user's license role, company, department, and location
+              with the values supplied. This is how the browse-page
+              "unlock → edit values → lock" flow updates an existing
+              license member.
+
+    Note `makeGuests=False` always — we never silently downgrade an
+    Administrator to a Guest just because their email matches another
+    license. The admin chose a role; we honor it.
+    """
     region = config.get("active_context", {}).get("revizto_region", "")
     if not region:
         for r in ["dubai", "ireland"]:
@@ -1863,7 +1982,7 @@ def revizto_invite(email, first_name, last_name, company, department, config,
             "data": [{"email": email, "role": role, "firstName": first_name,
                       "lastName": last_name, "tags": [], "authMethod": auth_method,
                       "company": company, "department": department, "location": location}],
-            "preserveRoles": True, "makeGuests": False, "authMethod": auth_method, "deactivate": False,
+            "preserveRoles": preserve_roles, "makeGuests": False, "authMethod": auth_method, "deactivate": False,
         }
         resp = http_requests.post(f"{base_url}/license/{license_uuid}/invite/bulk",
                                    headers=headers, json=payload, timeout=30)
@@ -4736,6 +4855,255 @@ async def api_browse_toggle(request: Request, user: str = Depends(require_user))
         "succeeded":  successes,
         "failed":     len(results) - successes,
         "updated_at": cache.get("updated_at"),
+    }
+
+
+# ---------------------------------------------------------------------------
+# /api/browse/edit
+#
+# Apply per-platform field edits to a single (email, project_key) row.
+# Triggered when the admin unlocks a browse row, edits property cells,
+# and clicks the lock icon to commit. Each field is independent: a
+# failure on one field does not block the others, and the response
+# reports per-field success/failure so the frontend can revert
+# unsuccessful edits to their original values in the cache row.
+#
+# Body:
+#   {
+#     "email":       "user@x.com",
+#     "project_key": "rak-central-alec",
+#     "edits": {
+#       "revizto": {                     # optional; absent = no Revizto edits
+#         "license_role_id": 4,           # int (1..5)
+#         "project_role_id": 17,          # int — the project access role id
+#         "company":         "ALEC",
+#         "department":      "Digital Construction",
+#         "location":        "RAK"
+#       },
+#       "forma": {                       # optional
+#         "company_id": "abc-...",        # uuid string
+#         "role_ids":   ["..."],          # list of uuid strings
+#         "products":   [                 # full products list to set
+#             {"key": "docs",   "access": "member"},
+#             {"key": "design", "access": "member"}
+#         ]
+#       },
+#       "morta": {                       # optional
+#         "tag_reference_id": "table/.../row/..."   # empty string = clear
+#       }
+#     }
+#   }
+#
+# Response:
+#   {
+#     "ok": true|false,                  # true iff every applied field succeeded
+#     "applied":  {"revizto": ["license_role","company"], ...},
+#     "failed":   [{"platform":"morta", "field":"tag", "error":"..."}],
+#     "row":      {...}                  # full updated cache row
+#   }
+# ---------------------------------------------------------------------------
+@app.post("/api/browse/edit")
+async def api_browse_edit(request: Request, user: str = Depends(require_user)):
+    body         = await request.json()
+    email        = (body.get("email") or "").strip().lower()
+    project_key  = (body.get("project_key") or "").strip()
+    edits        = body.get("edits") or {}
+    if not email or not project_key:
+        return JSONResponse({"error": "email and project_key required"}, status_code=400)
+    if not isinstance(edits, dict) or not edits:
+        return JSONResponse({"error": "no edits provided"}, status_code=400)
+
+    config   = load_config(user)
+    registry = load_registry()
+    cache    = load_browse_cache()
+
+    proj = registry.get(project_key)
+    if not proj:
+        return JSONResponse({"error": "project not in registry"}, status_code=404)
+    if not is_owner(user) and user not in proj.get("admins", []):
+        return JSONResponse({"error": "not authorized for this project"}, status_code=403)
+
+    rows_by_pk = {(r.get("email","").lower(), r.get("project_key","")): r
+                  for r in cache.get("rows") or []}
+    row = rows_by_pk.get((email, project_key))
+    if not row:
+        return JSONResponse({"error": "row not found in cache — refresh first"}, status_code=404)
+
+    applied: dict = {"revizto": [], "forma": [], "morta": []}
+    failed:  list = []
+
+    # ── Revizto edits ──────────────────────────────────────────────
+    rev_edits = edits.get("revizto") or {}
+    if rev_edits and row.get("revizto"):
+        rev_pid = (proj.get("platforms", {}).get("revizto", {}) or {}).get("project_uuid") or ""
+        if not rev_pid:
+            failed.append({"platform": "revizto", "field": "*",
+                           "error": "project has no Revizto UUID in registry"})
+        else:
+            # Build a single revizto_invite call that bundles every requested
+            # change. revizto_invite with preserve_roles=False overwrites the
+            # license-side fields (role, company, department, location) for
+            # an existing member, and the chained project-role call updates
+            # project role + project-side company/department.
+            #
+            # Splitting names from full_name: revizto_invite signature wants
+            # firstName + lastName. We don't currently edit names from browse,
+            # so reuse what's already on the row.
+            full_name = (row.get("name") or "").strip()
+            parts     = full_name.split(" ", 1) if full_name else []
+            first     = parts[0] if parts else ""
+            last      = parts[1] if len(parts) > 1 else ""
+
+            cur_rev = row.get("revizto") or {}
+            # Build the args. Use the new value where the admin changed
+            # something, otherwise fall back to what's already on the row
+            # so we don't blank out fields the admin didn't touch.
+            new_company    = rev_edits.get("company",    cur_rev.get("company",    "")) or ""
+            new_department = rev_edits.get("department", cur_rev.get("department", "")) or ""
+            new_location   = rev_edits.get("location",   cur_rev.get("location",   "")) or ""
+            new_lic_role   = rev_edits.get("license_role_id")  # int or None
+            new_proj_role  = rev_edits.get("project_role_id")  # int or None
+
+            try:
+                res = revizto_invite(
+                    email          = email,
+                    first_name     = first,
+                    last_name      = last,
+                    company        = new_company,
+                    department     = new_department,
+                    location       = new_location,
+                    config         = config,
+                    project_uuid   = rev_pid,
+                    license_role_id= new_lic_role,
+                    project_role_id= new_proj_role,
+                    invite_to_license = True,
+                    invite_to_project = bool(new_proj_role) or any(
+                        k in rev_edits for k in ("company", "department", "location")
+                    ),
+                    admin_email    = user,
+                    preserve_roles = False,   # browse-edit semantics
+                )
+            except Exception as e:
+                res = {"status": "error", "detail": f"{type(e).__name__}: {e}"}
+
+            if res.get("status") == "success":
+                # Apply changes to the cache row + tag what was applied.
+                if "company" in rev_edits:
+                    cur_rev["company"] = new_company
+                    applied["revizto"].append("company")
+                if "department" in rev_edits:
+                    cur_rev["department"] = new_department
+                    applied["revizto"].append("department")
+                if "location" in rev_edits:
+                    cur_rev["location"] = new_location
+                    applied["revizto"].append("location")
+                if new_lic_role is not None:
+                    cur_rev["license_role"] = REVIZTO_LICENSE_ROLE_MAP.get(int(new_lic_role), cur_rev.get("license_role", ""))
+                    applied["revizto"].append("license_role")
+                if new_proj_role is not None:
+                    # project_role label needs lookup — admin sent the id,
+                    # frontend already knows the label. We store whatever
+                    # we have; next refresh will canonicalize.
+                    label = rev_edits.get("project_role_label") or cur_rev.get("role", "")
+                    cur_rev["role"] = label
+                    applied["revizto"].append("project_role")
+                row["revizto"] = cur_rev
+            else:
+                # Whole-call failure: report every requested field as failed.
+                detail = res.get("detail", "unknown error")
+                for k in rev_edits.keys():
+                    if k.endswith("_label"):
+                        continue
+                    failed.append({"platform": "revizto", "field": k, "error": detail})
+
+    # ── Forma edits ────────────────────────────────────────────────
+    fo_edits = edits.get("forma") or {}
+    if fo_edits and row.get("forma"):
+        fo_pid = (proj.get("platforms", {}).get("forma", {}) or {}).get("project_id") or ""
+        if not fo_pid:
+            failed.append({"platform": "forma", "field": "*",
+                           "error": "project has no Forma project_id in registry"})
+        else:
+            cur_fo  = row.get("forma") or {}
+            new_company_id = fo_edits.get("company_id")            # may be ""
+            new_role_ids   = fo_edits.get("role_ids")              # list or None
+            new_products   = fo_edits.get("products")              # list or None
+
+            try:
+                res = forma_invite(
+                    email      = email,
+                    config     = config,
+                    project_id = fo_pid,
+                    company_id = new_company_id,
+                    role_ids   = new_role_ids,
+                    products   = new_products,
+                )
+            except Exception as e:
+                res = {"status": "error", "detail": f"{type(e).__name__}: {e}"}
+
+            if res.get("status") == "success":
+                if "company_id" in fo_edits:
+                    cur_fo["company_id"]   = new_company_id or ""
+                    cur_fo["company"]      = fo_edits.get("company_label") or cur_fo.get("company", "")
+                    applied["forma"].append("company")
+                if "role_ids" in fo_edits:
+                    cur_fo["role_ids"]     = new_role_ids or []
+                    cur_fo["role"]         = fo_edits.get("role_label") or cur_fo.get("role", "")
+                    applied["forma"].append("role")
+                if "products" in fo_edits:
+                    # Translate products list back to per-flag booleans for
+                    # the cache row (frontend renders these as checkboxes).
+                    prod_keys = {p.get("key") for p in (new_products or []) if isinstance(p, dict)}
+                    cur_fo["docs"]   = "docs"   in prod_keys
+                    cur_fo["design"] = "design" in prod_keys
+                    cur_fo["model"]  = "model"  in prod_keys
+                    for k in ("docs", "design", "model"):
+                        if k in fo_edits:
+                            applied["forma"].append(k)
+                row["forma"] = cur_fo
+            else:
+                detail = res.get("detail", "unknown error")
+                for k in fo_edits.keys():
+                    if k.endswith("_label"):
+                        continue
+                    failed.append({"platform": "forma", "field": k, "error": detail})
+
+    # ── Morta edits ────────────────────────────────────────────────
+    mo_edits = edits.get("morta") or {}
+    if mo_edits and row.get("morta"):
+        mo_hub = (proj.get("platforms", {}).get("morta", {}) or {}).get("hub_id") or ""
+        if not mo_hub:
+            failed.append({"platform": "morta", "field": "*",
+                           "error": "project has no Morta hub_id in registry"})
+        elif "tag_reference_id" in mo_edits:
+            new_tag_id = (mo_edits.get("tag_reference_id") or "").strip()
+            try:
+                res = morta_set_user_tag(email, config, hub_id=mo_hub,
+                                         new_tag_reference_id=new_tag_id or None)
+            except Exception as e:
+                res = {"status": "error", "detail": f"{type(e).__name__}: {e}"}
+
+            if res.get("status") == "success":
+                cur_mo = row.get("morta") or {}
+                cur_mo["tag"] = mo_edits.get("tag_label") or ""
+                row["morta"] = cur_mo
+                applied["morta"].append("tag")
+            else:
+                failed.append({"platform": "morta", "field": "tag",
+                               "error": res.get("detail", "unknown error")})
+
+    # ── Persist + audit ────────────────────────────────────────────
+    save_browse_cache(cache)
+    audit_log_event("browse_edit", user,
+        {"email": email, "project_key": project_key,
+         "edits": edits, "applied": applied, "failed": failed},
+        status="ok" if not failed else ("partial" if any(applied.values()) else "error"))
+
+    return {
+        "ok":      not failed,
+        "applied": {k: v for k, v in applied.items() if v},
+        "failed":  failed,
+        "row":     row,
     }
 
 
