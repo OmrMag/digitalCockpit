@@ -3404,8 +3404,14 @@ async def registry_page(request: Request, user: str = Depends(require_owner)):
 async def api_registry_get(user: str = Depends(require_user)):
     """Return registry projects scoped to the logged-in user.
     Owner sees all projects. Admins only see projects they are listed in.
+
+    Performance: registry is small (~90 KB) but load_registry() does a
+    SYNC blob read on cache miss. When the browse cache is also missing
+    its in-memory entry, both blob reads can stack up on the same event
+    loop and stall every other request. Run on a worker thread.
     """
-    registry = load_registry()
+    loop = asyncio.get_event_loop()
+    registry = await loop.run_in_executor(None, load_registry)
     if is_owner(user):
         return JSONResponse(registry)
     # Non-owners only get their own projects
@@ -4748,14 +4754,22 @@ async def api_browse_users(user: str = Depends(require_user)):
     (or all rows for the owner). Synthetic project_keys like
     'revizto:<uuid>' or 'morta:<hub_id>' are dropped for non-owner
     admins because they're not in the registry.
+
+    Performance: the browse cache is large (~2-3 MB JSON for ~4500 rows
+    after recent field additions). load_browse_cache() does a SYNC blob
+    read on cache miss, which would block the event loop for several
+    seconds and stall every other in-flight request behind it. Run it
+    on a worker thread so the loop stays responsive. The 5-minute
+    in-memory TTL means most requests never hit blob anyway.
     """
-    cache = load_browse_cache()
+    loop = asyncio.get_event_loop()
+    cache = await loop.run_in_executor(None, load_browse_cache)
     all_rows = cache.get("rows") or []
 
     if is_owner(user):
         visible = all_rows
     else:
-        registry = load_registry()
+        registry = await loop.run_in_executor(None, load_registry)
         admin_keys = {k for k, v in registry.items() if user in v.get("admins", [])}
         visible = [r for r in all_rows if r.get("project_key") in admin_keys]
 
