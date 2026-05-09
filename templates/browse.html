@@ -430,6 +430,7 @@ async function loadCache(){
         if (!r.ok) throw new Error('HTTP '+r.status);
         const data = await r.json();
         lastRows = data.rows || [];
+        invalidateSuggestionsCache();
         const stamp = data.updated_at
             ? `Last refreshed ${humanTimeAgo(data.updated_at)} by ${data.updated_by || '—'}`
             : 'Cache empty — click Refresh to populate';
@@ -647,12 +648,31 @@ function lastActiveLabel(ts, days){
 
 /* Plain text input. value is the current value (already-applied or
    pending edit). placeholder shown when value is empty. */
-function inputCellHtml(rowKey, platform, editKey, value, placeholder=''){
+function inputCellHtml(rowKey, platform, editKey, value, placeholder='', suggestions=null){
     const v = esc(value || '');
+    // When suggestions are provided, render a <datalist> alongside the
+    // <input> so the admin can either type freely OR pick from past
+    // values seen on the project. ID is per-cell to avoid two cells
+    // accidentally sharing a list. Empty suggestions array = no list
+    // (different from null only in that we still skip the datalist —
+    // either way, free typing still works).
+    const hasSugs = Array.isArray(suggestions) && suggestions.length > 0;
+    let listAttr = '';
+    let datalistHtml = '';
+    if (hasSugs){
+        const dlId = 'dl-' + esc(platform) + '-' + esc(editKey) + '-' + esc(rowKey).replace(/[^a-zA-Z0-9]/g, '_');
+        listAttr = ` list="${dlId}"`;
+        const opts = suggestions
+            .filter(s => s != null && String(s).trim())
+            .map(s => `<option value="${esc(String(s))}">`)
+            .join('');
+        datalistHtml = `<datalist id="${dlId}">${opts}</datalist>`;
+    }
     return `<td class="bu-prop-cell">
         <input type="text" class="bu-cell-input"
                data-rk="${esc(rowKey)}" data-plat="${platform}" data-ek="${esc(editKey)}"
-               value="${v}" placeholder="${esc(placeholder)}">
+               value="${v}" placeholder="${esc(placeholder)}" autocomplete="off"${listAttr}>
+        ${datalistHtml}
     </td>`;
 }
 
@@ -702,6 +722,44 @@ function currentEditValue(row, platform, fieldKeyOnRow, editKey){
     return (row[platform] || {})[fieldKeyOnRow];
 }
 
+/* Derive datalist suggestions for a (platform, field) on a project,
+   from values already present on rows in the cache. This works even
+   when the registry's member_suggestions have never been synced — we
+   collect every distinct non-empty value seen on the project's rows
+   and merge with whatever the registry happens to also carry.
+
+   Cached per (project_key, platform, field) so re-rendering the table
+   (which can happen many times per second while typing) doesn't redo
+   the scan. The cache is invalidated whenever lastRows changes via
+   loadCache() or applyClientFilters() — see invalidateSuggestionsCache.
+   */
+const _suggestionsCache = new Map();
+function suggestionsFor(projectKey, platform, fieldKeyOnRow, registryArr){
+    const cacheKey = `${projectKey}|${platform}|${fieldKeyOnRow}`;
+    if (_suggestionsCache.has(cacheKey)) return _suggestionsCache.get(cacheKey);
+    const seen = new Set();
+    // Collect every distinct value from rows belonging to this project.
+    for (const r of lastRows){
+        if (r.project_key !== projectKey) continue;
+        const sub = r[platform];
+        if (!sub) continue;
+        const v = (sub[fieldKeyOnRow] || '').trim();
+        if (v) seen.add(v);
+    }
+    // Merge in registry-supplied suggestions if any (manage-page sync).
+    if (Array.isArray(registryArr)){
+        for (const v of registryArr){
+            if (v && String(v).trim()) seen.add(String(v).trim());
+        }
+    }
+    const out = Array.from(seen).sort((a, b) => a.localeCompare(b));
+    _suggestionsCache.set(cacheKey, out);
+    return out;
+}
+function invalidateSuggestionsCache(){
+    _suggestionsCache.clear();
+}
+
 const PROP_SPECS = {
     revizto: [
         /* Company is the slack-absorber for Revizto: when expanded, this
@@ -712,21 +770,27 @@ const PROP_SPECS = {
           render: (row, isUnlocked, reg) => isUnlocked
               ? inputCellHtml(rowKey(row), 'revizto', 'company',
                               currentEditValue(row, 'revizto', 'company', 'company'),
-                              'Company')
+                              'Company',
+                              suggestionsFor(row.project_key, 'revizto', 'company',
+                                  reg?.platforms?.revizto?.member_suggestions?.companies))
               : textCellHtml(row.revizto?.company) },
         { key:'department',   label:'Department',   col:'col-prop-department',
           editKey: 'department',
           render: (row, isUnlocked, reg) => isUnlocked
               ? inputCellHtml(rowKey(row), 'revizto', 'department',
                               currentEditValue(row, 'revizto', 'department', 'department'),
-                              'Department')
+                              'Department',
+                              suggestionsFor(row.project_key, 'revizto', 'department',
+                                  reg?.platforms?.revizto?.member_suggestions?.departments))
               : textCellHtml(row.revizto?.department) },
         { key:'location',     label:'Location',     col:'col-prop-location',
           editKey: 'location',
           render: (row, isUnlocked, reg) => isUnlocked
               ? inputCellHtml(rowKey(row), 'revizto', 'location',
                               currentEditValue(row, 'revizto', 'location', 'location'),
-                              'Location')
+                              'Location',
+                              suggestionsFor(row.project_key, 'revizto', 'location',
+                                  reg?.platforms?.revizto?.member_suggestions?.locations))
               : textCellHtml(row.revizto?.location) },
         { key:'license_role', label:'License Role', col:'col-prop-license-role',
           editKey: 'license_role_id',
@@ -1560,6 +1624,7 @@ async function commitRowEdits(k){
         const idx = lastRows.findIndex(r => rowKey(r) === k);
         if (idx >= 0){
             lastRows[idx] = resp.row;
+            invalidateSuggestionsCache();
             applyClientFilters();
         }
     }
