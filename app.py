@@ -2035,6 +2035,62 @@ def forma_invite(email, config, project_id=None, company_id: str = None,
     return {"status": "error", "detail": f"{response.status_code}: {response.text[:200]}"}
 
 
+def forma_update_user(user_id, config, project_id=None,
+                      company_id: str = None,
+                      role_ids: list = None,
+                      products: list = None):
+    """Update an existing user's company / roles / products on a Forma
+    project. Documented endpoint:
+        PATCH /construction/admin/v1/projects/{projectId}/users/{userId}
+    Per the Autodesk Project Admin API, this writes back to ACC and is
+    visible immediately on the Forma website. forma_invite() (the
+    :import endpoint) does NOT reliably update existing users — that's
+    why edits weren't landing before.
+
+    Strip `b.` from the project_id if present (Forma stores project_ids
+    with this BIM 360 prefix on some accounts; the admin v1 endpoint
+    rejects it).
+
+    Only fields explicitly passed are updated; passing None for a field
+    leaves it unchanged. The admin v1 endpoint expects:
+        {"companyId": "...", "roleIds": ["..."], "products": [...]}
+    Returns: {"status": "success" | "error", "detail": "..."}.
+    """
+    fc  = config["forma"]
+    pid = project_id or fc.get("project_id", "")
+    if not fc.get("admin_user_id") or not pid or not user_id:
+        return {"status": "error", "detail": "Forma update: missing admin_user_id, project_id, or user_id"}
+    token = forma_get_token(config)
+    if not token:
+        return {"status": "error", "detail": "Forma auth failed"}
+
+    clean_pid = pid.lstrip("b.") if pid.startswith("b.") else pid
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type":  "application/json",
+        "User-Id":       fc["admin_user_id"],
+    }
+
+    body = {}
+    if company_id is not None:
+        body["companyId"] = company_id or None  # explicit None clears it
+    if role_ids is not None:
+        body["roleIds"] = role_ids
+    if products is not None:
+        body["products"] = products
+    if not body:
+        return {"status": "success"}  # nothing to update — no-op
+
+    url = f"https://developer.api.autodesk.com/construction/admin/v1/projects/{clean_pid}/users/{user_id}"
+    try:
+        response = http_requests.patch(url, headers=headers, json=body, timeout=30)
+    except Exception as e:
+        return {"status": "error", "detail": f"PATCH raised: {type(e).__name__}: {e}"}
+    if response.status_code in (200, 202, 204):
+        return {"status": "success"}
+    return {"status": "error", "detail": f"PATCH {response.status_code}: {response.text[:200]}"}
+
+
 # ---------------------------------------------------------------------------
 # Platform Helpers — Search
 # ---------------------------------------------------------------------------
@@ -5114,11 +5170,14 @@ async def api_browse_edit(request: Request, user: str = Depends(require_user)):
                         failed.append({"platform": "revizto", "field": k, "error": detail})
 
     # ── Forma edits ────────────────────────────────────────────────
-    # forma_invite() hits the /admin/v2/projects/{pid}/users:import
-    # endpoint, which is upsert-by-design — it adds new users AND
-    # updates existing ones. So the EDIT and INVITE paths share the
-    # same call; the only difference is whether we have an existing
-    # `forma` sub-object to merge into vs. building one from scratch.
+    # Two separate API calls depending on mode:
+    #   - INVITE: POST /admin/v2/projects/{pid}/users:import via forma_invite()
+    #     The :import endpoint is the documented add-users-to-project call;
+    #     it works for new users but does NOT reliably update existing ones.
+    #   - EDIT: PATCH /admin/v1/projects/{pid}/users/{userId} via forma_update_user()
+    #     The PATCH endpoint is the documented update-existing-user call.
+    #     Required when changing company / roles / products on a user
+    #     who's already a project member.
     fo_edits = edits.get("forma") or {}
     fo_is_invite = (row.get("forma") is None) and bool(fo_edits)
     if fo_edits and (row.get("forma") or fo_is_invite):
@@ -5132,17 +5191,45 @@ async def api_browse_edit(request: Request, user: str = Depends(require_user)):
             new_role_ids   = fo_edits.get("role_ids")              # list or None
             new_products   = fo_edits.get("products")              # list or None
 
-            try:
-                res = forma_invite(
-                    email      = email,
-                    config     = config,
-                    project_id = fo_pid,
-                    company_id = new_company_id,
-                    role_ids   = new_role_ids,
-                    products   = new_products,
-                )
-            except Exception as e:
-                res = {"status": "error", "detail": f"{type(e).__name__}: {e}"}
+            if fo_is_invite:
+                try:
+                    res = forma_invite(
+                        email      = email,
+                        config     = config,
+                        project_id = fo_pid,
+                        company_id = new_company_id,
+                        role_ids   = new_role_ids,
+                        products   = new_products,
+                    )
+                except Exception as e:
+                    res = {"status": "error", "detail": f"{type(e).__name__}: {e}"}
+            else:
+                # EDIT path: needs the existing Forma user_id, which the
+                # sweep stores on row.forma.user_id. Without it we can't
+                # PATCH; tell the admin to refresh.
+                fo_user_id = (cur_fo or {}).get("user_id", "")
+                if not fo_user_id:
+                    res = {"status": "error",
+                           "detail": "Forma user_id missing on row — refresh first"}
+                else:
+                    # Only pass fields the admin explicitly touched. PATCH
+                    # leaves untouched fields alone server-side.
+                    patch_kwargs = {}
+                    if "company_id" in fo_edits:
+                        patch_kwargs["company_id"] = new_company_id or None
+                    if "role_ids" in fo_edits:
+                        patch_kwargs["role_ids"] = new_role_ids or []
+                    if "products" in fo_edits:
+                        patch_kwargs["products"] = new_products or []
+                    try:
+                        res = forma_update_user(
+                            user_id    = fo_user_id,
+                            config     = config,
+                            project_id = fo_pid,
+                            **patch_kwargs,
+                        )
+                    except Exception as e:
+                        res = {"status": "error", "detail": f"{type(e).__name__}: {e}"}
 
             if res.get("status") == "success":
                 if fo_is_invite:
