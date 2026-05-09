@@ -2118,6 +2118,15 @@ def _populate_invited_user_ids(row, email, platform, project_key, proj, config, 
       - Forma:   GET /admin/v1/projects/{pid}/users paginated, find by email
       - Morta:   GET /v1/hub/{hub_id}/members paginated, find by email
 
+    SAFETY BOUNDS to prevent server hangs:
+      - Hard cap of 10 pages (so worst case is 10 × 200 = 2000 records
+        scanned, far enough for any project but bounded). The user we
+        just invited was added moments ago and is almost certainly on
+        page 1 or 2 anyway.
+      - Per-request timeout of 8s (tighter than the typical 15s) so a
+        slow-responding platform can't extend the chain.
+      - Total budget enforced via wall-clock check between pages.
+
     Failures are swallowed silently — populating IDs is a best-effort
     enhancement. If lookup fails, the row's IDs remain empty and the
     admin will get the existing "refresh first" UX on next deactivate.
@@ -2127,6 +2136,13 @@ def _populate_invited_user_ids(row, email, platform, project_key, proj, config, 
     """
     plats = (proj.get("platforms") or {})
     sub = row.get(platform) or {}
+    MAX_PAGES = 10
+    MAX_TOTAL_SECONDS = 20.0
+    PER_REQUEST_TIMEOUT = 8
+    started = time.time()
+
+    def _budget_exhausted():
+        return (time.time() - started) > MAX_TOTAL_SECONDS
 
     try:
         if platform == "revizto":
@@ -2139,21 +2155,20 @@ def _populate_invited_user_ids(row, email, platform, project_key, proj, config, 
                 return
             base = f"https://api.{region}.revizto.com/v5"
             headers = {"Authorization": f"Bearer {token}"}
-            page = 0
             target = email.lower()
-            while True:
+            for page in range(MAX_PAGES):
+                if _budget_exhausted():
+                    print(f"[edit-postinvite] revizto lookup budget exhausted at page {page}")
+                    return
                 resp = http_requests.get(
                     f"{base}/project/{project_uuid}/team",
                     headers=headers,
                     params={"page": page, "limit": 200},
-                    timeout=15,
+                    timeout=PER_REQUEST_TIMEOUT,
                 )
                 if resp.status_code != 200:
                     break
                 data = resp.json() or {}
-                # Revizto wraps results under data.entities (sweep code uses
-                # the same shape — see _sweep_browse_rows). Tolerate either
-                # the entities key or a top-level list, just in case.
                 entities = (data.get("data") or {}).get("entities") or data.get("entities") or []
                 if not entities:
                     break
@@ -2175,7 +2190,6 @@ def _populate_invited_user_ids(row, email, platform, project_key, proj, config, 
                     return
                 if len(entities) < 200:
                     break
-                page += 1
 
         elif platform == "forma":
             project_id = (plats.get("forma") or {}).get("project_id", "")
@@ -2186,14 +2200,16 @@ def _populate_invited_user_ids(row, email, platform, project_key, proj, config, 
                 return
             clean_pid = project_id.lstrip("b.") if project_id.startswith("b.") else project_id
             headers = {"Authorization": f"Bearer {token}"}
-            offset = 0
             target = email.lower()
-            while True:
+            for page in range(MAX_PAGES):
+                if _budget_exhausted():
+                    print(f"[edit-postinvite] forma lookup budget exhausted at page {page}")
+                    return
                 resp = http_requests.get(
                     f"https://developer.api.autodesk.com/construction/admin/v1/projects/{clean_pid}/users",
                     headers=headers,
-                    params={"limit": 200, "offset": offset},
-                    timeout=15,
+                    params={"limit": 200, "offset": page * 200},
+                    timeout=PER_REQUEST_TIMEOUT,
                 )
                 if resp.status_code != 200:
                     break
@@ -2205,11 +2221,10 @@ def _populate_invited_user_ids(row, email, platform, project_key, proj, config, 
                         continue
                     sub["user_id"] = u.get("id") or u.get("autodeskId") or ""
                     row["forma"]   = sub
-                    print(f"[edit-postinvite] forma user_id populated for {target}: {sub['user_id'][:8]}…")
+                    print(f"[edit-postinvite] forma user_id populated for {target}: {(sub['user_id'] or '')[:8]}…")
                     return
                 if len(batch) < 200:
                     break
-                offset += 200
 
         elif platform == "morta":
             hub_id = (plats.get("morta") or {}).get("hub_id", "")
@@ -2219,13 +2234,15 @@ def _populate_invited_user_ids(row, email, platform, project_key, proj, config, 
             if not api_key:
                 return
             target = email.lower()
-            page = 0
-            while True:
+            for page in range(MAX_PAGES):
+                if _budget_exhausted():
+                    print(f"[edit-postinvite] morta lookup budget exhausted at page {page}")
+                    return
                 resp = http_requests.get(
                     f"https://api.morta.io/v1/hub/{hub_id}/members",
                     headers={"Authorization": f"Bearer {api_key}"},
                     params={"page": page, "size": 500},
-                    timeout=15,
+                    timeout=PER_REQUEST_TIMEOUT,
                 )
                 if resp.status_code != 200:
                     break
@@ -2240,11 +2257,10 @@ def _populate_invited_user_ids(row, email, platform, project_key, proj, config, 
                     sub["public_id"]   = u.get("publicId", "") or sub.get("public_id", "")
                     sub["firebase_id"] = u.get("firebaseUserId", "") or sub.get("firebase_id", "")
                     row["morta"]       = sub
-                    print(f"[edit-postinvite] morta IDs populated for {target}: firebase={sub['firebase_id'][:8] if sub['firebase_id'] else '(none)'}…")
+                    print(f"[edit-postinvite] morta IDs populated for {target}: firebase={(sub['firebase_id'] or '')[:8] if sub.get('firebase_id') else '(none)'}…")
                     return
                 if len(members) < 500:
                     break
-                page += 1
 
     except Exception as e:
         print(f"[edit-postinvite] {platform} lookup raised {type(e).__name__}: {e} — row IDs remain empty")
@@ -5209,6 +5225,11 @@ async def api_browse_edit(request: Request, user: str = Depends(require_user)):
     applied: dict = {"revizto": [], "forma": [], "morta": []}
     failed:  list = []
 
+    # Get the event loop once so the per-platform invite-postlookup
+    # calls can offload their synchronous HTTP work onto a worker
+    # thread instead of blocking the entire async worker.
+    loop = asyncio.get_event_loop()
+
     # ── Revizto edits ──────────────────────────────────────────────
     # Three operating modes share this block:
     #   - DEACTIVATE: rev_edits contains _toggle: false. Dispatches to
@@ -5320,8 +5341,12 @@ async def api_browse_edit(request: Request, user: str = Depends(require_user)):
                         # (no Refresh needed). Best-effort — if the lookup
                         # fails, IDs stay empty and admin sees "refresh
                         # first" on next deactivate, same as before.
-                        _populate_invited_user_ids(row, email, "revizto",
-                                                   project_key, proj, config, user)
+                        # Run on the worker thread so the helper's sync
+                        # HTTP calls don't block the event loop.
+                        await loop.run_in_executor(
+                            None, _populate_invited_user_ids,
+                            row, email, "revizto", project_key, proj, config, user
+                        )
                     else:
                         detail = res.get("detail", "Revizto invite failed")
                         for k in rev_edits.keys():
@@ -5482,10 +5507,11 @@ async def api_browse_edit(request: Request, user: str = Depends(require_user)):
                 row["forma"] = cur_fo
                 if fo_is_invite:
                     applied["forma"].append("_invited")
-                    # Populate user_id so subsequent deactivate works
-                    # without requiring a manual Refresh click.
-                    _populate_invited_user_ids(row, email, "forma",
-                                               project_key, proj, config, user)
+                    # Populate user_id off the event loop — see Revizto comment.
+                    await loop.run_in_executor(
+                        None, _populate_invited_user_ids,
+                        row, email, "forma", project_key, proj, config, user
+                    )
             else:
                 detail = res.get("detail", "unknown error")
                 for k in fo_edits.keys():
@@ -5537,10 +5563,11 @@ async def api_browse_edit(request: Request, user: str = Depends(require_user)):
                 applied["morta"].append("_invited")
                 if "tag_reference_id" in mo_edits:
                     applied["morta"].append("tag")
-                # Populate firebase_id + public_id so subsequent
-                # deactivate works without requiring a manual Refresh.
-                _populate_invited_user_ids(row, email, "morta",
-                                           project_key, proj, config, user)
+                # Populate Morta IDs off the event loop — see Revizto comment.
+                await loop.run_in_executor(
+                    None, _populate_invited_user_ids,
+                    row, email, "morta", project_key, proj, config, user
+                )
             else:
                 failed.append({"platform": "morta", "field": "*",
                                "error": res.get("detail", "Morta invite failed")})
