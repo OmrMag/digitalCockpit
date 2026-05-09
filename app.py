@@ -5109,7 +5109,12 @@ async def api_browse_toggle(request: Request, user: str = Depends(require_user))
                     user, config, email, platform, project_key, proj, row
                 )
                 if ok:
-                    row[platform] = None
+                    # Mark as deactivated but keep the snapshot data
+                    # visible on the row. Property cells render the
+                    # historical values read-only, and the toggle
+                    # renders red. Reactivate restores the original
+                    # sub-object (re-stripping _deactivated).
+                    row[platform] = {**row[platform], "_deactivated": True}
                     audit_log_event("browse_deactivate", user,
                         {"email": email, "platform": platform, "project_key": project_key},
                         before=snap_data, after=None, status="ok")
@@ -5269,6 +5274,21 @@ async def api_browse_edit(request: Request, user: str = Depends(require_user)):
     # thread instead of blocking the entire async worker.
     loop = asyncio.get_event_loop()
 
+    # Helper: a row's platform sub-object is "inactive" (i.e. ready to
+    # invite or reactivate) when either it's None OR it carries the
+    # _deactivated flag set by a previous deactivate. With the new
+    # display-keep-snapshot behaviour, deactivated sub-objects are
+    # NOT None — they retain the saved values for read-only display
+    # but should still be treated as "the user isn't currently on
+    # this platform" for routing purposes.
+    def _is_inactive(platform):
+        sub = row.get(platform)
+        return sub is None or (isinstance(sub, dict) and sub.get("_deactivated"))
+
+    def _is_active(platform):
+        sub = row.get(platform)
+        return isinstance(sub, dict) and not sub.get("_deactivated")
+
     # ── Revizto edits ──────────────────────────────────────────────
     # Three operating modes share this block:
     #   - DEACTIVATE: rev_edits contains _toggle: false. Dispatches to
@@ -5278,16 +5298,16 @@ async def api_browse_edit(request: Request, user: str = Depends(require_user)):
     #   - EDIT: row.revizto exists, _toggle is true or absent. Use
     #     revizto_invite() with preserve_roles tied to whether the
     #     admin touched license_role_id; the existing user gets updated.
-    #   - INVITE: row.revizto is None — user isn't on this Revizto
-    #     project today. _invite_to_license / _invite_to_project flags
-    #     gate which calls fire. After success, look up the new
-    #     member's UUIDs so the row is immediately deactivate-ready.
+    #   - INVITE: row.revizto is inactive (None or _deactivated) —
+    #     user isn't on this Revizto project today. _invite_to_license /
+    #     _invite_to_project flags gate which calls fire. After success,
+    #     look up the new member's UUIDs.
     rev_edits = edits.get("revizto") or {}
     rev_toggle_off = rev_edits.get("_toggle") is False
     rev_toggle_on  = rev_edits.get("_toggle") is True
-    rev_is_invite  = (row.get("revizto") is None) and bool(rev_edits) and not rev_toggle_off and not rev_toggle_on
+    rev_is_invite  = _is_inactive("revizto") and bool(rev_edits) and not rev_toggle_off and not rev_toggle_on
     rev_snap_key   = _snapshot_key(email, "revizto", project_key)
-    if rev_edits and rev_toggle_off and row.get("revizto"):
+    if rev_edits and rev_toggle_off and _is_active("revizto"):
         # DEACTIVATE path — save snapshot first so reactivate can restore.
         # Snapshot saving mirrors /api/browse/toggle behaviour (line ~5102):
         # capture the platform sub-object plus name/email metadata, then
@@ -5301,13 +5321,16 @@ async def api_browse_edit(request: Request, user: str = Depends(require_user)):
 
         ok, err = _do_deactivate(user, config, email, "revizto", project_key, proj, row)
         if ok:
-            row["revizto"] = None
+            # Mark deactivated but keep snapshot values on the row so
+            # the property cells stay populated (read-only). Toggle
+            # turns red via the _deactivated flag instead of grey faded.
+            row["revizto"] = {**row["revizto"], "_deactivated": True}
             applied["revizto"].append("_deactivated")
         else:
             snapshots.pop(rev_snap_key, None)
             save_deactivation_snapshots(snapshots)
             failed.append({"platform": "revizto", "field": "_toggle", "error": err})
-    elif rev_edits and rev_toggle_on and row.get("revizto") is None:
+    elif rev_edits and rev_toggle_on and _is_inactive("revizto"):
         # REACTIVATE path — restore from a saved snapshot. If there's
         # no snapshot AND no real field edits, error out. If there's
         # no snapshot but the admin DID fill in fields, fall through
@@ -5345,7 +5368,7 @@ async def api_browse_edit(request: Request, user: str = Depends(require_user)):
     # Excluded: the deactivate path (handled above), and successful
     # reactivate (snapshot found, row restored — nothing more to do).
     skip_edit = rev_toggle_off or (rev_toggle_on and not rev_is_invite)
-    if rev_edits and not skip_edit and (row.get("revizto") or rev_is_invite):
+    if rev_edits and not skip_edit and (_is_active("revizto") or rev_is_invite):
         rev_pid = (proj.get("platforms", {}).get("revizto", {}) or {}).get("project_uuid") or ""
         if not rev_pid:
             failed.append({"platform": "revizto", "field": "*",
@@ -5505,9 +5528,9 @@ async def api_browse_edit(request: Request, user: str = Depends(require_user)):
     fo_edits = edits.get("forma") or {}
     fo_toggle_off = fo_edits.get("_toggle") is False
     fo_toggle_on  = fo_edits.get("_toggle") is True
-    fo_is_invite  = (row.get("forma") is None) and bool(fo_edits) and not fo_toggle_off and not fo_toggle_on
+    fo_is_invite  = _is_inactive("forma") and bool(fo_edits) and not fo_toggle_off and not fo_toggle_on
     fo_snap_key   = _snapshot_key(email, "forma", project_key)
-    if fo_edits and fo_toggle_off and row.get("forma"):
+    if fo_edits and fo_toggle_off and _is_active("forma"):
         snap_data = dict(row["forma"])
         snap_data["_name"]  = row.get("name", "")
         snap_data["_email"] = row.get("email", "")
@@ -5516,13 +5539,13 @@ async def api_browse_edit(request: Request, user: str = Depends(require_user)):
 
         ok, err = _do_deactivate(user, config, email, "forma", project_key, proj, row)
         if ok:
-            row["forma"] = None
+            row["forma"] = {**row["forma"], "_deactivated": True}
             applied["forma"].append("_deactivated")
         else:
             snapshots.pop(fo_snap_key, None)
             save_deactivation_snapshots(snapshots)
             failed.append({"platform": "forma", "field": "_toggle", "error": err})
-    elif fo_edits and fo_toggle_on and row.get("forma") is None:
+    elif fo_edits and fo_toggle_on and _is_inactive("forma"):
         snap = snapshots.get(fo_snap_key)
         has_field_edits = any(
             k for k in fo_edits.keys()
@@ -5544,7 +5567,7 @@ async def api_browse_edit(request: Request, user: str = Depends(require_user)):
             else:
                 failed.append({"platform": "forma", "field": "_toggle", "error": err})
     fo_skip_edit = fo_toggle_off or (fo_toggle_on and not fo_is_invite)
-    if fo_edits and not fo_skip_edit and (row.get("forma") or fo_is_invite):
+    if fo_edits and not fo_skip_edit and (_is_active("forma") or fo_is_invite):
         fo_pid = (proj.get("platforms", {}).get("forma", {}) or {}).get("project_id") or ""
         if not fo_pid:
             failed.append({"platform": "forma", "field": "*",
@@ -5652,9 +5675,9 @@ async def api_browse_edit(request: Request, user: str = Depends(require_user)):
     mo_edits = edits.get("morta") or {}
     mo_toggle_off = mo_edits.get("_toggle") is False
     mo_toggle_on  = mo_edits.get("_toggle") is True
-    mo_is_invite  = (row.get("morta") is None) and bool(mo_edits) and not mo_toggle_off and not mo_toggle_on
+    mo_is_invite  = _is_inactive("morta") and bool(mo_edits) and not mo_toggle_off and not mo_toggle_on
     mo_snap_key   = _snapshot_key(email, "morta", project_key)
-    if mo_edits and mo_toggle_off and row.get("morta"):
+    if mo_edits and mo_toggle_off and _is_active("morta"):
         snap_data = dict(row["morta"])
         snap_data["_name"]  = row.get("name", "")
         snap_data["_email"] = row.get("email", "")
@@ -5663,13 +5686,13 @@ async def api_browse_edit(request: Request, user: str = Depends(require_user)):
 
         ok, err = _do_deactivate(user, config, email, "morta", project_key, proj, row)
         if ok:
-            row["morta"] = None
+            row["morta"] = {**row["morta"], "_deactivated": True}
             applied["morta"].append("_deactivated")
         else:
             snapshots.pop(mo_snap_key, None)
             save_deactivation_snapshots(snapshots)
             failed.append({"platform": "morta", "field": "_toggle", "error": err})
-    elif mo_edits and mo_toggle_on and row.get("morta") is None:
+    elif mo_edits and mo_toggle_on and _is_inactive("morta"):
         snap = snapshots.get(mo_snap_key)
         has_field_edits = any(
             k for k in mo_edits.keys()
@@ -5690,7 +5713,7 @@ async def api_browse_edit(request: Request, user: str = Depends(require_user)):
             else:
                 failed.append({"platform": "morta", "field": "_toggle", "error": err})
     mo_skip_edit = mo_toggle_off or (mo_toggle_on and not mo_is_invite)
-    if mo_edits and not mo_skip_edit and (row.get("morta") or mo_is_invite):
+    if mo_edits and not mo_skip_edit and (_is_active("morta") or mo_is_invite):
         mo_hub = (proj.get("platforms", {}).get("morta", {}) or {}).get("hub_id") or ""
         if not mo_hub:
             failed.append({"platform": "morta", "field": "*",

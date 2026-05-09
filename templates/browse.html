@@ -983,47 +983,68 @@ const PROP_SPECS = {
    ───────────────────────────────────────────────────────────────── */
 
 function toggleState(row, plat){
-    const exists       = row[plat] != null;
+    const sub          = row[plat];
+    const exists       = sub != null;
+    // Deactivated rows have _deactivated:true on the sub-object —
+    // snapshot data is preserved for display but the user IS NOT
+    // currently on the platform. Treat as "off red" not "faded grey".
+    const isDeactivated = exists && sub?._deactivated === true;
     const pendingFlip  = pendingToggles.has(toggleKey(row, plat));
-    // Four meaningful states for rendering:
-    //   faded            → user isn't on this platform, no flip staged
-    //   on               → row exists AND not flipped (active)
-    //   off              → row exists AND flipped (pending deactivate)
-    //   pendingReactivate → row faded BUT flip is staged (intent to reactivate)
+    // Five meaningful states for rendering:
+    //   faded                  → never on platform, no flip staged
+    //   on                     → active row, no flip staged
+    //   off (committed)        → row was deactivated this session OR earlier; persistent red
+    //   off (pending)          → active row with deactivate staged; same red
+    //   pendingReactivate      → faded/deactivated row with reactivate staged; green to show intent
     return {
         exists,
+        isDeactivated,
         faded:             !exists && !pendingFlip,
-        currentlyOn:       exists && !pendingFlip,
-        currentlyOff:      exists && pendingFlip,
-        pendingReactivate: !exists && pendingFlip,
+        currentlyOn:       exists && !isDeactivated && !pendingFlip,
+        currentlyOff:      (exists && !isDeactivated && pendingFlip)  // active + staged-off
+                        || (isDeactivated && !pendingFlip),           // already deactivated, no change
+        pendingReactivate: (!exists && pendingFlip)                   // never-on + staged-on
+                        || (isDeactivated && pendingFlip),            // deactivated + staged reactivate
     };
 }
 
 function renderToggle(row, plat, isUnlocked){
-    const { currentlyOn, currentlyOff, faded, pendingReactivate } = toggleState(row, plat);
+    const { currentlyOn, currentlyOff, faded, pendingReactivate, isDeactivated } = toggleState(row, plat);
     const cls = ['bu-toggle'];
     // Revizto-only: an existing user with pending=true (invited but not
     // yet accepted) gets a yellow toggle. Overrides .on for the pending
     // state since "active green" would lie about their status.
     const isPending = plat === 'revizto' && row?.revizto?.pending === true;
-    if (isPending && !currentlyOff) {
+    if (isPending && !currentlyOff && !isDeactivated) {
         cls.push('pending');
     } else if (currentlyOn || pendingReactivate) {
-        // pendingReactivate (faded row with reactivate-staged) renders
-        // as green "on" so the admin sees their staged intent.
+        // pendingReactivate (faded or deactivated row with reactivate
+        // staged) renders as green "on" so the admin sees their intent.
         cls.push('on');
     } else if (currentlyOff) {
         cls.push('off');
     }
     if (faded)                  cls.push('faded');
     if (!isUnlocked && !faded)  cls.push('locked');
+    // Title reflects the action a click would perform. The pending-flip
+    // case lets admin know they're cancelling a staged change.
+    const tk = toggleKey(row, plat);
+    const flipStaged = pendingToggles.has(tk);
     let title;
     if (faded) {
         title = isUnlocked
             ? 'Click to invite or reactivate this user'
             : 'User is not on this platform — unlock to add';
     } else if (pendingReactivate) {
-        title = 'Reactivate staged — click again to cancel, or click lock to commit';
+        title = 'Reactivate staged — click again to cancel, or lock to commit';
+    } else if (flipStaged && currentlyOff && !isDeactivated) {
+        // Active row with deactivate staged. Distinct from
+        // pendingReactivate (which is for faded/deactivated rows).
+        title = 'Deactivate staged — click again to cancel, or lock to commit';
+    } else if (isDeactivated) {
+        title = isUnlocked
+            ? 'Click to reactivate this user'
+            : 'User is deactivated — unlock to reactivate';
     } else if (isPending) {
         title = isUnlocked
             ? 'Click to withdraw pending invite'
@@ -1232,10 +1253,12 @@ function renderTable(){
             if (expandedPlatform === p){
                 // Property cells render edit controls when isEditing.
                 // Faded rows (user not yet on platform) ALSO get edit
-                // controls — that's the add-from-browse flow. The cells
-                // start empty for the admin to fill in; commit triggers
-                // an invite call instead of an edit call.
-                const cellsEditable = isEditing;
+                // controls — that's the add-from-browse flow. Deactivated
+                // rows however do NOT get edit controls — their values
+                // are historical snapshots, not live fields. Admin must
+                // reactivate first if they want to change anything.
+                const isDeactivated = r[p]?._deactivated === true;
+                const cellsEditable = isEditing && !isDeactivated;
                 PROP_SPECS[p].forEach(spec => cells.push(spec.render(r, cellsEditable, regMeta)));
             }
         });
@@ -1459,9 +1482,12 @@ function renderTable(){
                     delete pe[plat]._toggle;
                 }
             } else {
-                // First click. Direction = opposite of current state.
+                // First click. Direction = opposite of CURRENT state.
+                // Currently active = exists AND not deactivated.
+                // Currently inactive (faded or red) = !exists OR _deactivated.
                 pendingToggles.add(tk);
-                pe[plat]._toggle = (row[plat] == null);  // true = reactivate, false = deactivate
+                const isCurrentlyActive = row[plat] != null && row[plat]?._deactivated !== true;
+                pe[plat]._toggle = !isCurrentlyActive;  // true = reactivate, false = deactivate
             }
             renderTable();
         });
