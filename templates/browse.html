@@ -985,20 +985,22 @@ const PROP_SPECS = {
 function toggleState(row, plat){
     const exists       = row[plat] != null;
     const pendingFlip  = pendingToggles.has(toggleKey(row, plat));
-    // Three meaningful states for rendering:
-    //   faded   → user isn't on this platform at all
-    //   on      → exists AND not flipped (active)
-    //   off     → exists AND flipped (pending deactivate)
+    // Four meaningful states for rendering:
+    //   faded            → user isn't on this platform, no flip staged
+    //   on               → row exists AND not flipped (active)
+    //   off              → row exists AND flipped (pending deactivate)
+    //   pendingReactivate → row faded BUT flip is staged (intent to reactivate)
     return {
         exists,
-        faded:        !exists,
-        currentlyOn:  exists && !pendingFlip,
-        currentlyOff: exists && pendingFlip,
+        faded:             !exists && !pendingFlip,
+        currentlyOn:       exists && !pendingFlip,
+        currentlyOff:      exists && pendingFlip,
+        pendingReactivate: !exists && pendingFlip,
     };
 }
 
 function renderToggle(row, plat, isUnlocked){
-    const { currentlyOn, currentlyOff, faded } = toggleState(row, plat);
+    const { currentlyOn, currentlyOff, faded, pendingReactivate } = toggleState(row, plat);
     const cls = ['bu-toggle'];
     // Revizto-only: an existing user with pending=true (invited but not
     // yet accepted) gets a yellow toggle. Overrides .on for the pending
@@ -1006,7 +1008,9 @@ function renderToggle(row, plat, isUnlocked){
     const isPending = plat === 'revizto' && row?.revizto?.pending === true;
     if (isPending && !currentlyOff) {
         cls.push('pending');
-    } else if (currentlyOn) {
+    } else if (currentlyOn || pendingReactivate) {
+        // pendingReactivate (faded row with reactivate-staged) renders
+        // as green "on" so the admin sees their staged intent.
         cls.push('on');
     } else if (currentlyOff) {
         cls.push('off');
@@ -1016,8 +1020,10 @@ function renderToggle(row, plat, isUnlocked){
     let title;
     if (faded) {
         title = isUnlocked
-            ? 'Unlock and edit this row to invite the user to this platform'
+            ? 'Click to invite or reactivate this user'
             : 'User is not on this platform — unlock to add';
+    } else if (pendingReactivate) {
+        title = 'Reactivate staged — click again to cancel, or click lock to commit';
     } else if (isPending) {
         title = isUnlocked
             ? 'Click to withdraw pending invite'
@@ -1391,7 +1397,20 @@ function renderTable(){
     });
 
     out.querySelectorAll('.bu-toggle').forEach(el => {
-        if (el.classList.contains('faded') || el.classList.contains('locked')) return;
+        if (el.classList.contains('locked')) return;
+        // Faded toggles (row has no platform sub-object) used to be
+        // ignored entirely. Now they're clickable on unlocked rows so
+        // admins can reactivate a freshly-deactivated user (or invite
+        // a never-on-platform one). The single-row click handler
+        // distinguishes the two cases via pendingEdits[k][platform]._toggle:
+        //   _toggle: false → deactivate intent (currently active row)
+        //   _toggle: true  → reactivate / invite intent (currently faded row)
+        // Backend resolves which path actually runs based on snapshot
+        // presence and field values.
+        if (el.classList.contains('faded')){
+            const rk = el.dataset.row;
+            if (!rk || !unlocked.has(rk)) return;
+        }
         el.addEventListener('click', async () => {
             const clickedRowKey = el.dataset.row;
             const plat          = el.dataset.plat;
@@ -1420,17 +1439,16 @@ function renderTable(){
                the lock-close handler fire it as part of the batched
                commit. No API call here. The visual state still flips
                immediately via pendingToggles so the admin sees the
-               intended state — that's separate from the data write. */
+               intended state — that's separate from the data write.
+
+               Direction depends on the row's current state:
+                 row[plat] truthy → currently active → staging deactivation (_toggle: false)
+                 row[plat] null   → currently faded  → staging reactivation/invite (_toggle: true) */
             const rowByKey = new Map(lastRows.map(r => [rowKey(r), r]));
             const row = rowByKey.get(clickedRowKey);
-            if (!row || row[plat] == null) return;
-            // Only allow staging when the row is unlocked. Toggle clicks
-            // on locked rows are unreachable (CSS pointer-events) but
-            // belt-and-braces.
+            if (!row) return;
             if (!unlocked.has(clickedRowKey)) return;
             const tk = `${clickedRowKey}|${plat}`;
-            // pendingEdits[k][platform]._toggle reflects the desired
-            // post-commit state. Toggling twice cancels itself out.
             let pe = pendingEdits.get(clickedRowKey);
             if (!pe){ pe = {revizto:{}, forma:{}, morta:{}}; pendingEdits.set(clickedRowKey, pe); }
             if (pendingToggles.has(tk)){
@@ -1441,9 +1459,9 @@ function renderTable(){
                     delete pe[plat]._toggle;
                 }
             } else {
-                // First click on an active row = stage deactivation.
+                // First click. Direction = opposite of current state.
                 pendingToggles.add(tk);
-                pe[plat]._toggle = false;
+                pe[plat]._toggle = (row[plat] == null);  // true = reactivate, false = deactivate
             }
             renderTable();
         });
@@ -1572,12 +1590,19 @@ async function commitRowEdits(k){
     // field edits the admin may have also made (they'd be a no-op
     // since the user is about to be removed) and short-circuit the
     // per-platform diff later.
+    //
+    // _toggle: true (reactivate intent): pass through but DON'T skip
+    // field edits. Backend prefers snapshot-based reactivate, falls
+    // through to a field-based invite if no snapshot exists.
     const platformsBeingDeactivated = new Set();
     for (const platform of ['revizto', 'forma', 'morta']){
         const peP = pe[platform] || {};
         if (peP._toggle === false){
             diff[platform]._toggle = false;
             platformsBeingDeactivated.add(platform);
+            hasAny = true;
+        } else if (peP._toggle === true){
+            diff[platform]._toggle = true;
             hasAny = true;
         }
     }

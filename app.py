@@ -5243,6 +5243,11 @@ async def api_browse_edit(request: Request, user: str = Depends(require_user)):
     config   = load_config(user)
     registry = load_registry()
     cache    = load_browse_cache()
+    # Snapshots store the platform sub-object that existed at deactivation
+    # time. Loaded here because both the deactivate (writes snapshot) and
+    # reactivate (reads snapshot) paths need it. Saved back to disk
+    # whenever modified — last-wins concurrency, same as the cache.
+    snapshots = load_deactivation_snapshots()
 
     proj = registry.get(project_key)
     if not proj:
@@ -5279,16 +5284,68 @@ async def api_browse_edit(request: Request, user: str = Depends(require_user)):
     #     member's UUIDs so the row is immediately deactivate-ready.
     rev_edits = edits.get("revizto") or {}
     rev_toggle_off = rev_edits.get("_toggle") is False
-    rev_is_invite  = (row.get("revizto") is None) and bool(rev_edits) and not rev_toggle_off
+    rev_toggle_on  = rev_edits.get("_toggle") is True
+    rev_is_invite  = (row.get("revizto") is None) and bool(rev_edits) and not rev_toggle_off and not rev_toggle_on
+    rev_snap_key   = _snapshot_key(email, "revizto", project_key)
     if rev_edits and rev_toggle_off and row.get("revizto"):
-        # Toggle-off path — short-circuits all the field-edit logic.
+        # DEACTIVATE path — save snapshot first so reactivate can restore.
+        # Snapshot saving mirrors /api/browse/toggle behaviour (line ~5102):
+        # capture the platform sub-object plus name/email metadata, then
+        # roll back the snapshot if the API delete fails so we don't end
+        # up with a phantom snapshot for a still-active user.
+        snap_data = dict(row["revizto"])
+        snap_data["_name"]  = row.get("name", "")
+        snap_data["_email"] = row.get("email", "")
+        snapshots[rev_snap_key] = snap_data
+        save_deactivation_snapshots(snapshots)
+
         ok, err = _do_deactivate(user, config, email, "revizto", project_key, proj, row)
         if ok:
             row["revizto"] = None
             applied["revizto"].append("_deactivated")
         else:
+            snapshots.pop(rev_snap_key, None)
+            save_deactivation_snapshots(snapshots)
             failed.append({"platform": "revizto", "field": "_toggle", "error": err})
-    elif rev_edits and (row.get("revizto") or rev_is_invite):
+    elif rev_edits and rev_toggle_on and row.get("revizto") is None:
+        # REACTIVATE path — restore from a saved snapshot. If there's
+        # no snapshot AND no real field edits, error out. If there's
+        # no snapshot but the admin DID fill in fields, fall through
+        # to invite — the toggle-on directive just signals intent;
+        # the field values define the actual user record.
+        snap = snapshots.get(rev_snap_key)
+        # "Real field edits" = any non-toggle, non-gate, non-label key.
+        has_field_edits = any(
+            k for k in rev_edits.keys()
+            if not k.startswith("_") and not k.endswith("_label")
+        )
+        if not snap and not has_field_edits:
+            failed.append({"platform": "revizto", "field": "_toggle",
+                           "error": "no Revizto snapshot — use Manage Users to re-invite, or fill in fields and try again"})
+        elif not snap:
+            # Fall through to invite. Set rev_is_invite so the next
+            # branch handles it. (We re-derive it here since the original
+            # rev_is_invite was False due to rev_toggle_on being True.)
+            rev_is_invite = True
+        else:
+            ok, err = _do_reactivate(user, config, email, "revizto", project_key, proj, snap)
+            if ok:
+                row["revizto"] = {k: v for k, v in snap.items() if not k.startswith("_")}
+                snapshots.pop(rev_snap_key, None)
+                save_deactivation_snapshots(snapshots)
+                applied["revizto"].append("_reactivated")
+            else:
+                failed.append({"platform": "revizto", "field": "_toggle", "error": err})
+    # Run the EDIT/INVITE path only if we didn't already complete a
+    # toggle-on reactivate. Two cases reach here:
+    #   1. row.revizto was truthy AND no _toggle directive → EDIT
+    #   2. row.revizto was None AND fields were provided → INVITE.
+    #      This includes the "_toggle: true with no snapshot" fallthrough
+    #      where rev_is_invite was promoted to True earlier.
+    # Excluded: the deactivate path (handled above), and successful
+    # reactivate (snapshot found, row restored — nothing more to do).
+    skip_edit = rev_toggle_off or (rev_toggle_on and not rev_is_invite)
+    if rev_edits and not skip_edit and (row.get("revizto") or rev_is_invite):
         rev_pid = (proj.get("platforms", {}).get("revizto", {}) or {}).get("project_uuid") or ""
         if not rev_pid:
             failed.append({"platform": "revizto", "field": "*",
@@ -5447,15 +5504,47 @@ async def api_browse_edit(request: Request, user: str = Depends(require_user)):
     #   - EDIT: PATCH /admin/v1/projects/{pid}/users/{userId} via forma_update_user()
     fo_edits = edits.get("forma") or {}
     fo_toggle_off = fo_edits.get("_toggle") is False
-    fo_is_invite  = (row.get("forma") is None) and bool(fo_edits) and not fo_toggle_off
+    fo_toggle_on  = fo_edits.get("_toggle") is True
+    fo_is_invite  = (row.get("forma") is None) and bool(fo_edits) and not fo_toggle_off and not fo_toggle_on
+    fo_snap_key   = _snapshot_key(email, "forma", project_key)
     if fo_edits and fo_toggle_off and row.get("forma"):
+        snap_data = dict(row["forma"])
+        snap_data["_name"]  = row.get("name", "")
+        snap_data["_email"] = row.get("email", "")
+        snapshots[fo_snap_key] = snap_data
+        save_deactivation_snapshots(snapshots)
+
         ok, err = _do_deactivate(user, config, email, "forma", project_key, proj, row)
         if ok:
             row["forma"] = None
             applied["forma"].append("_deactivated")
         else:
+            snapshots.pop(fo_snap_key, None)
+            save_deactivation_snapshots(snapshots)
             failed.append({"platform": "forma", "field": "_toggle", "error": err})
-    elif fo_edits and (row.get("forma") or fo_is_invite):
+    elif fo_edits and fo_toggle_on and row.get("forma") is None:
+        snap = snapshots.get(fo_snap_key)
+        has_field_edits = any(
+            k for k in fo_edits.keys()
+            if not k.startswith("_") and not k.endswith("_label")
+        )
+        if not snap and not has_field_edits:
+            failed.append({"platform": "forma", "field": "_toggle",
+                           "error": "no Forma snapshot — use Manage Users to re-invite, or fill in fields and try again"})
+        elif not snap:
+            # Fall through to invite — see Revizto comment for rationale.
+            fo_is_invite = True
+        else:
+            ok, err = _do_reactivate(user, config, email, "forma", project_key, proj, snap)
+            if ok:
+                row["forma"] = {k: v for k, v in snap.items() if not k.startswith("_")}
+                snapshots.pop(fo_snap_key, None)
+                save_deactivation_snapshots(snapshots)
+                applied["forma"].append("_reactivated")
+            else:
+                failed.append({"platform": "forma", "field": "_toggle", "error": err})
+    fo_skip_edit = fo_toggle_off or (fo_toggle_on and not fo_is_invite)
+    if fo_edits and not fo_skip_edit and (row.get("forma") or fo_is_invite):
         fo_pid = (proj.get("platforms", {}).get("forma", {}) or {}).get("project_id") or ""
         if not fo_pid:
             failed.append({"platform": "forma", "field": "*",
@@ -5562,15 +5651,46 @@ async def api_browse_edit(request: Request, user: str = Depends(require_user)):
     #     chain a tag assignment if a tag was selected.
     mo_edits = edits.get("morta") or {}
     mo_toggle_off = mo_edits.get("_toggle") is False
-    mo_is_invite  = (row.get("morta") is None) and bool(mo_edits) and not mo_toggle_off
+    mo_toggle_on  = mo_edits.get("_toggle") is True
+    mo_is_invite  = (row.get("morta") is None) and bool(mo_edits) and not mo_toggle_off and not mo_toggle_on
+    mo_snap_key   = _snapshot_key(email, "morta", project_key)
     if mo_edits and mo_toggle_off and row.get("morta"):
+        snap_data = dict(row["morta"])
+        snap_data["_name"]  = row.get("name", "")
+        snap_data["_email"] = row.get("email", "")
+        snapshots[mo_snap_key] = snap_data
+        save_deactivation_snapshots(snapshots)
+
         ok, err = _do_deactivate(user, config, email, "morta", project_key, proj, row)
         if ok:
             row["morta"] = None
             applied["morta"].append("_deactivated")
         else:
+            snapshots.pop(mo_snap_key, None)
+            save_deactivation_snapshots(snapshots)
             failed.append({"platform": "morta", "field": "_toggle", "error": err})
-    elif mo_edits and (row.get("morta") or mo_is_invite):
+    elif mo_edits and mo_toggle_on and row.get("morta") is None:
+        snap = snapshots.get(mo_snap_key)
+        has_field_edits = any(
+            k for k in mo_edits.keys()
+            if not k.startswith("_") and not k.endswith("_label")
+        )
+        if not snap and not has_field_edits:
+            failed.append({"platform": "morta", "field": "_toggle",
+                           "error": "no Morta snapshot — use Manage Users to re-invite, or fill in fields and try again"})
+        elif not snap:
+            mo_is_invite = True
+        else:
+            ok, err = _do_reactivate(user, config, email, "morta", project_key, proj, snap)
+            if ok:
+                row["morta"] = {k: v for k, v in snap.items() if not k.startswith("_")}
+                snapshots.pop(mo_snap_key, None)
+                save_deactivation_snapshots(snapshots)
+                applied["morta"].append("_reactivated")
+            else:
+                failed.append({"platform": "morta", "field": "_toggle", "error": err})
+    mo_skip_edit = mo_toggle_off or (mo_toggle_on and not mo_is_invite)
+    if mo_edits and not mo_skip_edit and (row.get("morta") or mo_is_invite):
         mo_hub = (proj.get("platforms", {}).get("morta", {}) or {}).get("hub_id") or ""
         if not mo_hub:
             failed.append({"platform": "morta", "field": "*",
