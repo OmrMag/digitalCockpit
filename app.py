@@ -5066,19 +5066,30 @@ async def api_browse_edit(request: Request, user: str = Depends(require_user)):
     failed:  list = []
 
     # ── Revizto edits ──────────────────────────────────────────────
-    # Two operating modes share this block:
-    #   - EDIT: the row already has a `revizto` sub-object. We use
-    #     revizto_invite() with preserve_roles tied to whether the admin
-    #     touched license_role_id, and the existing user gets updated.
-    #   - INVITE (add-from-browse): row.revizto is None — the user isn't
-    #     on this Revizto project today. Frontend signals invite intent
-    #     by including `_invite_to_license` and/or `_invite_to_project`
-    #     boolean flags in the rev_edits payload. At least one must be
-    #     true; if both are false (or absent), we treat this as an
-    #     edit-with-no-row error rather than silently doing nothing.
+    # Three operating modes share this block:
+    #   - DEACTIVATE: rev_edits contains _toggle: false. Dispatches to
+    #     _do_deactivate() and skips the rest of the branch. Field
+    #     edits sent alongside a deactivate are silently ignored —
+    #     no point invite-updating a user we're about to remove.
+    #   - EDIT: row.revizto exists, _toggle is true or absent. Use
+    #     revizto_invite() with preserve_roles tied to whether the
+    #     admin touched license_role_id; the existing user gets updated.
+    #   - INVITE: row.revizto is None — user isn't on this Revizto
+    #     project today. _invite_to_license / _invite_to_project flags
+    #     gate which calls fire. After success, look up the new
+    #     member's UUIDs so the row is immediately deactivate-ready.
     rev_edits = edits.get("revizto") or {}
-    rev_is_invite = (row.get("revizto") is None) and bool(rev_edits)
-    if rev_edits and (row.get("revizto") or rev_is_invite):
+    rev_toggle_off = rev_edits.get("_toggle") is False
+    rev_is_invite  = (row.get("revizto") is None) and bool(rev_edits) and not rev_toggle_off
+    if rev_edits and rev_toggle_off and row.get("revizto"):
+        # Toggle-off path — short-circuits all the field-edit logic.
+        ok, err = _do_deactivate(user, config, email, "revizto", project_key, proj, row)
+        if ok:
+            row["revizto"] = None
+            applied["revizto"].append("_deactivated")
+        else:
+            failed.append({"platform": "revizto", "field": "_toggle", "error": err})
+    elif rev_edits and (row.get("revizto") or rev_is_invite):
         rev_pid = (proj.get("platforms", {}).get("revizto", {}) or {}).get("project_uuid") or ""
         if not rev_pid:
             failed.append({"platform": "revizto", "field": "*",
@@ -5220,17 +5231,21 @@ async def api_browse_edit(request: Request, user: str = Depends(require_user)):
                         failed.append({"platform": "revizto", "field": k, "error": detail})
 
     # ── Forma edits ────────────────────────────────────────────────
-    # Two separate API calls depending on mode:
+    # Three modes:
+    #   - DEACTIVATE: fo_edits contains _toggle: false → _do_deactivate.
     #   - INVITE: POST /admin/v2/projects/{pid}/users:import via forma_invite()
-    #     The :import endpoint is the documented add-users-to-project call;
-    #     it works for new users but does NOT reliably update existing ones.
     #   - EDIT: PATCH /admin/v1/projects/{pid}/users/{userId} via forma_update_user()
-    #     The PATCH endpoint is the documented update-existing-user call.
-    #     Required when changing company / roles / products on a user
-    #     who's already a project member.
     fo_edits = edits.get("forma") or {}
-    fo_is_invite = (row.get("forma") is None) and bool(fo_edits)
-    if fo_edits and (row.get("forma") or fo_is_invite):
+    fo_toggle_off = fo_edits.get("_toggle") is False
+    fo_is_invite  = (row.get("forma") is None) and bool(fo_edits) and not fo_toggle_off
+    if fo_edits and fo_toggle_off and row.get("forma"):
+        ok, err = _do_deactivate(user, config, email, "forma", project_key, proj, row)
+        if ok:
+            row["forma"] = None
+            applied["forma"].append("_deactivated")
+        else:
+            failed.append({"platform": "forma", "field": "_toggle", "error": err})
+    elif fo_edits and (row.get("forma") or fo_is_invite):
         fo_pid = (proj.get("platforms", {}).get("forma", {}) or {}).get("project_id") or ""
         if not fo_pid:
             failed.append({"platform": "forma", "field": "*",
@@ -5324,14 +5339,23 @@ async def api_browse_edit(request: Request, user: str = Depends(require_user)):
                     failed.append({"platform": "forma", "field": k, "error": detail})
 
     # ── Morta edits ────────────────────────────────────────────────
-    # Two paths:
+    # Three paths:
+    #   - DEACTIVATE: mo_edits contains _toggle: false → _do_deactivate.
     #   - EDIT: row already has `morta`; change tag via morta_set_user_tag.
     #   - INVITE (add-from-browse): row.morta is None — call morta_invite()
     #     to add the user to the hub (default projectRole=member) and
     #     chain a tag assignment if a tag was selected.
     mo_edits = edits.get("morta") or {}
-    mo_is_invite = (row.get("morta") is None) and bool(mo_edits)
-    if mo_edits and (row.get("morta") or mo_is_invite):
+    mo_toggle_off = mo_edits.get("_toggle") is False
+    mo_is_invite  = (row.get("morta") is None) and bool(mo_edits) and not mo_toggle_off
+    if mo_edits and mo_toggle_off and row.get("morta"):
+        ok, err = _do_deactivate(user, config, email, "morta", project_key, proj, row)
+        if ok:
+            row["morta"] = None
+            applied["morta"].append("_deactivated")
+        else:
+            failed.append({"platform": "morta", "field": "_toggle", "error": err})
+    elif mo_edits and (row.get("morta") or mo_is_invite):
         mo_hub = (proj.get("platforms", {}).get("morta", {}) or {}).get("hub_id") or ""
         if not mo_hub:
             failed.append({"platform": "morta", "field": "*",

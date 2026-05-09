@@ -1294,6 +1294,13 @@ function renderTable(){
                     unlocked.delete(k);
                     pendingEdits.delete(k);
                     originalsByKey.delete(k);
+                    // Clear pendingToggles for this row's platforms — the
+                    // row's data has either been updated (deactivate
+                    // succeeded) or rolled back (failed). Either way the
+                    // staged-toggle visual state shouldn't linger.
+                    for (const p of ['revizto', 'forma', 'morta']){
+                        pendingToggles.delete(`${k}|${p}`);
+                    }
                     renderTable();
                 } else {
                     /* Opening for edit. Snapshot the row's original sub-
@@ -1409,31 +1416,34 @@ function renderTable(){
                 return;
             }
 
-            /* Single-row mode: fire the change immediately. */
+            /* Single-row mode: stage the toggle in pendingEdits and let
+               the lock-close handler fire it as part of the batched
+               commit. No API call here. The visual state still flips
+               immediately via pendingToggles so the admin sees the
+               intended state — that's separate from the data write. */
             const rowByKey = new Map(lastRows.map(r => [rowKey(r), r]));
             const row = rowByKey.get(clickedRowKey);
             if (!row || row[plat] == null) return;
-            const isCurrentlyOn = row[plat] != null && !pendingToggles.has(`${clickedRowKey}|${plat}`);
-            const action = isCurrentlyOn ? 'deactivate' : 'reactivate';
-            // Optimistic flip: add to pendingToggles so the UI shows the
-            // intended state immediately. Revert on failure.
+            // Only allow staging when the row is unlocked. Toggle clicks
+            // on locked rows are unreachable (CSS pointer-events) but
+            // belt-and-braces.
+            if (!unlocked.has(clickedRowKey)) return;
             const tk = `${clickedRowKey}|${plat}`;
-            pendingToggles.add(tk);
-            renderTable();
-            const change = {
-                email:       row.email,
-                platform:    plat,
-                project_key: row.project_key,
-                action:      action,
-            };
-            const success = await fireToggleChanges([change], /* fromBulk */ false);
-            if (success){
-                // The API success path mutates the cached row; clear the
-                // pending marker so the UI reflects the real state.
+            // pendingEdits[k][platform]._toggle reflects the desired
+            // post-commit state. Toggling twice cancels itself out.
+            let pe = pendingEdits.get(clickedRowKey);
+            if (!pe){ pe = {revizto:{}, forma:{}, morta:{}}; pendingEdits.set(clickedRowKey, pe); }
+            if (pendingToggles.has(tk)){
+                // Second click on a staged toggle = "actually, leave it".
+                // Remove visual marker AND the staged directive.
                 pendingToggles.delete(tk);
+                if ('_toggle' in (pe[plat] || {})){
+                    delete pe[plat]._toggle;
+                }
             } else {
-                // Revert
-                pendingToggles.delete(tk);
+                // First click on an active row = stage deactivation.
+                pendingToggles.add(tk);
+                pe[plat]._toggle = false;
             }
             renderTable();
         });
@@ -1542,7 +1552,10 @@ async function commitRowEdits(k){
 
     // Build a clean diff per platform.
     //
-    // Two modes per platform:
+    // Three modes per platform:
+    //   - DEACTIVATE (_toggle: false in pe.PLATFORM): pass through and
+    //     skip field edits for that platform — backend will deactivate
+    //     and the row's PLATFORM sub-object will be cleared.
     //   - EDIT (orig.PLATFORM truthy): only fields whose value differs
     //     from the original go into the diff.
     //   - INVITE (orig.PLATFORM null + admin entered something): every
@@ -1553,6 +1566,21 @@ async function commitRowEdits(k){
     // doesn't spin up an HTTP call for nothing.
     const diff = {revizto:{}, forma:{}, morta:{}};
     let hasAny = false;
+
+    // Step 1: handle toggle directives. If _toggle is false for a
+    // platform, that platform is being deactivated — clear out any
+    // field edits the admin may have also made (they'd be a no-op
+    // since the user is about to be removed) and short-circuit the
+    // per-platform diff later.
+    const platformsBeingDeactivated = new Set();
+    for (const platform of ['revizto', 'forma', 'morta']){
+        const peP = pe[platform] || {};
+        if (peP._toggle === false){
+            diff[platform]._toggle = false;
+            platformsBeingDeactivated.add(platform);
+            hasAny = true;
+        }
+    }
 
     function addIfChanged(platform, editKey, newVal, originalVal){
         const a = (newVal === undefined || newVal === null) ? '' : newVal;
@@ -1581,7 +1609,10 @@ async function commitRowEdits(k){
 
     // ── Revizto ─────────────────────────────────────────────────────
     const pRev = pe.revizto || {};
-    if (orig.revizto){
+    if (platformsBeingDeactivated.has('revizto')){
+        // _toggle: false dominates — no field edits, no invite gates.
+        // The backend will short-circuit straight to deactivate.
+    } else if (orig.revizto){
         // EDIT mode
         const o = orig.revizto;
         addIfChanged('revizto', 'company',    pRev.company,    o.company);
@@ -1631,7 +1662,9 @@ async function commitRowEdits(k){
 
     // ── Forma ───────────────────────────────────────────────────────
     const pFo = pe.forma || {};
-    if (orig.forma){
+    if (platformsBeingDeactivated.has('forma')){
+        // Toggle-off dominates.
+    } else if (orig.forma){
         // EDIT mode
         const o = orig.forma;
         if (pFo.company_id !== undefined && String(pFo.company_id) !== String(o.company_id || '')){
@@ -1700,7 +1733,9 @@ async function commitRowEdits(k){
 
     // ── Morta ───────────────────────────────────────────────────────
     const pMo = pe.morta || {};
-    if (orig.morta){
+    if (platformsBeingDeactivated.has('morta')){
+        // Toggle-off dominates.
+    } else if (orig.morta){
         // EDIT mode — tag swap.
         if (pMo.tag_reference_id !== undefined){
             const opts = (regMeta?.platforms?.morta?.tags) || [];
