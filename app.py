@@ -1253,17 +1253,28 @@ def fetch_morta_hubs(config):
         if not f.get("isDeleted", False)
     ]
 
-# Revizto license tier enum — names match the Revizto web UI (License →
-# Members screen) and the invite dropdown. Source: Revizto's web UI ID
-# order plus our own invite payload usage. This is the single source of
-# truth across revizto_search_user, the browse sweep, and any future
-# code that needs to translate the integer tier to a label.
+# Revizto license tier enum — values match the official Revizto API docs
+# (POST /v5/license/{licenseUuid}/invite/bulk → role param):
+#   1 = Guest
+#   2 = Collaborator
+#   3 = Content creator
+#   4 = License administrator
+# The 0 slot ("Super administrator") is speculative — the docs only
+# document 1-4, but the /team endpoint may return 0 for the license
+# owner. Kept as a fallback; if it's never observed we can drop it.
+#
+# Single source of truth across revizto_search_user, the browse sweep,
+# and any future code that needs to translate the integer tier to a
+# label. NOTE: prior to May 2026 this map had 0=SuperAdmin, 1=Admin,
+# 2=Collaborator, 3=ContentCreator, 4=Guest — that ordering was wrong
+# (an admin showed up as "Guest" in the browse table). The current
+# map matches the documented invite payload.
 REVIZTO_LICENSE_ROLE_MAP = {
     0: "Super administrator",
-    1: "Administrator",
+    1: "Guest",
     2: "Collaborator",
     3: "Content Creator",
-    4: "Guest",
+    4: "License administrator",
 }
 
 
@@ -3981,16 +3992,33 @@ def _sweep_browse_rows(user: str):
                     ent_email = (user_sub.get("email") or "").strip().lower()
                 if not ent_email:
                     continue
-                # Try plausible field-name candidates for the tier int.
-                # Same fallback list as revizto_search_user.
-                tier = None
-                for k in ("role", "licenseRole", "license_role", "tier"):
-                    v = ent.get(k)
-                    if isinstance(v, int):
-                        tier = v
-                        break
-                if tier is not None:
-                    index[ent_email] = tier
+                # Resolve the license-tier label. Two possible shapes:
+                #   (1) Outer "role" is an object with a "name" string —
+                #       Revizto already translated the int to a label
+                #       (this is the shape the invite-bulk response uses;
+                #       the /team endpoint MAY use the same shape).
+                #   (2) "role" (or licenseRole / license_role / tier) is
+                #       a bare int — we translate via REVIZTO_LICENSE_ROLE_MAP.
+                # Prefer (1) when available because it's authoritative;
+                # fall back to (2) so we still work if the endpoint only
+                # returns the int.
+                label = ""
+                role_obj = ent.get("role")
+                if isinstance(role_obj, dict):
+                    name = role_obj.get("name")
+                    if isinstance(name, str) and name.strip():
+                        label = name.strip()
+                if not label:
+                    tier = None
+                    for k in ("role", "licenseRole", "license_role", "tier"):
+                        v = ent.get(k)
+                        if isinstance(v, int):
+                            tier = v
+                            break
+                    if tier is not None:
+                        label = REVIZTO_LICENSE_ROLE_MAP.get(tier, "")
+                if label:
+                    index[ent_email] = label
             print(f"[browse-sweep] revizto {region} '{license_name}': license team raw={len(ents)} indexed={len(index)}")
             return index
 
@@ -4056,11 +4084,10 @@ def _sweep_browse_rows(user: str):
                 if not rec:
                     continue
                 # License-side enrichment from the per-license index.
-                lic_tier = license_index.get(em_lower)
-                lic_role_label = (
-                    REVIZTO_LICENSE_ROLE_MAP.get(lic_tier, "")
-                    if lic_tier is not None else ""
-                )
+                # The index stores resolved labels (strings) directly —
+                # no further translation needed. Empty string means
+                # "not on this license" (or license-team fetch failed).
+                lic_role_label = license_index.get(em_lower, "")
                 rec["revizto"] = {
                     "role":         role,
                     "license_role": lic_role_label,
@@ -4069,10 +4096,12 @@ def _sweep_browse_rows(user: str):
                     "location":     ent.get("location", "") or "",
                     "last_active":  ent.get("lastActive", "") or "",
                     "user_uuid":    ent.get("uuid", "") or "",
-                    # on_license: did the email appear in the parent
-                    # license's team? Can be False if user was on the
-                    # project but later removed from the license.
-                    "on_license":   lic_tier is not None,
+                    # on_license: true iff email appears in the parent
+                    # license's team. False if the user was on the
+                    # project but later removed from the license, OR
+                    # if the license-team fetch failed (admin sees a
+                    # blank LICENSE ROLE column and L=· in that case).
+                    "on_license":   bool(lic_role_label),
                     # on_project: always True here — we're iterating
                     # /project/.../team, so they're a project member
                     # by construction.
