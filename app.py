@@ -1444,9 +1444,16 @@ def fetch_revizto_projects(config, email: str = None):
                 if uuid and uuid not in seen_uuids:
                     seen_uuids.add(uuid)
                     all_projects.append({
-                        "uuid":   uuid,
-                        "title":  p.get("title", "Unnamed"),
-                        "region": region,
+                        "uuid":         uuid,
+                        "title":        p.get("title", "Unnamed"),
+                        "region":       region,
+                        # Tag each project with its parent license. The
+                        # browse sweep needs this to fetch per-license
+                        # team membership (one /v5/license/{uuid}/team
+                        # call per unique license, NOT per project).
+                        # Cheap to add here since we already have it.
+                        "license_uuid": lic_uuid,
+                        "license_name": lic_name,
                     })
                     added += 1
             print(f"[Revizto/{region}] License '{lic_name}' — {added} project(s) added")
@@ -3895,67 +3902,75 @@ def _sweep_browse_rows(user: str):
         return rec
 
     # ── Revizto sweep ──────────────────────────────────────────────
-    # Two layers of data per region:
-    #   (a) /v5/license/{license_uuid}/team — the license-level membership
-    #       (who holds a seat in this region) and their license tier
-    #       (Administrator / Collaborator / Content Creator / Guest).
-    #       This is the ONLY source for license_role and the on_license
-    #       flag; /project/.../team's accessRole is project role, not
-    #       license tier. Fetched lazily per-region, cached for the run.
-    #   (b) /v5/project/{uuid}/team — the project members. accessRole
-    #       here is the project role (e.g. "BIM Coordinator"), which
-    #       is what the Project Role column shows.
+    # Two-layer fetch per region:
+    #   (a) /v5/license/{license_uuid}/team — license-level membership
+    #       (who holds a seat) and license tier (Admin / Collaborator /
+    #       Content Creator / Guest). The ONLY source for license_role
+    #       and on_license. Hit ONCE PER UNIQUE LICENSE — not per region,
+    #       not per project. fetch_revizto_projects now tags each project
+    #       with its parent license_uuid so we can group projects by
+    #       license without re-fetching the license list.
+    #   (b) /v5/project/{uuid}/team — project members. accessRole here
+    #       is the project role ("BIM Coordinator", etc.), not license
+    #       tier. This is what the Project Role column shows.
     #
-    # If the license-team call fails or returns nothing for a region,
-    # we still emit project rows but leave license_role empty and
-    # on_license=False rather than silently defaulting to True. That's
-    # the truthful failure mode — admins see "L=· P=✓" and know the
-    # license enrichment didn't run, instead of being told everyone is
-    # on every license.
+    # If the license-team call for a given license fails or returns
+    # zero members, we still emit project rows from that license but
+    # leave license_role blank and on_license=False — admins see
+    # "L=· P=✓" rather than being told everyone holds a seat.
+    #
+    # Every branch logs explicitly. Silent failures are NOT acceptable
+    # because the v1 attempt died silently and dropped 55% of rows
+    # before we noticed.
     try:
         rev_projects = fetch_revizto_projects(config, email=user) or []
         rev_tokens = {}
-        # region -> { email_lower: tier_int }. None means "tried, failed".
-        license_team_by_region: dict = {}
+        # (region, license_uuid) -> { email_lower: tier_int }
+        license_team_index: dict = {}
 
-        def _ensure_license_team(region: str, token: str):
-            """Fetch /v5/license/{lic_uuid}/team for this region once.
-            Idempotent: subsequent calls return the cached index. Returns
-            the email→tier dict (possibly empty if the call failed)."""
-            if region in license_team_by_region:
-                return license_team_by_region[region]
+        def _ensure_license_team(region: str, license_uuid: str, license_name: str, token: str):
+            """Fetch /v5/license/{uuid}/team for this specific license once.
+            Cached per (region, license_uuid). Always returns a dict (may
+            be empty). Logs the outcome on every branch."""
+            cache_key = (region, license_uuid)
+            if cache_key in license_team_index:
+                return license_team_index[cache_key]
             index: dict = {}
-            license_team_by_region[region] = index
+            license_team_index[cache_key] = index
             if not token:
+                print(f"[browse-sweep] revizto {region} '{license_name}': no token, skipping license-team fetch")
                 return index
+            if not license_uuid:
+                print(f"[browse-sweep] revizto {region} '{license_name}': no license_uuid, skipping")
+                return index
+            url = f"https://api.{region}.revizto.com/v5/license/{license_uuid}/team"
             try:
-                lic_uuid, _auth = revizto_resolve_license(config, region, email=user)
-            except Exception as e:
-                print(f"[browse-sweep] revizto resolve_license {region} raised: {e}")
-                return index
-            if not lic_uuid:
-                print(f"[browse-sweep] revizto {region}: no license_uuid resolved — license_role/L flag will be blank")
-                return index
-            try:
+                # 10s timeout (down from 15s) — license teams can be large
+                # but the request budget on App Service is ~30s total. With
+                # up to 5 licenses to fetch we need to keep each one snappy.
                 lr = http_requests.get(
-                    f"https://api.{region}.revizto.com/v5/license/{lic_uuid}/team",
+                    url,
                     headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
-                    timeout=15,
+                    timeout=10,
                 )
             except Exception as e:
-                print(f"[browse-sweep] revizto /license/{lic_uuid[:8]}/team raised: {e}")
+                print(f"[browse-sweep] revizto {region} '{license_name}' /license/team raised: {type(e).__name__}: {e}")
                 return index
             if lr.status_code != 200:
-                print(f"[browse-sweep] revizto /license/{lic_uuid[:8]}/team status={lr.status_code}")
+                print(f"[browse-sweep] revizto {region} '{license_name}' /license/team status={lr.status_code} body={lr.text[:200]}")
                 return index
             try:
                 body = lr.json()
-            except Exception:
+            except Exception as e:
+                print(f"[browse-sweep] revizto {region} '{license_name}' /license/team json parse failed: {e}")
                 return index
-            if body.get("result", 0) != 0:
+            api_result = body.get("result", 0)
+            if api_result != 0:
+                print(f"[browse-sweep] revizto {region} '{license_name}' /license/team result={api_result}")
                 return index
             ents = (body.get("data") or {}).get("entities") or []
             if not isinstance(ents, list):
+                print(f"[browse-sweep] revizto {region} '{license_name}' /license/team entities not a list")
                 return index
             for ent in ents:
                 if not isinstance(ent, dict):
@@ -3966,9 +3981,8 @@ def _sweep_browse_rows(user: str):
                     ent_email = (user_sub.get("email") or "").strip().lower()
                 if not ent_email:
                     continue
-                # Try the same field-name candidates as revizto_search_user —
-                # we don't know the canonical name and Revizto has been
-                # inconsistent across endpoints. Stop on the first int hit.
+                # Try plausible field-name candidates for the tier int.
+                # Same fallback list as revizto_search_user.
                 tier = None
                 for k in ("role", "licenseRole", "license_role", "tier"):
                     v = ent.get(k)
@@ -3977,7 +3991,7 @@ def _sweep_browse_rows(user: str):
                         break
                 if tier is not None:
                     index[ent_email] = tier
-            print(f"[browse-sweep] revizto {region}: license team indexed {len(index)} member(s)")
+            print(f"[browse-sweep] revizto {region} '{license_name}': license team raw={len(ents)} indexed={len(index)}")
             return index
 
         for proj in rev_projects:
@@ -3992,7 +4006,10 @@ def _sweep_browse_rows(user: str):
             )
             project_keys_swept.add(project_key)
 
-            region = proj.get("region", "dubai")
+            region       = proj.get("region", "dubai")
+            license_uuid = proj.get("license_uuid", "")
+            license_name = proj.get("license_name", "")
+
             token = rev_tokens.get(region)
             if token is None:
                 token = revizto_get_token_for_region(config, region, email=user) or ""
@@ -4000,10 +4017,9 @@ def _sweep_browse_rows(user: str):
             if not token:
                 continue
 
-            # Lazy-fetch the region's license team the first time we see
-            # any project in that region. Subsequent projects in the same
-            # region reuse the index.
-            license_index = _ensure_license_team(region, token)
+            # Index this project's license team (cached after first call
+            # for any project sharing the same license).
+            license_index = _ensure_license_team(region, license_uuid, license_name, token)
 
             try:
                 tr = http_requests.get(
@@ -4012,9 +4028,10 @@ def _sweep_browse_rows(user: str):
                     timeout=15,
                 )
             except Exception as e:
-                print(f"[browse-sweep] revizto /team {pid[:8]} raised: {e}")
+                print(f"[browse-sweep] revizto /team {pid[:8]} raised: {type(e).__name__}: {e}")
                 continue
             if tr.status_code != 200:
+                print(f"[browse-sweep] revizto /team {pid[:8]} status={tr.status_code}")
                 continue
             try:
                 body = tr.json()
@@ -4038,12 +4055,7 @@ def _sweep_browse_rows(user: str):
                 rec = upsert_row(em, project_key, project_name, name=full_name)
                 if not rec:
                     continue
-                # License-side enrichment. If the user's email is in the
-                # license team index, they hold a seat in this region — set
-                # on_license=True and translate the tier int to a label.
-                # If the index is empty (license-team call failed) or the
-                # email is missing, we report on_license=False and a blank
-                # license_role rather than lying with a default.
+                # License-side enrichment from the per-license index.
                 lic_tier = license_index.get(em_lower)
                 lic_role_label = (
                     REVIZTO_LICENSE_ROLE_MAP.get(lic_tier, "")
@@ -4057,20 +4069,22 @@ def _sweep_browse_rows(user: str):
                     "location":     ent.get("location", "") or "",
                     "last_active":  ent.get("lastActive", "") or "",
                     "user_uuid":    ent.get("uuid", "") or "",
-                    # on_license is true iff the email appears in the
-                    # region's license team. It can legitimately be False
-                    # if a user was on the project but later removed from
-                    # the license — admins want to see that gap.
+                    # on_license: did the email appear in the parent
+                    # license's team? Can be False if user was on the
+                    # project but later removed from the license.
                     "on_license":   lic_tier is not None,
-                    # Always True here by construction — we're iterating
-                    # /project/.../team, so every entity is a project
-                    # member. Kept explicit so the field's meaning is
-                    # clear and so future code paths (e.g. license-only
-                    # rows) can set it to False.
+                    # on_project: always True here — we're iterating
+                    # /project/.../team, so they're a project member
+                    # by construction.
                     "on_project":   True,
                 }
     except Exception as e:
-        print(f"[browse-sweep] revizto sweep failed: {e}")
+        # Top-level guard — should never fire because every inner branch
+        # is now wrapped, but keep it as a safety net so a single Revizto
+        # failure doesn't take down the whole sweep.
+        import traceback
+        print(f"[browse-sweep] revizto sweep failed: {type(e).__name__}: {e}")
+        print(f"[browse-sweep] traceback:\n{traceback.format_exc()}")
 
     # ── Forma sweep — registry only ────────────────────────────────
     try:
