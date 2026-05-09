@@ -3747,6 +3747,520 @@ async def manage_page(request: Request, user: str = Depends(require_user)):
 #   GET /api/browse/users          — aggregated user list across platforms
 # ─────────────────────────────────────────────────────────────────────
 
+# ---------------------------------------------------------------------------
+# Browse Users — shared cache + deactivation snapshots
+# ---------------------------------------------------------------------------
+# Two blobs in cockpit-data:
+#
+#   browse_users_cache.json       — shared row cache, keyed (email,project_key)
+#   deactivation_snapshots.json   — per (email,platform,project_key) snapshot
+#                                   used to reactivate with original fields
+#
+# Both shared across all admins. Reads cached via existing TTL layer; writes
+# invalidate the matching cache key. Refresh logic does delete-and-replace
+# scoped to the calling admin's swept project_keys.
+
+def load_browse_cache() -> dict:
+    """Return the shared browse-users cache.
+    Schema: { rows: [...], updated_at: iso, updated_by: email }"""
+    cached = _cache_get("browse_users_cache.json")
+    if cached is not None:
+        return cached
+    if USE_BLOB:
+        data = blob_read("browse_users_cache.json")
+        if data is not None:
+            _cache_set("browse_users_cache.json", data)
+            return data
+    p = BASE_DIR / "browse_users_cache.json"
+    if p.exists():
+        with open(p) as f:
+            data = json.load(f)
+            _cache_set("browse_users_cache.json", data)
+            return data
+    empty = {"rows": [], "updated_at": "", "updated_by": ""}
+    _cache_set("browse_users_cache.json", empty)
+    return empty
+
+
+def save_browse_cache(data: dict):
+    if USE_BLOB:
+        blob_write("browse_users_cache.json", data)
+    else:
+        with open(BASE_DIR / "browse_users_cache.json", "w") as f:
+            json.dump(data, f, indent=2)
+    _cache_invalidate("browse_users_cache.json")
+
+
+def load_deactivation_snapshots() -> dict:
+    """Return all deactivation snapshots.
+    Key shape: 'email|platform|project_key' → preserved row sub-object."""
+    cached = _cache_get("deactivation_snapshots.json")
+    if cached is not None:
+        return cached
+    if USE_BLOB:
+        data = blob_read("deactivation_snapshots.json")
+        if data is not None:
+            _cache_set("deactivation_snapshots.json", data)
+            return data
+    p = BASE_DIR / "deactivation_snapshots.json"
+    if p.exists():
+        with open(p) as f:
+            data = json.load(f)
+            _cache_set("deactivation_snapshots.json", data)
+            return data
+    _cache_set("deactivation_snapshots.json", {})
+    return {}
+
+
+def save_deactivation_snapshots(data: dict):
+    if USE_BLOB:
+        blob_write("deactivation_snapshots.json", data)
+    else:
+        with open(BASE_DIR / "deactivation_snapshots.json", "w") as f:
+            json.dump(data, f, indent=2)
+    _cache_invalidate("deactivation_snapshots.json")
+
+
+def _snapshot_key(email: str, platform: str, project_key: str) -> str:
+    return f"{email.lower()}|{platform}|{project_key}"
+
+
+def _sweep_browse_rows(user: str):
+    """Sweep the calling admin's accessible projects across all three
+    platforms. Returns (rows, project_keys_swept).
+
+    Used by /api/browse/refresh to populate the shared cache. Each
+    project_key in `project_keys_swept` will be delete-and-replaced
+    in the cache with the new rows from this sweep.
+    """
+    config = load_config(user)
+    rows_by_key = {}
+    project_keys_swept = set()
+
+    registry = load_registry()
+    admin_projects = registry if is_owner(user) else {
+        k: v for k, v in registry.items() if user in v.get("admins", [])
+    }
+    rev_uuid_to_key  = {}
+    forma_id_to_key  = {}
+    morta_hub_to_key = {}
+    for k, rp in admin_projects.items():
+        plats = rp.get("platforms", {}) or {}
+        rev   = plats.get("revizto", {}) or {}
+        forma = plats.get("forma", {})   or {}
+        morta = plats.get("morta", {})   or {}
+        if rev.get("project_uuid"):
+            rev_uuid_to_key[rev["project_uuid"]] = k
+        if forma.get("project_id"):
+            forma_id_to_key[forma["project_id"]] = k
+        mhub = morta.get("hub_id") or morta.get("project_id")
+        if mhub:
+            morta_hub_to_key[mhub] = k
+
+    def upsert_row(email, project_key, project_name, **fields):
+        if not email or not project_key:
+            return None
+        key = (email.lower(), project_key)
+        rec = rows_by_key.get(key)
+        if rec is None:
+            rec = {
+                "email":            email,
+                "name":             "",
+                "project_key":      project_key,
+                "project_name":     project_name,
+                "revizto":          None,
+                "forma":            None,
+                "morta":            None,
+                "last_active_ts":   "",
+                "last_active_days": None,
+            }
+            rows_by_key[key] = rec
+        for fk, fv in fields.items():
+            if fk == "name" and fv and not rec["name"]:
+                rec["name"] = fv
+        return rec
+
+    # ── Revizto sweep ──────────────────────────────────────────────
+    try:
+        rev_projects = fetch_revizto_projects(config, email=user) or []
+        rev_tokens = {}
+        for proj in rev_projects:
+            pid = proj.get("uuid", "")
+            if not pid:
+                continue
+            project_key = rev_uuid_to_key.get(pid, f"revizto:{pid}")
+            project_name = (
+                admin_projects.get(rev_uuid_to_key[pid], {}).get("name")
+                if pid in rev_uuid_to_key
+                else proj.get("title", pid)
+            )
+            project_keys_swept.add(project_key)
+
+            region = proj.get("region", "dubai")
+            token = rev_tokens.get(region)
+            if token is None:
+                token = revizto_get_token_for_region(config, region, email=user) or ""
+                rev_tokens[region] = token
+            if not token:
+                continue
+            try:
+                tr = http_requests.get(
+                    f"https://api.{region}.revizto.com/v5/project/{pid}/team",
+                    headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+                    timeout=15,
+                )
+            except Exception as e:
+                print(f"[browse-sweep] revizto /team {pid[:8]} raised: {e}")
+                continue
+            if tr.status_code != 200:
+                continue
+            try:
+                body = tr.json()
+            except Exception:
+                continue
+            if body.get("result", 0) != 0:
+                continue
+            ents = (body.get("data") or {}).get("entities") or []
+            for ent in ents:
+                if not isinstance(ent, dict):
+                    continue
+                em = (ent.get("email") or "").strip()
+                if not em:
+                    continue
+                role_obj = ent.get("accessRole") if isinstance(ent.get("accessRole"), dict) else {}
+                role = role_obj.get("name", "") if role_obj else ""
+                full_name = ent.get("fullname") or (
+                    f"{ent.get('firstname','')} {ent.get('lastname','')}".strip()
+                )
+                rec = upsert_row(em, project_key, project_name, name=full_name)
+                if not rec:
+                    continue
+                rec["revizto"] = {
+                    "role":         role,
+                    "license_role": "",
+                    "company":      ent.get("company", "") or "",
+                    "department":   ent.get("department", "") or "",
+                    "location":     ent.get("location", "") or "",
+                    "last_active":  ent.get("lastActive", "") or "",
+                    "user_uuid":    ent.get("uuid", "") or "",
+                    "on_license":   True,
+                    "on_project":   True,
+                }
+    except Exception as e:
+        print(f"[browse-sweep] revizto sweep failed: {e}")
+
+    # ── Forma sweep — registry only ────────────────────────────────
+    try:
+        forma_token = forma_get_token(config)
+        forma_headers = {"Authorization": f"Bearer {forma_token}",
+                         "Accept": "application/json"} if forma_token else None
+        for k, rp in admin_projects.items():
+            forma = (rp.get("platforms", {}) or {}).get("forma", {}) or {}
+            fpid = forma.get("project_id", "")
+            if not fpid or not forma_headers:
+                continue
+            project_keys_swept.add(k)
+            roles_cat     = {r["id"]: r["name"] for r in (forma.get("roles") or [])     if r.get("id")}
+            companies_cat = {c["id"]: c["name"] for c in (forma.get("companies") or []) if c.get("id")}
+            project_name  = rp.get("name", k)
+
+            offset = 0
+            while True:
+                try:
+                    rr = http_requests.get(
+                        f"https://developer.api.autodesk.com/construction/admin/v1/projects/{fpid}/users",
+                        headers=forma_headers, params={"limit": 200, "offset": offset}, timeout=15,
+                    )
+                except Exception as e:
+                    print(f"[browse-sweep] forma users {fpid[:8]} raised: {e}")
+                    break
+                if rr.status_code != 200:
+                    break
+                batch = (rr.json() or {}).get("results", [])
+                if not batch:
+                    break
+                for u_ in batch:
+                    em = (u_.get("email") or "").strip()
+                    if not em:
+                        continue
+                    rnames = []
+                    for ro in (u_.get("roles") or []):
+                        if isinstance(ro, dict) and ro.get("name"):
+                            rnames.append(ro["name"])
+                        elif isinstance(ro, dict) and ro.get("id"):
+                            rnames.append(roles_cat.get(ro["id"], ro["id"]))
+                        elif isinstance(ro, str):
+                            rnames.append(roles_cat.get(ro, ro))
+                    role_str = ", ".join(rnames)
+                    company_id = u_.get("companyId", "")
+                    company_name = companies_cat.get(company_id, company_id) if company_id else ""
+                    full_name = (
+                        (u_.get("name") or "").strip() or
+                        f"{u_.get('firstName','')} {u_.get('lastName','')}".strip()
+                    )
+                    access_levels = u_.get("accessLevels") or {}
+                    if not isinstance(access_levels, dict):
+                        access_levels = {}
+                    for p in (u_.get("products") or []):
+                        if isinstance(p, dict) and p.get("key"):
+                            access_levels.setdefault(p["key"], p.get("access") or "user")
+                    is_project_admin = bool(access_levels.get("projectAdmin"))
+                    rec = upsert_row(em, k, project_name, name=full_name)
+                    if not rec:
+                        continue
+                    rec["forma"] = {
+                        "role":         role_str,
+                        "company":      company_name,
+                        "company_id":   company_id,
+                        "user_id":      u_.get("id", ""),
+                        "access_level": "Project Administrator" if is_project_admin else "Project Member",
+                        "docs":         access_levels.get("docs") or "",
+                        "design":       access_levels.get("designCollaboration") or "",
+                        "model":        access_levels.get("modelCoordination") or "",
+                        "last_active":  u_.get("last_sign_in") or u_.get("lastSignIn") or "",
+                        "on_project":   True,
+                    }
+                offset += len(batch)
+                if len(batch) < 200:
+                    break
+    except Exception as e:
+        print(f"[browse-sweep] forma sweep failed: {e}")
+
+    # ── Morta sweep — full hub list ─────────────────────────────────
+    try:
+        morta_hubs = fetch_morta_hubs(config) or []
+        api_key = (config.get("morta", {}) or {}).get("api_key", "")
+        morta_headers = {"Authorization": f"Bearer {api_key}"} if api_key else None
+        for h in morta_hubs:
+            hub_id   = h.get("id", "")
+            hub_name = h.get("name", hub_id)
+            if not hub_id or not morta_headers:
+                continue
+            project_key  = morta_hub_to_key.get(hub_id, f"morta:{hub_id}")
+            project_name = (
+                admin_projects.get(morta_hub_to_key[hub_id], {}).get("name")
+                if hub_id in morta_hub_to_key
+                else hub_name
+            )
+            project_keys_swept.add(project_key)
+            try:
+                mr = http_requests.get(
+                    f"https://api.morta.io/v1/hub/{hub_id}/members",
+                    headers=morta_headers, timeout=15,
+                )
+            except Exception as e:
+                print(f"[browse-sweep] morta /members {hub_id[:8]} raised: {e}")
+                continue
+            if mr.status_code != 200:
+                continue
+            try:
+                body = mr.json()
+            except Exception:
+                continue
+            for m in body.get("data", []) or []:
+                if not isinstance(m, dict):
+                    continue
+                u_ = m.get("user", {}) or {}
+                em = (u_.get("email") or "").strip()
+                if not em:
+                    continue
+                full_name = (u_.get("name") or "").strip()
+                role      = m.get("projectRole", "") or ""
+                tags = []
+                for t in (u_.get("tags") or []):
+                    if isinstance(t, dict) and t.get("value"):
+                        tags.append(t["value"])
+                tag_str = ", ".join(tags)
+                rec = upsert_row(em, project_key, project_name, name=full_name)
+                if not rec:
+                    continue
+                rec["morta"] = {
+                    "role":        role,
+                    "tag":         tag_str,
+                    "public_id":   u_.get("publicId", ""),
+                    "hub_id":      hub_id,
+                    "last_active": "",
+                    "on_hub":      True,
+                }
+    except Exception as e:
+        print(f"[browse-sweep] morta sweep failed: {e}")
+
+    now_utc = datetime.now(timezone.utc)
+    def _parse_ts(s):
+        if not s or not isinstance(s, str):
+            return None
+        try:
+            iso = s.strip().replace("Z", "+00:00")
+            dt = datetime.fromisoformat(iso)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt
+        except (ValueError, TypeError):
+            try:
+                dt = datetime.strptime(s.strip(), "%Y-%m-%d %H:%M:%S")
+                return dt.replace(tzinfo=timezone.utc)
+            except (ValueError, TypeError):
+                return None
+
+    rows = list(rows_by_key.values())
+    for rec in rows:
+        candidates = []
+        for plat_key in ("revizto", "forma", "morta"):
+            sub = rec.get(plat_key) or {}
+            ts = sub.get("last_active") if isinstance(sub, dict) else None
+            dt = _parse_ts(ts)
+            if dt is not None:
+                candidates.append((dt, ts))
+        if candidates:
+            best_dt, best_str = max(candidates, key=lambda x: x[0])
+            rec["last_active_ts"]   = best_str
+            rec["last_active_days"] = max(0, (now_utc - best_dt).days)
+
+    return rows, project_keys_swept
+
+
+def _do_deactivate(user, config, email, platform, project_key, proj, row):
+    """Call the platform's removal API. Returns (ok: bool, detail: str)."""
+    plats = proj.get("platforms", {}) or {}
+
+    if platform == "revizto":
+        rev = plats.get("revizto", {}) or {}
+        project_uuid = rev.get("project_uuid", "")
+        region       = rev.get("region", "dubai")
+        rsub         = row.get("revizto") or {}
+        user_uuid    = rsub.get("user_uuid", "")
+        if not project_uuid or not region:
+            return False, "Revizto project_uuid/region not in registry"
+        if not user_uuid:
+            return False, "user_uuid missing on row — refresh first"
+        token = revizto_get_token_for_region(config, region, email=user)
+        if not token:
+            return False, "Revizto auth failed"
+        url = f"https://api.{region}.revizto.com/v5/project/{project_uuid}/role/member/{user_uuid}"
+        try:
+            r = http_requests.delete(url,
+                headers={"Authorization": f"Bearer {token}"}, timeout=15)
+        except Exception as e:
+            return False, f"Revizto request failed: {e}"
+        if r.status_code in (200, 204):
+            return True, ""
+        return False, f"Revizto HTTP {r.status_code}: {r.text[:200]}"
+
+    if platform == "forma":
+        forma = plats.get("forma", {}) or {}
+        fpid  = forma.get("project_id", "")
+        fsub  = row.get("forma") or {}
+        user_id = fsub.get("user_id", "")
+        if not fpid:
+            return False, "Forma project_id not in registry"
+        if not user_id:
+            return False, "Forma user_id missing on row — refresh first"
+        token = forma_get_token(config)
+        if not token:
+            return False, "Forma auth failed"
+        clean_pid = fpid.lstrip("b.") if fpid.startswith("b.") else fpid
+        url = f"https://developer.api.autodesk.com/construction/admin/v1/projects/{clean_pid}/users/{user_id}"
+        try:
+            r = http_requests.delete(url,
+                headers={"Authorization": f"Bearer {token}"}, timeout=20)
+        except Exception as e:
+            return False, f"Forma request failed: {e}"
+        if r.status_code in (200, 204):
+            return True, ""
+        return False, f"Forma HTTP {r.status_code}: {r.text[:200]}"
+
+    if platform == "morta":
+        morta = plats.get("morta", {}) or {}
+        hub_id = morta.get("hub_id", "")
+        msub   = row.get("morta") or {}
+        public_id = msub.get("public_id", "")
+        if not hub_id:
+            return False, "Morta hub_id not in registry"
+        if not public_id:
+            return False, "Morta public_id missing on row — refresh first"
+        api_key = (config.get("morta", {}) or {}).get("api_key", "")
+        if not api_key:
+            return False, "Morta API key not set in Settings"
+        url = f"https://api.morta.io/v1/hub/{hub_id}/member/{public_id}"
+        try:
+            r = http_requests.delete(url,
+                headers={"Authorization": f"Bearer {api_key}"}, timeout=15)
+        except Exception as e:
+            return False, f"Morta request failed: {e}"
+        if r.status_code in (200, 204):
+            return True, ""
+        return False, f"Morta HTTP {r.status_code}: {r.text[:200]}"
+
+    return False, f"unknown platform {platform}"
+
+
+def _do_reactivate(user, config, email, platform, project_key, proj, snap):
+    """Re-invite using snapshot fields. Returns (ok, detail)."""
+    plats = proj.get("platforms", {}) or {}
+    full_name = snap.get("_name", "")
+    parts = full_name.split(" ", 1)
+    first_name = parts[0] if parts else ""
+    last_name  = parts[1] if len(parts) > 1 else ""
+
+    if platform == "revizto":
+        rev = plats.get("revizto", {}) or {}
+        project_uuid = rev.get("project_uuid", "")
+        if not project_uuid:
+            return False, "Revizto project_uuid not in registry"
+        license_role = config.get(
+            f"revizto_{rev.get('region','dubai')}", {}
+        ).get("default_license_role", 2)
+        result = revizto_invite(
+            email, first_name, last_name,
+            snap.get("company", ""), snap.get("department", ""),
+            config,
+            project_uuid=project_uuid,
+            license_role_id=license_role,
+            project_role_id=None,
+            invite_to_license=True,
+            invite_to_project=True,
+            location=snap.get("location", ""),
+            admin_email=user,
+        )
+        if result.get("status") == "success":
+            return True, ""
+        return False, result.get("detail", "revizto_invite returned error")
+
+    if platform == "forma":
+        forma = plats.get("forma", {}) or {}
+        fpid = forma.get("project_id", "")
+        if not fpid:
+            return False, "Forma project_id not in registry"
+        products = []
+        if snap.get("docs"):    products.append({"key": "docs",                "access": "member"})
+        if snap.get("design"):  products.append({"key": "designCollaboration", "access": "member"})
+        if snap.get("model"):   products.append({"key": "modelCoordination",   "access": "member"})
+        if not products:
+            products = [{"key": "docs", "access": "member"}]
+        result = forma_invite(
+            email, config,
+            project_id=fpid,
+            company_id=snap.get("company_id") or None,
+            role_ids=None,
+            products=products,
+        )
+        if result.get("status") == "success":
+            return True, ""
+        return False, result.get("detail", "forma_invite returned error")
+
+    if platform == "morta":
+        morta = plats.get("morta", {}) or {}
+        hub_id = morta.get("hub_id", "")
+        if not hub_id:
+            return False, "Morta hub_id not in registry"
+        result = morta_invite(email, config, hub_id=hub_id, tag_reference_id=None)
+        if result.get("status") == "success":
+            return True, ""
+        return False, result.get("detail", "morta_invite returned error")
+
+    return False, f"unknown platform {platform}"
+
+
 @app.get("/browse", response_class=HTMLResponse)
 async def browse_page(request: Request, user: str = Depends(require_user)):
     return templates.TemplateResponse(request=request, name="browse.html", context={
@@ -3832,409 +4346,231 @@ async def api_browse_projects(user: str = Depends(require_user)):
     return {"projects": out}
 
 @app.get("/api/browse/users")
-async def api_browse_users(
-    request: Request,
-    user: str = Depends(require_user),
-):
-    """Emit a flat list of (user × project) rows for the Browse Users grid.
+async def api_browse_users(user: str = Depends(require_user)):
+    """Read-only cache reader. Returns rows the current admin has scope
+    on, plus freshness metadata. Does NOT sweep platforms — that's what
+    /api/browse/refresh is for.
 
-    The Browse Users page uses a row-per-(user, project) model so that a
-    single user appearing in N projects shows up as N rows. This is
-    fundamentally different from the search page (one record per user with
-    nested platforms) — the row model lets the table act as an editable
-    grid where each row is a single per-project membership.
-
-    Project scope rules (intentionally hybrid):
-      • Forma:   registry-only — admin's known-good Forma projects
-      • Revizto: license-based sweep — every project visible to the admin's
-                 Revizto license, including projects not in the registry
-                 (e.g. Stargate). Out-of-registry Revizto projects produce
-                 Revizto-only rows; their Forma/Morta sub-objects are blank.
-      • Morta:   full hub sweep — every Morta hub favourited on the admin's
-                 account. Same pattern as Revizto: registered hubs collapse
-                 onto registry rows; license-only hubs use synthetic
-                 "morta:<hub_id>" keys.
-
-      Rationale: the user's stated rule is "registry constraint applies to
-      Forma only." Revizto and Morta both use the admin's full visible set.
-
-    Row dedup:
-      Within a row, a (email, project_key) pair is unique. project_key is
-      the registry slug if the project is registered, else "revizto:<uuid>"
-      for license-only Revizto projects. Same user on the same project
-      across multiple platforms collapses into one row with merged data.
-
-    Query params (multi-valued):
-      platform: revizto | forma | morta   (default: all three; controls
-                                            which platform's data populates,
-                                            not row identity)
-      project:  "<platform>:<id>"         (default: all visible projects)
-      min_days_inactive: integer N (optional). Drops rows whose newest
-        last-active timestamp across selected platforms is < N days old.
-        N=60 keeps only rows last active 60+ days ago. Empty/0 disables.
-
-    Returns:
-      {
-        rows: [{
-          email, name,
-          project_key, project_name,
-          last_active_ts, last_active_days,
-          revizto: { role, license_role, company, department, location,
-                     last_active, on_license, on_project } | null,
-          forma:   { role, company, docs, design, model,
-                     last_active, on_project } | null,
-          morta:   { role, tag, last_active, on_hub } | null,
-        }]
-      }
-
-    Phase 1+2 contract: read-only. The on_license / on_project / on_hub
-    booleans drive the L/P checkboxes (which are disabled in the UI).
-    Phase 3 will wire those toggles to actual write-back endpoints.
+    Scope: rows whose project_key is in the admin's registry membership
+    (or all rows for the owner). Synthetic project_keys like
+    'revizto:<uuid>' or 'morta:<hub_id>' are dropped for non-owner
+    admins because they're not in the registry.
     """
-    qp = request.query_params
-    platforms = set(qp.getlist("platform")) or {"revizto", "forma", "morta"}
-    project_filters = qp.getlist("project")
-    try:
-        min_days_inactive = int(qp.get("min_days_inactive", "0") or "0")
-    except (TypeError, ValueError):
-        min_days_inactive = 0
-    if min_days_inactive < 0:
-        min_days_inactive = 0
+    cache = load_browse_cache()
+    all_rows = cache.get("rows") or []
 
-    pf_by_platform: dict = {"revizto": set(), "forma": set(), "morta": set()}
-    for raw in project_filters:
-        if ":" not in raw:
-            continue
-        plat, pid = raw.split(":", 1)
-        if plat in pf_by_platform and pid:
-            pf_by_platform[plat].add(pid)
+    if is_owner(user):
+        visible = all_rows
+    else:
+        registry = load_registry()
+        admin_keys = {k for k, v in registry.items() if user in v.get("admins", [])}
+        visible = [r for r in all_rows if r.get("project_key") in admin_keys]
 
-    config = load_config(user)
-
-    # ── Build the registry's project lookup tables ──────────────────
-    # Used to:
-    #   1. Map a Revizto/Forma/Morta platform-id back to a registry key
-    #      (so cross-platform rows for "Sphere Abu Dhabi" collapse).
-    #   2. Decide whether a Revizto project is in-registry (registered
-    #      slug) or license-only (key = "revizto:<uuid>").
-    registry       = load_registry()
-    admin_projects = registry if is_owner(user) else {
-        k: v for k, v in registry.items() if user in v.get("admins", [])
+    return {
+        "rows":         visible,
+        "updated_at":   cache.get("updated_at", ""),
+        "updated_by":   cache.get("updated_by", ""),
+        "total_cached": len(all_rows),
+        "total_visible": len(visible),
     }
-    rev_uuid_to_key:  dict = {}
-    forma_id_to_key:  dict = {}
-    morta_hub_to_key: dict = {}
-    for k, rp in admin_projects.items():
-        plats = rp.get("platforms", {}) or {}
-        rev   = plats.get("revizto", {}) or {}
-        forma = plats.get("forma", {})   or {}
-        morta = plats.get("morta", {})   or {}
-        if rev.get("project_uuid"):
-            rev_uuid_to_key[rev["project_uuid"]] = k
-        if forma.get("project_id"):
-            forma_id_to_key[forma["project_id"]] = k
-        mhub = morta.get("hub_id") or morta.get("project_id")
-        if mhub:
-            morta_hub_to_key[mhub] = k
 
-    # ── Row aggregator keyed by (lower-email, project_key) ─────────
-    # Each row is a single (user, project) tuple. Sub-platform objects
-    # populate as we walk Revizto / Forma / Morta. Identity fields (name)
-    # take first-non-empty winner across all sources for that row.
-    rows_by_key: dict = {}
 
-    def upsert_row(email: str, project_key: str, project_name: str, **fields):
-        if not email or not project_key:
-            return None
-        key = (email.lower(), project_key)
-        rec = rows_by_key.get(key)
-        if rec is None:
-            rec = {
-                "email":            email,
-                "name":             "",
-                "project_key":      project_key,
-                "project_name":     project_name,
-                "revizto":          None,
-                "forma":            None,
-                "morta":            None,
-                "last_active_ts":   "",
-                "last_active_days": None,
-            }
-            rows_by_key[key] = rec
-        for fk, fv in fields.items():
-            if fk == "name" and fv and not rec["name"]:
-                rec["name"] = fv
-        return rec
+@app.post("/api/browse/refresh")
+async def api_browse_refresh(user: str = Depends(require_user)):
+    """Sweep the calling admin's accessible projects across all three
+    platforms, then delete-and-replace those project_keys' rows in the
+    shared cache.
 
-    # ── Revizto sweep ──────────────────────────────────────────────
-    if "revizto" in platforms:
+    Concurrency: blob writes are last-wins. Two admins refreshing
+    simultaneously may overwrite each other's writes — but their
+    project_keys typically don't overlap, so the loss is bounded.
+    Re-clicking Refresh recovers from the rare overlap case.
+    """
+    loop = asyncio.get_event_loop()
+    rows_new, project_keys_swept = await loop.run_in_executor(
+        None, _sweep_browse_rows, user
+    )
+
+    cache = load_browse_cache()
+    existing = cache.get("rows") or []
+
+    kept = [r for r in existing if r.get("project_key") not in project_keys_swept]
+    merged = kept + rows_new
+
+    cache["rows"]       = merged
+    cache["updated_at"] = datetime.now(timezone.utc).isoformat()
+    cache["updated_by"] = user
+    save_browse_cache(cache)
+
+    return {
+        "status":          "ok",
+        "swept_projects":  sorted(project_keys_swept),
+        "rows_added":      len(rows_new),
+        "rows_dropped":    len(existing) - len(kept),
+        "total_in_cache":  len(merged),
+        "updated_at":      cache["updated_at"],
+        "updated_by":      cache["updated_by"],
+    }
+
+
+@app.post("/api/browse/toggle")
+async def api_browse_toggle(request: Request, user: str = Depends(require_user)):
+    """Apply one or more deactivate / reactivate operations.
+
+    Body:
+      { changes: [{ email, platform, project_key, action }] }
+        action ∈ { 'deactivate', 'reactivate' }
+
+    Per change:
+      deactivate  — snapshot the row's pre-deactivate sub-object, then
+                    call the platform's removal API. If snapshot save
+                    fails, abort that change to preserve reactivate
+                    ability.
+      reactivate  — look up the snapshot, re-invite, clear snapshot
+                    on success. No snapshot = error (c-strict).
+
+    Each change is independent: one failing doesn't abort the others.
+    Returns per-change result so the frontend can update toggle state.
+    """
+    body    = await request.json()
+    changes = body.get("changes") or []
+    if not isinstance(changes, list) or not changes:
+        return JSONResponse({"error": "No changes provided."}, status_code=400)
+
+    config       = load_config(user)
+    registry     = load_registry()
+    cache        = load_browse_cache()
+    snapshots    = load_deactivation_snapshots()
+    rows_by_pk   = {(r.get("email","").lower(), r.get("project_key","")): r
+                    for r in cache.get("rows") or []}
+
+    results = []
+
+    for ch in changes:
+        email        = (ch.get("email") or "").strip().lower()
+        platform     = (ch.get("platform") or "").strip()
+        project_key  = (ch.get("project_key") or "").strip()
+        action       = (ch.get("action") or "").strip()
+
+        if not (email and platform and project_key and action):
+            results.append({"ok": False, "email": email, "platform": platform,
+                            "project_key": project_key, "error": "missing fields"})
+            continue
+        if platform not in ("revizto", "forma", "morta"):
+            results.append({"ok": False, "email": email, "platform": platform,
+                            "project_key": project_key, "error": "unknown platform"})
+            continue
+        if action not in ("deactivate", "reactivate"):
+            results.append({"ok": False, "email": email, "platform": platform,
+                            "project_key": project_key, "error": "unknown action"})
+            continue
+
+        proj = registry.get(project_key)
+        if not proj:
+            results.append({"ok": False, "email": email, "platform": platform,
+                            "project_key": project_key,
+                            "error": "project not in registry"})
+            continue
+        if not is_owner(user) and user not in proj.get("admins", []):
+            results.append({"ok": False, "email": email, "platform": platform,
+                            "project_key": project_key,
+                            "error": "not authorized for this project"})
+            continue
+
+        row    = rows_by_pk.get((email, project_key))
+        snap_k = _snapshot_key(email, platform, project_key)
+
         try:
-            rev_projects = fetch_revizto_projects(config, email=user) or []
-            rev_tokens: dict = {}
-            for proj in rev_projects:
-                pid = proj.get("uuid", "")
-                if not pid:
+            if action == "deactivate":
+                if not row or not row.get(platform):
+                    results.append({"ok": False, "email": email, "platform": platform,
+                                    "project_key": project_key,
+                                    "error": "row or platform sub-object missing"})
                     continue
-                if pf_by_platform["revizto"] and pid not in pf_by_platform["revizto"]:
-                    continue
-                # Resolve to registry key if known; else use a license-only
-                # synthetic key so out-of-registry Revizto projects still
-                # produce rows (per the brief: registry constraint applies
-                # to Forma/Morta only, not Revizto).
-                project_key  = rev_uuid_to_key.get(pid, f"revizto:{pid}")
-                project_name = (
-                    admin_projects.get(rev_uuid_to_key[pid], {}).get("name")
-                    if pid in rev_uuid_to_key
-                    else proj.get("title", pid)
+                snap_data = dict(row[platform])
+                snap_data["_name"]  = row.get("name", "")
+                snap_data["_email"] = row.get("email", "")
+                snapshots[snap_k]   = snap_data
+                save_deactivation_snapshots(snapshots)
+
+                ok, detail = _do_deactivate(
+                    user, config, email, platform, project_key, proj, row
                 )
+                if ok:
+                    row[platform] = None
+                    audit_log_event("browse_deactivate", user,
+                        {"email": email, "platform": platform, "project_key": project_key},
+                        before=snap_data, after=None, status="ok")
+                    results.append({"ok": True, "email": email, "platform": platform,
+                                    "project_key": project_key, "action": "deactivate"})
+                else:
+                    snapshots.pop(snap_k, None)
+                    save_deactivation_snapshots(snapshots)
+                    audit_log_event("browse_deactivate", user,
+                        {"email": email, "platform": platform, "project_key": project_key},
+                        before=snap_data, after=None, status="error", error=detail)
+                    results.append({"ok": False, "email": email, "platform": platform,
+                                    "project_key": project_key, "error": detail})
 
-                region = proj.get("region", "dubai")
-                token  = rev_tokens.get(region)
-                if token is None:
-                    token = revizto_get_token_for_region(config, region, email=user) or ""
-                    rev_tokens[region] = token
-                if not token:
+            elif action == "reactivate":
+                snap = snapshots.get(snap_k)
+                if not snap:
+                    audit_log_event("browse_reactivate", user,
+                        {"email": email, "platform": platform, "project_key": project_key},
+                        status="error", error="no snapshot")
+                    results.append({"ok": False, "email": email, "platform": platform,
+                                    "project_key": project_key,
+                                    "error": "no snapshot — reactivate via Manage Users"})
                     continue
-                try:
-                    tr = http_requests.get(
-                        f"https://api.{region}.revizto.com/v5/project/{pid}/team",
-                        headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
-                        timeout=15,
-                    )
-                except Exception as e:
-                    print(f"[browse/users] revizto /team {pid[:8]} raised: {e}")
-                    continue
-                if tr.status_code != 200:
-                    continue
-                try:
-                    body = tr.json()
-                except Exception:
-                    continue
-                if body.get("result", 0) != 0:
-                    continue
-                ents = (body.get("data") or {}).get("entities") or []
-                for ent in ents:
-                    if not isinstance(ent, dict):
-                        continue
-                    em = (ent.get("email") or "").strip()
-                    if not em:
-                        continue
-                    role_obj = ent.get("accessRole") if isinstance(ent.get("accessRole"), dict) else {}
-                    role = role_obj.get("name", "") if role_obj else ""
-                    full_name = ent.get("fullname") or (
-                        f"{ent.get('firstname','')} {ent.get('lastname','')}".strip()
-                    )
-                    last_active = ent.get("lastActive", "") or ""
-                    rec = upsert_row(em, project_key, project_name, name=full_name)
-                    if not rec:
-                        continue
-                    rec["revizto"] = {
-                        "role":         role,
-                        # License role: phase 2 leaves this blank pending
-                        # the /v5/license/{uuid}/team lookup. Frontend
-                        # renders a "—" gracefully.
-                        "license_role": "",
-                        "company":      ent.get("company", "") or "",
-                        "department":   ent.get("department", "") or "",
-                        "location":     ent.get("location", "") or "",
-                        "last_active":  last_active,
-                        "on_license":   True,
-                        "on_project":   True,
-                    }
-        except Exception as e:
-            print(f"[browse/users] revizto sweep failed: {e}")
-
-    # ── Forma sweep — registry only ────────────────────────────────
-    if "forma" in platforms:
-        try:
-            forma_token = forma_get_token(config)
-            forma_headers = {"Authorization": f"Bearer {forma_token}",
-                             "Accept": "application/json"} if forma_token else None
-            for k, rp in admin_projects.items():
-                forma = (rp.get("platforms", {}) or {}).get("forma", {}) or {}
-                fpid = forma.get("project_id", "")
-                if not fpid or not forma_headers:
-                    continue
-                if pf_by_platform["forma"] and fpid not in pf_by_platform["forma"]:
-                    continue
-                roles_cat     = {r["id"]: r["name"] for r in (forma.get("roles") or [])     if r.get("id")}
-                companies_cat = {c["id"]: c["name"] for c in (forma.get("companies") or []) if c.get("id")}
-                project_name  = rp.get("name", k)
-
-                offset = 0
-                while True:
-                    try:
-                        rr = http_requests.get(
-                            f"https://developer.api.autodesk.com/construction/admin/v1/projects/{fpid}/users",
-                            headers=forma_headers, params={"limit": 200, "offset": offset}, timeout=15,
-                        )
-                    except Exception as e:
-                        print(f"[browse/users] forma users {fpid[:8]} raised: {e}")
-                        break
-                    if rr.status_code != 200:
-                        break
-                    batch = (rr.json() or {}).get("results", [])
-                    if not batch:
-                        break
-                    for u_ in batch:
-                        em = (u_.get("email") or "").strip()
-                        if not em:
-                            continue
-                        rnames = []
-                        for ro in (u_.get("roles") or []):
-                            if isinstance(ro, dict) and ro.get("name"):
-                                rnames.append(ro["name"])
-                            elif isinstance(ro, dict) and ro.get("id"):
-                                rnames.append(roles_cat.get(ro["id"], ro["id"]))
-                            elif isinstance(ro, str):
-                                rnames.append(roles_cat.get(ro, ro))
-                        role_str = ", ".join(rnames)
-                        company_id = u_.get("companyId", "")
-                        company_name = companies_cat.get(company_id, company_id) if company_id else ""
-                        full_name = (
-                            (u_.get("name") or "").strip() or
-                            f"{u_.get('firstName','')} {u_.get('lastName','')}".strip()
-                        )
-                        access_levels = u_.get("accessLevels") or {}
-                        if not isinstance(access_levels, dict):
-                            access_levels = {}
-                        for p in (u_.get("products") or []):
-                            if isinstance(p, dict) and p.get("key"):
-                                access_levels.setdefault(p["key"], p.get("access") or "user")
-                        last_active = u_.get("last_sign_in") or u_.get("lastSignIn") or ""
-
-                        rec = upsert_row(em, k, project_name, name=full_name)
-                        if not rec:
-                            continue
-                        rec["forma"] = {
-                            "role":        role_str,
-                            "company":     company_name,
-                            "docs":        access_levels.get("docs") or "",
-                            "design":      access_levels.get("designCollaboration") or "",
-                            "model":       access_levels.get("modelCoordination") or "",
-                            "last_active": last_active,
-                            "on_project":  True,
+                ok, detail = _do_reactivate(
+                    user, config, email, platform, project_key, proj, snap
+                )
+                if ok:
+                    if not row:
+                        row = {
+                            "email":         snap.get("_email", email),
+                            "name":          snap.get("_name", ""),
+                            "project_key":   project_key,
+                            "project_name":  proj.get("name", project_key),
+                            "revizto": None, "forma": None, "morta": None,
+                            "last_active_ts": "", "last_active_days": None,
                         }
-                    offset += len(batch)
-                    if len(batch) < 200:
-                        break
+                        cache.setdefault("rows", []).append(row)
+                        rows_by_pk[(email, project_key)] = row
+                    restored = {k: v for k, v in snap.items() if not k.startswith("_")}
+                    row[platform] = restored
+                    snapshots.pop(snap_k, None)
+                    save_deactivation_snapshots(snapshots)
+                    audit_log_event("browse_reactivate", user,
+                        {"email": email, "platform": platform, "project_key": project_key},
+                        before=None, after=restored, status="ok")
+                    results.append({"ok": True, "email": email, "platform": platform,
+                                    "project_key": project_key, "action": "reactivate"})
+                else:
+                    audit_log_event("browse_reactivate", user,
+                        {"email": email, "platform": platform, "project_key": project_key},
+                        before=None, after=None, status="error", error=detail)
+                    results.append({"ok": False, "email": email, "platform": platform,
+                                    "project_key": project_key, "error": detail})
         except Exception as e:
-            print(f"[browse/users] forma sweep failed: {e}")
+            audit_log_event("browse_toggle", user,
+                {"email": email, "platform": platform, "project_key": project_key,
+                 "action": action},
+                status="error", error=f"exception: {type(e).__name__}: {e}")
+            results.append({"ok": False, "email": email, "platform": platform,
+                            "project_key": project_key,
+                            "error": f"{type(e).__name__}: {e}"})
 
-    # ── Morta sweep — full hub list (favourites on the admin's account) ──
-    # Registered hubs collapse onto registry rows (project_key = registry slug);
-    # license-only hubs use a synthetic key "morta:<hub_id>" so they still
-    # appear with whatever data we have, with empty Forma/Revizto cells.
-    # The Morta members API doesn't expose last-active, so morta.last_active
-    # stays blank — the row's overall last_active_days will fall through to
-    # whatever Revizto/Forma reports for that same person on that project.
-    if "morta" in platforms:
-        try:
-            morta_hubs = fetch_morta_hubs(config) or []
-            api_key = (config.get("morta", {}) or {}).get("api_key", "")
-            morta_headers = {"Authorization": f"Bearer {api_key}"} if api_key else None
-            for h in morta_hubs:
-                hub_id   = h.get("id", "")
-                hub_name = h.get("name", hub_id)
-                if not hub_id or not morta_headers:
-                    continue
-                if pf_by_platform["morta"] and hub_id not in pf_by_platform["morta"]:
-                    continue
-                # Resolve to registry key if known; else use a synthetic key.
-                project_key  = morta_hub_to_key.get(hub_id, f"morta:{hub_id}")
-                project_name = (
-                    admin_projects.get(morta_hub_to_key[hub_id], {}).get("name")
-                    if hub_id in morta_hub_to_key
-                    else hub_name
-                )
-                try:
-                    mr = http_requests.get(
-                        f"https://api.morta.io/v1/hub/{hub_id}/members",
-                        headers=morta_headers, timeout=15,
-                    )
-                except Exception as e:
-                    print(f"[browse/users] morta /members {hub_id[:8]} raised: {e}")
-                    continue
-                if mr.status_code != 200:
-                    continue
-                try:
-                    body = mr.json()
-                except Exception:
-                    continue
-                for m in body.get("data", []) or []:
-                    if not isinstance(m, dict):
-                        continue
-                    u_ = m.get("user", {}) or {}
-                    em = (u_.get("email") or "").strip()
-                    if not em:
-                        continue
-                    full_name = (u_.get("name") or "").strip()
-                    role      = m.get("projectRole", "") or ""
-                    # Morta tags: list of {value, publicId}. Surface as a
-                    # single comma-joined string for the Tag column.
-                    tags = []
-                    for t in (u_.get("tags") or []):
-                        if isinstance(t, dict) and t.get("value"):
-                            tags.append(t["value"])
-                    tag_str = ", ".join(tags)
+    save_browse_cache(cache)
 
-                    rec = upsert_row(em, project_key, project_name, name=full_name)
-                    if not rec:
-                        continue
-                    rec["morta"] = {
-                        "role":        role,
-                        "tag":         tag_str,
-                        "last_active": "",   # not exposed by Morta API
-                        "on_hub":      True,
-                    }
-        except Exception as e:
-            print(f"[browse/users] morta sweep failed: {e}")
-
-    # ── Newest last-active per row ─────────────────────────────────
-    now_utc = datetime.now(timezone.utc)
-    def _parse_ts(s: str):
-        if not s or not isinstance(s, str):
-            return None
-        s = s.strip()
-        if not s:
-            return None
-        try:
-            iso = s.replace("Z", "+00:00")
-            dt = datetime.fromisoformat(iso)
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-            return dt
-        except (ValueError, TypeError):
-            pass
-        try:
-            dt = datetime.strptime(s, "%Y-%m-%d %H:%M:%S")
-            return dt.replace(tzinfo=timezone.utc)
-        except (ValueError, TypeError):
-            return None
-
-    rows = list(rows_by_key.values())
-    for rec in rows:
-        candidates = []
-        for plat_key in ("revizto", "forma", "morta"):
-            sub = rec.get(plat_key) or {}
-            ts = sub.get("last_active") if isinstance(sub, dict) else None
-            dt = _parse_ts(ts)
-            if dt is not None:
-                candidates.append((dt, ts))
-        if candidates:
-            best_dt, best_str = max(candidates, key=lambda x: x[0])
-            rec["last_active_ts"]   = best_str
-            rec["last_active_days"] = max(0, (now_utc - best_dt).days)
-
-    # Inactivity filter
-    if min_days_inactive > 0:
-        rows = [r for r in rows
-                if isinstance(r.get("last_active_days"), int)
-                and r["last_active_days"] >= min_days_inactive]
-
-    # Sort: email, then project name, so the same user's projects cluster.
-    rows.sort(key=lambda r: (r["email"].lower(), (r["project_name"] or "").lower()))
-    return {"rows": rows}
+    successes = sum(1 for r in results if r.get("ok"))
+    return {
+        "ok":         successes == len(results),
+        "results":    results,
+        "succeeded":  successes,
+        "failed":     len(results) - successes,
+        "updated_at": cache.get("updated_at"),
+    }
 
 
 @app.get("/scheduler", response_class=HTMLResponse)

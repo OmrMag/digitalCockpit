@@ -5,6 +5,12 @@
 {% block page_subtitle %}One row per (user, project). Each platform's column expands inline — click a header to swap which one is open.{% endblock %}
 
 {% block header_actions %}
+<button id="bu-refresh" class="cc-btn cc-btn--secondary" type="button" title="Re-sweep your projects across all platforms">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+    </svg>
+    Refresh
+</button>
 <a href="/manage" class="cc-btn cc-btn--secondary" title="Back to manage users">
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <path d="M19 12H5"/><polyline points="12 19 5 12 12 5"/>
@@ -300,7 +306,6 @@
         <input id="bu-days" type="number" class="bu-num-input" min="0" placeholder="e.g. 60">
     </div>
     <div class="bu-filter-actions">
-        <button id="bu-apply" class="cc-btn cc-btn--primary" type="button">Apply</button>
         <button id="bu-reset" class="cc-btn cc-btn--secondary" type="button">Reset</button>
     </div>
 </div>
@@ -359,35 +364,97 @@ function rowKey(r){ return `${r.email.toLowerCase()}|${r.project_key}`; }
 function toggleKey(r, plat){ return `${rowKey(r)}|${plat}`; }
 
 /* ─────────────────────────────────────────────────────────────────
-   Init + fetch
+   Page lifecycle
+
+   Page-load flow:
+     1. GET /api/browse/users   → reads the shared cache
+     2. Render whatever rows the admin has scope on
+     3. Show "Last refreshed: ..." badge
+     4. Empty cache? → show "Refresh to populate" prompt
+
+   Refresh flow (button click):
+     1. Disable button, show spinner
+     2. POST /api/browse/refresh (server sweeps THIS admin's projects)
+     3. Re-fetch cache via GET
+     4. Re-render
+
+   Apply / search inputs are pure client-side filtering; they never
+   trigger the server.
    ───────────────────────────────────────────────────────────────── */
 
-async function apply(){
-    /* The two chip-select filters were removed; we now fetch every row
-       this admin can see, then narrow client-side via the User and
-       Values text inputs. The numeric Last-active filter is still
-       server-side because it's cheap to express as a query param and
-       avoids returning rows we'll never render. */
-    const days = (document.getElementById('bu-days').value || '').trim();
-    const params = new URLSearchParams();
-    if (days && /^\d+$/.test(days) && parseInt(days, 10) > 0){
-        params.set('min_days_inactive', days);
-    }
+async function loadCache(){
     const out = document.getElementById('bu-results');
-    out.innerHTML = '<div class="bu-loading">Loading users…</div>';
+    out.innerHTML = '<div class="bu-loading">Loading…</div>';
     document.getElementById('bu-count').textContent = '—';
     try {
-        const t0 = performance.now();
-        const r = await fetch('/api/browse/users?'+params.toString());
+        const r = await fetch('/api/browse/users');
         if (!r.ok) throw new Error('HTTP '+r.status);
         const data = await r.json();
         lastRows = data.rows || [];
-        applyClientFilters();   // populates displayedRows + renders
-        document.getElementById('bu-source').textContent = `Loaded in ${Math.round(performance.now() - t0)} ms`;
+        const stamp = data.updated_at
+            ? `Last refreshed ${humanTimeAgo(data.updated_at)} by ${data.updated_by || '—'}`
+            : 'Cache empty — click Refresh to populate';
+        document.getElementById('bu-source').textContent = stamp;
+        applyClientFilters();
     } catch(e){
-        out.innerHTML = '<div class="bu-error">Failed to load users: '+esc(e.message)+'</div>';
-        console.error('[browse] users fetch failed', e);
+        out.innerHTML = '<div class="bu-error">Failed to load cache: '+esc(e.message)+'</div>';
+        console.error('[browse] cache load failed', e);
     }
+}
+
+async function doRefresh(){
+    const btn = document.getElementById('bu-refresh');
+    if (!btn) return;
+    btn.disabled = true;
+    const origText = btn.innerHTML;
+    btn.innerHTML = 'Refreshing…';
+    try {
+        const r = await fetch('/api/browse/refresh', { method: 'POST' });
+        if (!r.ok) throw new Error('HTTP '+r.status);
+        const data = await r.json();
+        toast(`Refreshed ${data.swept_projects.length} project(s) — ${data.rows_added} row(s) updated`, 'ok');
+        await loadCache();
+    } catch(e){
+        toast('Refresh failed: '+e.message, 'error');
+        console.error('[browse] refresh failed', e);
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = origText;
+    }
+}
+
+function humanTimeAgo(iso){
+    if (!iso) return '—';
+    try {
+        const then = new Date(iso);
+        const sec  = Math.max(0, Math.floor((Date.now() - then.getTime()) / 1000));
+        if (sec < 60)        return `${sec}s ago`;
+        if (sec < 3600)      return `${Math.floor(sec/60)}m ago`;
+        if (sec < 86400)     return `${Math.floor(sec/3600)}h ago`;
+        return `${Math.floor(sec/86400)}d ago`;
+    } catch(_){ return iso; }
+}
+
+/* Tiny inline toast — fixed at the bottom of the screen, fades after
+   3.5s. Used for refresh feedback and toggle-write outcomes. */
+function toast(message, kind){
+    let host = document.getElementById('bu-toast-host');
+    if (!host){
+        host = document.createElement('div');
+        host.id = 'bu-toast-host';
+        host.style.cssText = 'position:fixed;bottom:20px;right:20px;z-index:9999;display:flex;flex-direction:column;gap:8px;pointer-events:none';
+        document.body.appendChild(host);
+    }
+    const el = document.createElement('div');
+    const bg = kind === 'error' ? '#9b3a3a' : (kind === 'ok' ? '#3a7a4a' : '#0f1b2d');
+    el.style.cssText = `background:${bg};color:#f5f0e8;padding:10px 16px;border-radius:4px;font-size:12px;font-family:'JetBrains Mono',monospace;box-shadow:0 4px 12px rgba(0,0,0,.2);max-width:400px;word-wrap:break-word;pointer-events:auto;opacity:0;transition:opacity .15s`;
+    el.textContent = message;
+    host.appendChild(el);
+    requestAnimationFrame(() => { el.style.opacity = '1'; });
+    setTimeout(() => {
+        el.style.opacity = '0';
+        setTimeout(() => el.remove(), 200);
+    }, 3500);
 }
 
 /* ─────────────────────────────────────────────────────────────────
@@ -441,7 +508,9 @@ function rowSearchableText(row){
 function applyClientFilters(){
     const qUser   = (document.getElementById('bu-q-user').value   || '').trim().toLowerCase();
     const qValues = (document.getElementById('bu-q-values').value || '').trim().toLowerCase();
-    if (!qUser && !qValues){
+    const qDaysS  = (document.getElementById('bu-days').value     || '').trim();
+    const qDays   = (/^\d+$/.test(qDaysS) && parseInt(qDaysS, 10) > 0) ? parseInt(qDaysS, 10) : null;
+    if (!qUser && !qValues && qDays == null){
         displayedRows = lastRows.slice();
     } else {
         displayedRows = lastRows.filter(r => {
@@ -451,6 +520,9 @@ function applyClientFilters(){
             }
             if (qValues){
                 if (!rowSearchableText(r).includes(qValues)) return false;
+            }
+            if (qDays != null){
+                if (typeof r.last_active_days !== 'number' || r.last_active_days < qDays) return false;
             }
             return true;
         });
@@ -796,23 +868,44 @@ function renderTable(){
 
     /* ── Wire-up below — split by mode for clarity. ─────────────── */
 
-    // Bulk-mode switch in the lock-column header. Always wired up since
-    // the switch itself is always rendered.
+    // Bulk-mode switch in the lock-column header. Click flips bulkMode.
+    // Turning it ON clears any pending toggles (clean slate).
+    // Turning it OFF after pending changes were queued opens a confirm
+    // dialog and fires all changes via /api/browse/toggle if the user
+    // accepts.
     const switchEl = document.getElementById('bu-bulk-switch');
     if (switchEl){
-        switchEl.addEventListener('click', () => {
-            bulkMode = !bulkMode;
+        switchEl.addEventListener('click', async () => {
             if (!bulkMode){
-                // Switching off clears selection — locks come back from the
-                // single-row `unlocked` set, which is independent.
-                bulkSelected.clear();
+                bulkMode = true;
+                pendingToggles.clear();
+                renderTable();
+                return;
             }
+            // Currently ON → user wants to commit pending changes (if any)
+            const changes = collectPendingBulkChanges();
+            if (changes.length === 0){
+                // Nothing pending — just exit bulk mode silently
+                bulkMode = false;
+                bulkSelected.clear();
+                renderTable();
+                return;
+            }
+            const ok = window.confirm(
+                `Apply ${changes.length} change(s) across ${bulkSelected.size} user(s)?\n\n`
+                + 'This will deactivate / reactivate users on the named platforms. '
+                + 'There is no undo from this dialog.'
+            );
+            if (!ok) return;
+            await fireToggleChanges(changes, /* fromBulk */ true);
+            bulkMode = false;
+            bulkSelected.clear();
+            pendingToggles.clear();
             renderTable();
         });
     }
 
     if (!bulkMode){
-        // Single-row mode: each lock toggles its own row's unlocked state.
         out.querySelectorAll('.bu-lock').forEach(el => {
             el.addEventListener('click', () => {
                 const k = el.dataset.row;
@@ -822,8 +915,6 @@ function renderTable(){
             });
         });
     } else {
-        // Bulk mode: each checkbox toggles its row's membership in the
-        // selection set.
         out.querySelectorAll('.bu-bulk-cb').forEach(el => {
             el.addEventListener('change', () => {
                 const k = el.dataset.row;
@@ -834,75 +925,174 @@ function renderTable(){
         });
     }
 
-    // Platform-header clicks (drives expansion). Same in both modes.
     out.querySelectorAll('.bu-plat-th').forEach(el => {
         el.addEventListener('click', () => {
             const plat = el.dataset.plat;
-            if (!plat) return;            // bulk-switch <th> has no data-plat
+            if (!plat) return;
             if (expandedPlatform === plat) return;
             expandedPlatform = plat;
             renderTable();
         });
     });
 
-    // Toggle clicks. Faded/locked are skipped (same as before).
-    // In bulk mode: a click on any ticked row's toggle propagates to
-    // every other ticked row that has that platform.
     out.querySelectorAll('.bu-toggle').forEach(el => {
         if (el.classList.contains('faded') || el.classList.contains('locked')) return;
-        el.addEventListener('click', () => {
+        el.addEventListener('click', async () => {
             const clickedRowKey = el.dataset.row;
             const plat          = el.dataset.plat;
 
-            // Decide which row keys this click affects.
-            const affectedKeys = bulkMode
-                ? Array.from(bulkSelected)
-                : [clickedRowKey];
+            if (bulkMode){
+                /* Bulk mode: stage the change in pendingToggles for every
+                   ticked row that has this platform. NO API call yet — the
+                   power-off click is the commit. Even-number flips of the
+                   same key are no-ops, so toggling row 5's Reviz off then
+                   on cancels itself out. */
+                const affected = Array.from(bulkSelected);
+                const rowByKey = new Map(lastRows.map(r => [rowKey(r), r]));
+                affected.forEach(k => {
+                    const row = rowByKey.get(k);
+                    if (!row) return;
+                    if (row[plat] == null) return;
+                    const tk = `${k}|${plat}`;
+                    if (pendingToggles.has(tk)) pendingToggles.delete(tk);
+                    else pendingToggles.add(tk);
+                });
+                renderTable();
+                return;
+            }
 
-            // Build a lookup of all rows we have data for. We use the
-            // FULL lastRows (not displayedRows) so a bulk action still
-            // applies to selected rows that happen to be filtered out
-            // of the current view. Otherwise filtering would become a
-            // hidden way to quietly exclude rows from a bulk operation.
+            /* Single-row mode: fire the change immediately. */
             const rowByKey = new Map(lastRows.map(r => [rowKey(r), r]));
-
-            affectedKeys.forEach(k => {
-                const row = rowByKey.get(k);
-                if (!row) return;                  // out-of-view (filtered)
-                if (row[plat] == null) return;     // faded — user not on platform
-                const tk = `${k}|${plat}`;
-                if (pendingToggles.has(tk)) pendingToggles.delete(tk);
-                else pendingToggles.add(tk);
-            });
+            const row = rowByKey.get(clickedRowKey);
+            if (!row || row[plat] == null) return;
+            const isCurrentlyOn = row[plat] != null && !pendingToggles.has(`${clickedRowKey}|${plat}`);
+            const action = isCurrentlyOn ? 'deactivate' : 'reactivate';
+            // Optimistic flip: add to pendingToggles so the UI shows the
+            // intended state immediately. Revert on failure.
+            const tk = `${clickedRowKey}|${plat}`;
+            pendingToggles.add(tk);
+            renderTable();
+            const change = {
+                email:       row.email,
+                platform:    plat,
+                project_key: row.project_key,
+                action:      action,
+            };
+            const success = await fireToggleChanges([change], /* fromBulk */ false);
+            if (success){
+                // The API success path mutates the cached row; clear the
+                // pending marker so the UI reflects the real state.
+                pendingToggles.delete(tk);
+            } else {
+                // Revert
+                pendingToggles.delete(tk);
+            }
             renderTable();
         });
     });
+}
+
+/* Build the array of changes to send to /api/browse/toggle from the
+   pending-toggles set (bulk-mode commit). Each pending key is
+   "rowKey|platform"; the action depends on whether the row currently
+   has the platform sub-object (deactivate it) or had it before
+   deactivation (reactivate it). Pending in this view always means
+   "intent to flip from current state". */
+function collectPendingBulkChanges(){
+    const rowByKey = new Map(lastRows.map(r => [rowKey(r), r]));
+    const changes  = [];
+    for (const tk of pendingToggles){
+        const sep = tk.lastIndexOf('|');
+        const rk  = tk.slice(0, sep);
+        const pl  = tk.slice(sep + 1);
+        const row = rowByKey.get(rk);
+        if (!row) continue;
+        const action = (row[pl] != null) ? 'deactivate' : 'reactivate';
+        changes.push({
+            email:       row.email,
+            platform:    pl,
+            project_key: row.project_key,
+            action:      action,
+        });
+    }
+    return changes;
+}
+
+/* Fire one or more changes against /api/browse/toggle. Updates lastRows
+   in place from the response, shows a toast for the outcome. Returns
+   true iff every change succeeded. */
+async function fireToggleChanges(changes, fromBulk){
+    if (!changes.length) return true;
+    try {
+        const r = await fetch('/api/browse/toggle', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({ changes }),
+        });
+        if (!r.ok) throw new Error('HTTP '+r.status);
+        const data = await r.json();
+        const results = data.results || [];
+
+        // Apply each successful change to lastRows in place
+        const rowByKey = new Map(lastRows.map(r => [rowKey(r), r]));
+        results.forEach(res => {
+            if (!res.ok) return;
+            const k = `${res.email.toLowerCase()}|${res.project_key}`;
+            const row = rowByKey.get(k);
+            if (!row) return;
+            if (res.action === 'deactivate'){
+                row[res.platform] = null;
+            }
+            // For reactivate, the server returns the restored sub-object
+            // implicitly — we re-fetch the cache after a delay to avoid a
+            // round-trip per row.
+        });
+
+        const failures = results.filter(x => !x.ok);
+        if (failures.length === 0){
+            toast(
+                fromBulk
+                    ? `Applied ${data.succeeded} change(s)`
+                    : `Change applied`,
+                'ok'
+            );
+        } else if (data.succeeded > 0){
+            toast(`${data.succeeded} succeeded · ${failures.length} failed: ${failures[0].error}`, 'error');
+        } else {
+            toast(`Failed: ${failures[0].error}`, 'error');
+        }
+
+        // Re-load cache to pick up reactivate restorations and any
+        // server-side row updates we didn't replay locally.
+        await loadCache();
+        return data.ok;
+    } catch(e){
+        toast('Request failed: '+e.message, 'error');
+        console.error('[browse] toggle fire failed', e);
+        return false;
+    }
 }
 
 /* ─────────────────────────────────────────────────────────────────
    Wire-up
    ───────────────────────────────────────────────────────────────── */
 
-document.getElementById('bu-apply').addEventListener('click', apply);
+document.getElementById('bu-refresh').addEventListener('click', doRefresh);
 document.getElementById('bu-reset').addEventListener('click', () => {
     document.getElementById('bu-q-user').value   = '';
     document.getElementById('bu-q-values').value = '';
     document.getElementById('bu-days').value     = '';
-    document.getElementById('bu-results').innerHTML = '<div class="bu-loading">Click <strong>Apply</strong> to load users.</div>';
-    document.getElementById('bu-count').textContent = '—';
-    document.getElementById('bu-source').textContent = '';
-    lastRows = []; displayedRows = [];
-    unlocked.clear(); pendingToggles.clear();
-    bulkMode = false; bulkSelected.clear();
+    applyClientFilters();
 });
 
-/* Live filtering: re-derive displayedRows on every keystroke. No
-   debounce — the work is cheap (a few thousand string includes per
-   keystroke, well under 16ms even on slow laptops). */
-document.getElementById('bu-q-user').addEventListener('input', applyClientFilters);
+/* Live filtering on every keystroke. Cheap enough at ~7000 rows that
+   no debounce is needed. */
+document.getElementById('bu-q-user').addEventListener('input',  applyClientFilters);
 document.getElementById('bu-q-values').addEventListener('input', applyClientFilters);
+document.getElementById('bu-days').addEventListener('input',     applyClientFilters);
 
-/* Enter on the numeric Last-active field re-applies the server fetch. */
-document.getElementById('bu-days').addEventListener('keydown', e => { if (e.key === 'Enter') apply(); });
+/* Boot: read the cache. If empty, the page shows "Refresh to populate"
+   and the Refresh button is the only thing that does work. */
+loadCache();
 </script>
 {% endblock %}
