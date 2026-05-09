@@ -2144,112 +2144,143 @@ def _populate_invited_user_ids(row, email, platform, project_key, proj, config, 
     def _budget_exhausted():
         return (time.time() - started) > MAX_TOTAL_SECONDS
 
+    print(f"[edit-postinvite] starting {platform} lookup for {email}")
+
     try:
         if platform == "revizto":
             project_uuid = (plats.get("revizto") or {}).get("project_uuid", "")
             region       = (plats.get("revizto") or {}).get("region", "dubai")
             if not project_uuid:
+                print(f"[edit-postinvite] revizto: no project_uuid in registry, aborting")
                 return
             token = revizto_get_token_for_region(config, region, email=admin_email)
             if not token:
+                print(f"[edit-postinvite] revizto: token fetch failed, aborting")
                 return
-            base = f"https://api.{region}.revizto.com/v5"
-            headers = {"Authorization": f"Bearer {token}"}
+            # The /v5/project/{uuid}/team endpoint is NOT paginated — every
+            # other call site (sweep, search) treats it as a single
+            # request. Match that pattern exactly to avoid response-shape
+            # surprises from unrecognized params.
+            url = f"https://api.{region}.revizto.com/v5/project/{project_uuid}/team"
+            headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
             target = email.lower()
-            for page in range(MAX_PAGES):
-                if _budget_exhausted():
-                    print(f"[edit-postinvite] revizto lookup budget exhausted at page {page}")
-                    return
-                resp = http_requests.get(
-                    f"{base}/project/{project_uuid}/team",
-                    headers=headers,
-                    params={"page": page, "limit": 200},
-                    timeout=PER_REQUEST_TIMEOUT,
+            try:
+                resp = http_requests.get(url, headers=headers, timeout=PER_REQUEST_TIMEOUT)
+            except Exception as e:
+                print(f"[edit-postinvite] revizto /team request raised: {type(e).__name__}: {e}")
+                return
+            if resp.status_code != 200:
+                print(f"[edit-postinvite] revizto /team status={resp.status_code}: {resp.text[:120]}")
+                return
+            try:
+                body = resp.json()
+            except Exception as e:
+                print(f"[edit-postinvite] revizto /team JSON parse raised: {type(e).__name__}: {e}")
+                return
+            if body.get("result", 0) != 0:
+                print(f"[edit-postinvite] revizto /team result={body.get('result')}, aborting")
+                return
+            entities = (body.get("data") or {}).get("entities") or []
+            print(f"[edit-postinvite] revizto /team returned {len(entities)} entities; searching for {target}")
+            for ent in entities:
+                em = (ent.get("email") or "").strip().lower()
+                if em != target:
+                    continue
+                member_uuid = ent.get("uuid", "") or ""
+                user_sub    = ent.get("user") if isinstance(ent.get("user"), dict) else {}
+                user_uuid   = (user_sub.get("uuid") or "") or ""
+                pending     = bool(ent.get("pending")) or (
+                    not user_uuid and bool(ent.get("invitedAt"))
                 )
-                if resp.status_code != 200:
-                    break
-                data = resp.json() or {}
-                entities = (data.get("data") or {}).get("entities") or data.get("entities") or []
-                if not entities:
-                    break
-                for ent in entities:
-                    em = (ent.get("email") or "").lower()
-                    if em != target:
-                        continue
-                    member_uuid = ent.get("uuid", "") or ""
-                    user_sub    = ent.get("user") if isinstance(ent.get("user"), dict) else {}
-                    user_uuid   = (user_sub.get("uuid") or "") or ""
-                    pending     = bool(ent.get("pending")) or (
-                        not user_uuid and bool(ent.get("invitedAt"))
-                    )
-                    sub["user_uuid"]   = user_uuid
-                    sub["member_uuid"] = member_uuid
-                    sub["pending"]     = pending
-                    row["revizto"]     = sub
-                    print(f"[edit-postinvite] revizto IDs populated for {target}: member={member_uuid[:8]}… user={user_uuid[:8] if user_uuid else '(none)'}…")
-                    return
-                if len(entities) < 200:
-                    break
+                sub["user_uuid"]   = user_uuid
+                sub["member_uuid"] = member_uuid
+                sub["pending"]     = pending
+                row["revizto"]     = sub
+                print(f"[edit-postinvite] revizto MATCH for {target}: member={member_uuid[:8] if member_uuid else '(none)'}, user={user_uuid[:8] if user_uuid else '(none)'}, pending={pending}")
+                return
+            print(f"[edit-postinvite] revizto: {target} not found in {len(entities)}-entity team — invite may not have propagated yet")
 
         elif platform == "forma":
             project_id = (plats.get("forma") or {}).get("project_id", "")
             if not project_id:
+                print(f"[edit-postinvite] forma: no project_id in registry, aborting")
                 return
             token = forma_get_token(config)
             if not token:
+                print(f"[edit-postinvite] forma: token fetch failed, aborting")
                 return
-            clean_pid = project_id.lstrip("b.") if project_id.startswith("b.") else project_id
-            headers = {"Authorization": f"Bearer {token}"}
+            # Match the sweep's pattern exactly: raw fpid (not stripped),
+            # paginated with limit/offset. The sweep at line ~4513 works
+            # in production with this shape.
+            headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
             target = email.lower()
+            total_scanned = 0
             for page in range(MAX_PAGES):
                 if _budget_exhausted():
-                    print(f"[edit-postinvite] forma lookup budget exhausted at page {page}")
+                    print(f"[edit-postinvite] forma lookup budget exhausted at page {page}, scanned {total_scanned}")
                     return
-                resp = http_requests.get(
-                    f"https://developer.api.autodesk.com/construction/admin/v1/projects/{clean_pid}/users",
-                    headers=headers,
-                    params={"limit": 200, "offset": page * 200},
-                    timeout=PER_REQUEST_TIMEOUT,
-                )
+                try:
+                    resp = http_requests.get(
+                        f"https://developer.api.autodesk.com/construction/admin/v1/projects/{project_id}/users",
+                        headers=headers,
+                        params={"limit": 200, "offset": page * 200},
+                        timeout=PER_REQUEST_TIMEOUT,
+                    )
+                except Exception as e:
+                    print(f"[edit-postinvite] forma /users page {page} raised: {type(e).__name__}: {e}")
+                    return
                 if resp.status_code != 200:
-                    break
+                    print(f"[edit-postinvite] forma /users page {page} status={resp.status_code}: {resp.text[:120]}")
+                    return
                 batch = (resp.json() or {}).get("results") or []
                 if not batch:
                     break
+                total_scanned += len(batch)
                 for u in batch:
                     if (u.get("email") or "").lower() != target:
                         continue
-                    sub["user_id"] = u.get("id") or u.get("autodeskId") or ""
+                    user_id = u.get("id") or u.get("autodeskId") or ""
+                    sub["user_id"] = user_id
                     row["forma"]   = sub
-                    print(f"[edit-postinvite] forma user_id populated for {target}: {(sub['user_id'] or '')[:8]}…")
+                    print(f"[edit-postinvite] forma MATCH for {target} on page {page}: user_id={user_id}")
                     return
                 if len(batch) < 200:
                     break
+            print(f"[edit-postinvite] forma: {target} not found in {total_scanned} users scanned — invite may not have propagated yet")
 
         elif platform == "morta":
             hub_id = (plats.get("morta") or {}).get("hub_id", "")
             if not hub_id:
+                print(f"[edit-postinvite] morta: no hub_id in registry, aborting")
                 return
             api_key = (config.get("morta") or {}).get("api_key", "")
             if not api_key:
+                print(f"[edit-postinvite] morta: no api_key in config, aborting")
                 return
             target = email.lower()
+            total_scanned = 0
             for page in range(MAX_PAGES):
                 if _budget_exhausted():
-                    print(f"[edit-postinvite] morta lookup budget exhausted at page {page}")
+                    print(f"[edit-postinvite] morta lookup budget exhausted at page {page}, scanned {total_scanned}")
                     return
-                resp = http_requests.get(
-                    f"https://api.morta.io/v1/hub/{hub_id}/members",
-                    headers={"Authorization": f"Bearer {api_key}"},
-                    params={"page": page, "size": 500},
-                    timeout=PER_REQUEST_TIMEOUT,
-                )
+                try:
+                    resp = http_requests.get(
+                        f"https://api.morta.io/v1/hub/{hub_id}/members",
+                        headers={"Authorization": f"Bearer {api_key}"},
+                        params={"page": page, "size": 500},
+                        timeout=PER_REQUEST_TIMEOUT,
+                    )
+                except Exception as e:
+                    print(f"[edit-postinvite] morta /members page {page} raised: {type(e).__name__}: {e}")
+                    return
                 if resp.status_code != 200:
-                    break
+                    print(f"[edit-postinvite] morta /members page {page} status={resp.status_code}: {resp.text[:120]}")
+                    return
                 data = resp.json() or {}
                 members = data.get("data") or data.get("members") or data.get("results") or []
                 if not members:
                     break
+                total_scanned += len(members)
                 for m in members:
                     u = m.get("user") if isinstance(m.get("user"), dict) else {}
                     if (u.get("email") or "").lower() != target:
@@ -2257,13 +2288,16 @@ def _populate_invited_user_ids(row, email, platform, project_key, proj, config, 
                     sub["public_id"]   = u.get("publicId", "") or sub.get("public_id", "")
                     sub["firebase_id"] = u.get("firebaseUserId", "") or sub.get("firebase_id", "")
                     row["morta"]       = sub
-                    print(f"[edit-postinvite] morta IDs populated for {target}: firebase={(sub['firebase_id'] or '')[:8] if sub.get('firebase_id') else '(none)'}…")
+                    print(f"[edit-postinvite] morta MATCH for {target} on page {page}: firebase={(sub.get('firebase_id') or '')[:8]}")
                     return
                 if len(members) < 500:
                     break
+            print(f"[edit-postinvite] morta: {target} not found in {total_scanned} members scanned")
 
     except Exception as e:
-        print(f"[edit-postinvite] {platform} lookup raised {type(e).__name__}: {e} — row IDs remain empty")
+        import traceback
+        print(f"[edit-postinvite] {platform} lookup raised {type(e).__name__}: {e}")
+        print(f"[edit-postinvite] traceback:\n{traceback.format_exc()}")
 
 
 def morta_search_user(email, config, allowed_hub_ids: list = None):
