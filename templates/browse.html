@@ -308,6 +308,12 @@ select.bu-cell-input{padding:2px 4px;cursor:pointer}
    right (same as .on) since technically they're enrolled-pending. */
 .bu-toggle.pending{background:#d4a64a}
 .bu-toggle.pending::before{transform:translateX(13px)}
+/* Pending + staged-for-withdrawal: keep yellow (so admin knows "still
+   in pending state, not yet active or removed") but slide the knob
+   left to show their click registered and a withdrawal will fire on
+   lock-close. Without this, clicking a pending toggle is invisible
+   visually, which reads as "click didn't register". */
+.bu-toggle.pending.staged-off::before{transform:translateX(0)}
 /* Pending should remain visibly yellow even when locked or faded —
    without these overrides, .locked's opacity .55 washes the colour
    out enough to read as grey. */
@@ -1022,6 +1028,12 @@ function renderToggle(row, plat, isUnlocked){
     const isPending = plat === 'revizto' && row?.revizto?.pending === true && !isDeactivated;
     if (isPending) {
         cls.push('pending');
+        // If the admin clicked it (withdrawal staged), add staged-off
+        // so the knob slides left — visual confirmation the click
+        // registered, even though we keep the yellow color.
+        if (pendingToggles.has(toggleKey(row, plat))) {
+            cls.push('staged-off');
+        }
     } else if (currentlyOn || pendingReactivate) {
         cls.push('on');
     } else if (currentlyOff) {
