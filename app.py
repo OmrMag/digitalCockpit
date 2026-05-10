@@ -4582,6 +4582,12 @@ def _sweep_browse_rows(user: str):
                     # /project/.../team, so they're a project member
                     # by construction.
                     "on_project":   True,
+                    # license_uuid: needed for license-side withdraw of
+                    # pending invites (POST /v5/license/{uuid}/remove-member/bulk).
+                    # Captured here so the deactivate path doesn't need
+                    # to re-resolve it. Empty string if the project isn't
+                    # tied to a license, which shouldn't happen in practice.
+                    "license_uuid": license_uuid,
                 }
 
             # ── License-team fallback for pending invitees ──────────
@@ -4637,6 +4643,7 @@ def _sweep_browse_rows(user: str):
                     "pending":      True,
                     "on_license":   True,
                     "on_project":   False,  # they're invited but not yet on /project/team
+                    "license_uuid": license_uuid,
                 }
                 print(f"[browse-sweep] revizto materialized pending {lic_email} on {project_key} from license team")
     except Exception as e:
@@ -4894,13 +4901,20 @@ def _do_deactivate(user, config, email, platform, project_key, proj, row):
         project_uuid = rev.get("project_uuid", "")
         region       = rev.get("region", "dubai")
         rsub         = row.get("revizto") or {}
-        # Per Revizto API docs ("Remove users from a project"), the
-        # endpoint is POST /v5/project/{uuid}/role/bulk-delete with body
-        # {"memberUuids": [...]}. It takes MEMBER uuids (the membership
-        # records), NOT user uuids — same field for both active members
-        # and pending invitees, so a single code path handles both cases.
-        member_uuid = rsub.get("member_uuid", "")
-        is_pending  = bool(rsub.get("pending"))
+        # Two different removal endpoints depending on user state:
+        #   - PENDING (invited but not accepted, lives on license waiting
+        #     list): POST /v5/license/{licenseUuid}/remove-member/bulk
+        #     with {"uuids": [...]}.
+        #   - ACTIVE (accepted invite, on project team list): POST
+        #     /v5/project/{projectUuid}/role/bulk-delete with
+        #     {"memberUuids": [...]}.
+        # Same member_uuid value works for both — Revizto's license-side
+        # member UUID is what we capture from /license/{uuid}/team. For
+        # active users, it's the project-side UUID from /project/{uuid}/team.
+        # Both endpoints return result=0 and {data: {ok: {...}, error: {...}}}.
+        member_uuid  = rsub.get("member_uuid", "")
+        is_pending   = bool(rsub.get("pending"))
+        license_uuid = rsub.get("license_uuid", "")
         if not project_uuid or not region:
             return False, "Revizto project_uuid/region not in registry"
         if not member_uuid:
@@ -4908,17 +4922,28 @@ def _do_deactivate(user, config, email, platform, project_key, proj, row):
         token = revizto_get_token_for_region(config, region, email=user)
         if not token:
             return False, "Revizto auth failed"
-        url = f"https://api.{region}.revizto.com/v5/project/{project_uuid}/role/bulk-delete"
+
+        if is_pending:
+            # Withdraw the pending invite via license-side remove.
+            if not license_uuid:
+                return False, "Revizto license_uuid missing on row — refresh first to populate"
+            url = f"https://api.{region}.revizto.com/v5/license/{license_uuid}/remove-member/bulk"
+            payload = {"uuids": [member_uuid], "message": None, "operationId": None}
+            kind = "license remove-member (pending withdraw)"
+        else:
+            # Active member: project-side bulk-delete.
+            url = f"https://api.{region}.revizto.com/v5/project/{project_uuid}/role/bulk-delete"
+            payload = {"memberUuids": [member_uuid], "operationId": None}
+            kind = "project bulk-delete (active deactivate)"
+
         try:
             r = http_requests.post(url,
                 headers={"Authorization": f"Bearer {token}",
                          "Content-Type": "application/json"},
-                json={"memberUuids": [member_uuid], "operationId": None},
+                json=payload,
                 timeout=15)
         except Exception as e:
             return False, f"Revizto request failed: {e}"
-        # Revizto wraps responses as {result: <code>, data: {ok:{...}, error:{...}}, message: ...}
-        # HTTP 200 only means "request was processed" — must inspect result + per-uuid status.
         if r.status_code != 200:
             return False, f"Revizto HTTP {r.status_code}: {r.text[:200]}"
         try:
@@ -4931,13 +4956,12 @@ def _do_deactivate(user, config, email, platform, project_key, proj, row):
         ok_dict  = data.get("ok") or {}
         err_dict = data.get("error") or {}
         if member_uuid in ok_dict:
-            print(f"[browse-toggle] revizto bulk-delete succeeded for {member_uuid[:8]}… ({'pending' if is_pending else 'active'})")
+            print(f"[browse-toggle] revizto {kind} succeeded for {member_uuid[:8]}…")
             return True, ""
         if member_uuid in err_dict:
             err_code = err_dict[member_uuid]
-            return False, f"Revizto rejected delete: code {err_code}"
-        # Server didn't acknowledge our UUID at all — odd but treat as failure.
-        return False, f"Revizto bulk-delete didn't acknowledge {member_uuid[:8]}… (ok={list(ok_dict.keys())}, error={list(err_dict.keys())})"
+            return False, f"Revizto rejected ({kind}): code {err_code}"
+        return False, f"Revizto {kind} didn't acknowledge {member_uuid[:8]}… (ok={list(ok_dict.keys())}, error={list(err_dict.keys())})"
 
     if platform == "forma":
         forma = plats.get("forma", {}) or {}
