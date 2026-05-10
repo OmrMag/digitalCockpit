@@ -1141,15 +1141,31 @@ async function loadReviztoModelsFromExport() {
     // Each model's "Original Name" lives inside its `properties` array,
     // not as a flat field. We flatten here into the {sceneReviztoId,
     // modelReviztoId, modelName} shape that populateReviztoModels expects.
+    //
+    // CRITICAL: Revizto IDs are 19-digit signed ints (e.g. 8751744224124975359),
+    // well above JS Number.MAX_SAFE_INTEGER (2^53). Calling res.json() directly
+    // silently rounds the trailing digits — 8751744224124975359 becomes
+    // 8751744224124975000 — and the Python script then can't match the
+    // truncated ID against any model in the project.
+    //
+    // We read the response as TEXT first, wrap scene/model/object ID
+    // numerics in quotes via regex, then parse. Downstream code keeps
+    // them as strings; Python's _coerce_int() converts them back to
+    // unbounded ints losslessly.
     try {
-        const res    = await fetch('/api/exports/revizto_scenes_models.json');
+        const res = await fetch('/api/exports/revizto_scenes_models.json');
         if (!res.ok) return;
-        const scenes = await res.json();
+        const text = await res.text();
+        const safe = text.replace(
+            /"(sceneReviztoId|modelReviztoId|objectReviztoId)":\s*(-?\d+)/g,
+            '"$1":"$2"'
+        );
+        const scenes = JSON.parse(safe);
         if (!Array.isArray(scenes) || !scenes.length) return;
 
         const rows = [];
         for (const scene of scenes) {
-            const sceneId = scene.sceneReviztoId;
+            const sceneId = scene.sceneReviztoId;   // now a string
             const sceneModels = Array.isArray(scene.models) ? scene.models : [];
             for (const model of sceneModels) {
                 const props = Array.isArray(model.properties) ? model.properties : [];
@@ -1159,7 +1175,7 @@ async function loadReviztoModelsFromExport() {
                 );
                 rows.push({
                     sceneReviztoId: sceneId,
-                    modelReviztoId: model.modelReviztoId,
+                    modelReviztoId: model.modelReviztoId,   // string
                     modelName: (nameProp && nameProp.value) || `Model ${model.modelReviztoId}`,
                 });
             }
