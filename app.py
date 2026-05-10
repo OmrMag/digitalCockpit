@@ -2186,12 +2186,17 @@ def _populate_invited_user_ids(row, email, platform, project_key, proj, config, 
                 em = (ent.get("email") or "").strip().lower()
                 if em != target:
                     continue
-                member_uuid = ent.get("uuid", "") or ""
-                user_sub    = ent.get("user") if isinstance(ent.get("user"), dict) else {}
-                user_uuid   = (user_sub.get("uuid") or "") or ""
-                pending     = bool(ent.get("pending")) or (
-                    not user_uuid and bool(ent.get("invitedAt"))
-                )
+                # Per Revizto docs: real member UUID is at entity.member.uuid,
+                # user UUID at entity.member.user.uuid. Old fallbacks kept for
+                # API drift safety.
+                member_obj  = ent.get("member") if isinstance(ent.get("member"), dict) else {}
+                member_uuid = (member_obj.get("uuid") or "") or (ent.get("uuid") or "") or ""
+                user_obj    = member_obj.get("user") if isinstance(member_obj.get("user"), dict) else {}
+                user_uuid   = (user_obj.get("uuid") or "") or ""
+                if not user_uuid:
+                    legacy_user = ent.get("user") if isinstance(ent.get("user"), dict) else {}
+                    user_uuid   = (legacy_user.get("uuid") or "") or ""
+                pending     = bool(ent.get("invited")) or bool(ent.get("pending"))
                 sub["user_uuid"]   = user_uuid
                 sub["member_uuid"] = member_uuid
                 sub["pending"]     = pending
@@ -4485,23 +4490,41 @@ def _sweep_browse_rows(user: str):
                 # accepts either form, so deactivate prefers user_uuid
                 # for active members and falls back to member_uuid for
                 # pending invites.
-                member_uuid = (ent.get("uuid") or "") or ""
-                user_sub    = ent.get("user") if isinstance(ent.get("user"), dict) else {}
-                user_uuid   = (user_sub.get("uuid") or "") or ""
-                # Pending detection: Revizto sets ent.pending=true for
-                # invitees who haven't yet accepted. As a safety net,
-                # treat "no user_uuid + has invitedAt" as pending too,
-                # since that's the same data shape regardless of whether
-                # the API explicitly tagged it.
-                pending = bool(ent.get("pending")) or (
-                    not user_uuid and bool(ent.get("invitedAt"))
-                )
-                # Diagnostic log for pending users where IDs come back
-                # empty — helps debug "missing on row" deactivate failures.
-                # Logs only when pending AND we couldn't extract any UUID,
-                # so production logs aren't flooded.
-                if pending and not member_uuid and not user_uuid:
-                    print(f"[browse-sweep] revizto pending user {em} on {project_key} has no member_uuid/user_uuid; entity keys={list(ent.keys())}")
+                # Per the Revizto API docs (Get project members), each
+                # entity has shape:
+                #   {
+                #     "email": ...,
+                #     "uuid": <some entity-level uuid, NOT the right one>,
+                #     "member": {                  ← THIS is what bulk-delete wants
+                #         "uuid": "...",            ← member UUID, even for pending
+                #         "user": {
+                #             "uuid": "...",        ← user UUID (after acceptance)
+                #         }
+                #     }
+                #   }
+                # bulk-delete takes memberUuids — i.e. entity.member.uuid.
+                member_obj  = ent.get("member") if isinstance(ent.get("member"), dict) else {}
+                member_uuid = (member_obj.get("uuid") or "") or ""
+                # Fallback: some endpoints / older responses may put the
+                # member uuid at the top level. Use it if member.uuid is empty.
+                if not member_uuid:
+                    member_uuid = (ent.get("uuid") or "") or ""
+                # User UUID lives under member.user.uuid (post-acceptance).
+                # Tolerate the older top-level user.uuid shape too.
+                user_obj  = member_obj.get("user") if isinstance(member_obj.get("user"), dict) else {}
+                user_uuid = (user_obj.get("uuid") or "") or ""
+                if not user_uuid:
+                    legacy_user = ent.get("user") if isinstance(ent.get("user"), dict) else {}
+                    user_uuid   = (legacy_user.get("uuid") or "") or ""
+                # Pending detection: Revizto sets entity.invited=true on
+                # the project team endpoint for newly-invited users that
+                # haven't accepted yet. Also tolerate ent.pending=true
+                # from the license endpoint shape.
+                pending = bool(ent.get("invited")) or bool(ent.get("pending"))
+                if pending and not member_uuid:
+                    # Should rarely happen now that we read entity.member.uuid,
+                    # but log if it does — helps catch any further API drift.
+                    print(f"[browse-sweep] revizto pending user {em} on {project_key} has no member_uuid; entity keys={list(ent.keys())}, member keys={list(member_obj.keys())}")
                 rec["revizto"] = {
                     "role":         role,
                     "license_role": lic_role_label,
@@ -4778,32 +4801,50 @@ def _do_deactivate(user, config, email, platform, project_key, proj, row):
         project_uuid = rev.get("project_uuid", "")
         region       = rev.get("region", "dubai")
         rsub         = row.get("revizto") or {}
-        # Prefer user_uuid (active member) but fall back to member_uuid
-        # (pending invite — user.uuid not yet populated). The DELETE
-        # endpoint /v5/project/{pid}/role/member/{X} accepts either,
-        # so the same code path works for both "remove user" and
-        # "withdraw invite".
-        delete_uuid = rsub.get("user_uuid", "") or rsub.get("member_uuid", "")
+        # Per Revizto API docs ("Remove users from a project"), the
+        # endpoint is POST /v5/project/{uuid}/role/bulk-delete with body
+        # {"memberUuids": [...]}. It takes MEMBER uuids (the membership
+        # records), NOT user uuids — same field for both active members
+        # and pending invitees, so a single code path handles both cases.
+        member_uuid = rsub.get("member_uuid", "")
         is_pending  = bool(rsub.get("pending"))
         if not project_uuid or not region:
             return False, "Revizto project_uuid/region not in registry"
-        if not delete_uuid:
-            return False, "Revizto user_uuid/member_uuid missing on row — refresh first"
+        if not member_uuid:
+            return False, "Revizto member_uuid missing on row — refresh first"
         token = revizto_get_token_for_region(config, region, email=user)
         if not token:
             return False, "Revizto auth failed"
-        url = f"https://api.{region}.revizto.com/v5/project/{project_uuid}/role/member/{delete_uuid}"
+        url = f"https://api.{region}.revizto.com/v5/project/{project_uuid}/role/bulk-delete"
         try:
-            r = http_requests.delete(url,
-                headers={"Authorization": f"Bearer {token}"}, timeout=15)
+            r = http_requests.post(url,
+                headers={"Authorization": f"Bearer {token}",
+                         "Content-Type": "application/json"},
+                json={"memberUuids": [member_uuid], "operationId": None},
+                timeout=15)
         except Exception as e:
             return False, f"Revizto request failed: {e}"
-        if r.status_code in (200, 204):
-            # Log which path we took for visibility — useful to confirm
-            # pending-invite withdraw is going through the right UUID.
-            print(f"[browse-toggle] revizto delete via {'member_uuid (pending)' if is_pending else 'user_uuid (active)'}")
+        # Revizto wraps responses as {result: <code>, data: {ok:{...}, error:{...}}, message: ...}
+        # HTTP 200 only means "request was processed" — must inspect result + per-uuid status.
+        if r.status_code != 200:
+            return False, f"Revizto HTTP {r.status_code}: {r.text[:200]}"
+        try:
+            body = r.json()
+        except Exception:
+            return False, f"Revizto returned non-JSON: {r.text[:200]}"
+        if body.get("result", -1) != 0:
+            return False, f"Revizto API result={body.get('result')}: {body.get('message','no message')}"
+        data = body.get("data") or {}
+        ok_dict  = data.get("ok") or {}
+        err_dict = data.get("error") or {}
+        if member_uuid in ok_dict:
+            print(f"[browse-toggle] revizto bulk-delete succeeded for {member_uuid[:8]}… ({'pending' if is_pending else 'active'})")
             return True, ""
-        return False, f"Revizto HTTP {r.status_code}: {r.text[:200]}"
+        if member_uuid in err_dict:
+            err_code = err_dict[member_uuid]
+            return False, f"Revizto rejected delete: code {err_code}"
+        # Server didn't acknowledge our UUID at all — odd but treat as failure.
+        return False, f"Revizto bulk-delete didn't acknowledge {member_uuid[:8]}… (ok={list(ok_dict.keys())}, error={list(err_dict.keys())})"
 
     if platform == "forma":
         forma = plats.get("forma", {}) or {}
