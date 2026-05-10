@@ -5176,6 +5176,53 @@ async def api_browse_projects(user: str = Depends(require_user)):
     out.sort(key=lambda p: (plat_order.get(p["platform"], 9), p["name"].lower()))
     return {"projects": out}
 
+# ---------------------------------------------------------------------------
+# Wire payload trimming
+# ---------------------------------------------------------------------------
+# The browse cache rows accumulated quite a few fields over time —
+# UUIDs for backend dispatch, snapshot metadata, on_hub/on_license
+# flags, etc. The frontend doesn't read most of these, but they get
+# serialized in /api/browse/users responses anyway, inflating the wire
+# payload by ~30%. Strip them on the way out: backend ops still read
+# the FULL row from cache server-side; only the frontend gets a slim
+# view.
+#
+# When changing what's exposed, double-check browse.html's field
+# accessors — the lists below were derived from a grep of the template
+# at the time of writing.
+_WIRE_KEEP_REVIZTO = {"role", "license_role", "company", "department",
+                       "location", "last_active", "pending", "_deactivated"}
+_WIRE_KEEP_FORMA   = {"role", "company", "company_id", "role_ids",
+                       "access_level", "docs", "design", "model",
+                       "last_active", "_deactivated"}
+_WIRE_KEEP_MORTA   = {"role", "tag", "last_active", "_deactivated"}
+_WIRE_KEEP_TOPLEVEL = {"email", "name", "project_key", "project_name",
+                       "last_active_ts", "last_active_days",
+                       "revizto", "forma", "morta"}
+
+
+def _trim_row_for_wire(row: dict) -> dict:
+    """Return a slimmer copy of `row` with only fields the frontend reads.
+    Strips backend-only IDs (member_uuid, user_uuid, license_uuid,
+    user_id, public_id, firebase_id, hub_id, on_hub, on_license,
+    on_project, etc.) and snapshot metadata. Does not mutate `row`.
+
+    Output is JSON-serializable. Sub-objects that are None remain None;
+    sub-objects that are dicts get their own filter pass.
+    """
+    out = {k: v for k, v in row.items() if k in _WIRE_KEEP_TOPLEVEL}
+    rev = row.get("revizto")
+    if isinstance(rev, dict):
+        out["revizto"] = {k: v for k, v in rev.items() if k in _WIRE_KEEP_REVIZTO}
+    fo = row.get("forma")
+    if isinstance(fo, dict):
+        out["forma"] = {k: v for k, v in fo.items() if k in _WIRE_KEEP_FORMA}
+    mo = row.get("morta")
+    if isinstance(mo, dict):
+        out["morta"] = {k: v for k, v in mo.items() if k in _WIRE_KEEP_MORTA}
+    return out
+
+
 @app.get("/api/browse/users")
 async def api_browse_users(user: str = Depends(require_user)):
     """Read-only cache reader. Returns rows the current admin has scope
@@ -5206,11 +5253,75 @@ async def api_browse_users(user: str = Depends(require_user)):
         visible = [r for r in all_rows if r.get("project_key") in admin_keys]
 
     return {
-        "rows":         visible,
+        "rows":         [_trim_row_for_wire(r) for r in visible],
         "updated_at":   cache.get("updated_at", ""),
         "updated_by":   cache.get("updated_by", ""),
         "total_cached": len(all_rows),
         "total_visible": len(visible),
+    }
+
+
+@app.get("/api/browse/bootstrap")
+async def api_browse_bootstrap(user: str = Depends(require_user)):
+    """Single-round-trip endpoint that returns everything the /browse
+    page needs to render its first paint: active context, registry
+    (admin-scoped), and the trimmed users cache.
+
+    Why combine: the prior pattern fired three parallel GETs from the
+    browser. With one Python worker, those requests serialize behind
+    each other on the event loop, and the slowest blob read (the
+    browse cache) stacks its wall-clock time onto the others —
+    e.g. 60s on the cache turns into 50s on /api/registry, /api/context,
+    and even /static/favicon.ico. One bootstrap call lets the worker
+    fan out the loads in parallel server-side instead of having the
+    browser serialize them.
+
+    Loads run concurrently via asyncio.gather + run_in_executor so the
+    blob reads overlap. Each underlying load_*() function does its own
+    in-memory caching, so warm calls are near-free.
+
+    Frontend can still use the individual endpoints — they're not
+    deprecated, just not the fast path on the browse page. Other
+    pages (manage, scheduler, settings) keep using /api/registry +
+    /api/context independently.
+    """
+    loop = asyncio.get_event_loop()
+
+    # Kick off all three loads in parallel. Each loader is sync (does a
+    # blob read on cold cache) so each goes onto the executor pool.
+    config_fut    = loop.run_in_executor(None, load_config, user)
+    registry_fut  = loop.run_in_executor(None, load_registry)
+    cache_fut     = loop.run_in_executor(None, load_browse_cache)
+    config, registry, cache = await asyncio.gather(config_fut, registry_fut, cache_fut)
+
+    # Active context for the user — same shape as /api/context.
+    active_context = config.get("active_context", {}) or {}
+
+    # Scope the registry the same way /api/registry does. Owner sees
+    # everything; admins only see projects they're listed on.
+    if is_owner(user):
+        scoped_registry = registry
+    else:
+        scoped_registry = {k: v for k, v in registry.items() if user in v.get("admins", [])}
+
+    # Scope the cache rows the same way /api/browse/users does.
+    all_rows = cache.get("rows") or []
+    if is_owner(user):
+        visible = all_rows
+    else:
+        admin_keys = set(scoped_registry.keys())
+        visible = [r for r in all_rows if r.get("project_key") in admin_keys]
+
+    return {
+        "context":  active_context,
+        "registry": scoped_registry,
+        "users": {
+            "rows":         [_trim_row_for_wire(r) for r in visible],
+            "updated_at":   cache.get("updated_at", ""),
+            "updated_by":   cache.get("updated_by", ""),
+            "total_cached": len(all_rows),
+            "total_visible": len(visible),
+        },
     }
 
 
@@ -6007,7 +6118,7 @@ async def api_browse_edit(request: Request, user: str = Depends(require_user)):
         "ok":      not failed,
         "applied": {k: v for k, v in applied.items() if v},
         "failed":  failed,
-        "row":     row,
+        "row":     _trim_row_for_wire(row),
     }
 
 
