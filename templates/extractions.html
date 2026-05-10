@@ -688,6 +688,10 @@ function makeSearchableSelect(opts) {
                 name: input.dataset.selectedName || '',
             };
         },
+        // Returns the number of items currently loaded into the component.
+        // Used by callers to detect 'fetch succeeded but list is empty' vs
+        // 'fetch succeeded and list has rows but nothing selected yet'.
+        getItemCount() { return items.length; },
         clear() { setSelected('', '', false); },
     };
 }
@@ -810,16 +814,18 @@ async function fetchReviztoModels() {
             input.placeholder = 'Fetch returned no models — check Settings or run L2 manually for details';
             return;
         }
-        // Load the export into the dropdown
+        // Load the export into the dropdown. populateReviztoModels()
+        // calls ss.setItems() under the hood, which fills the searchable
+        // component but NOT the legacy hidden <select> (the legacy select
+        // only gets a row when the user actually picks a model). So we
+        // ask the component itself how many items it now holds.
         await loadReviztoModelsFromExport();
-        const items = ss.getItems ? ss.getItems() : null;
-        // setItems was called inside populateReviztoModels via load helper;
-        // if the dropdown still has no items, the export was empty.
-        if (input.dataset.selectedId === '' && document.getElementById('reviztoModelSelect').options.length === 0) {
+        const itemCount = ss.getItemCount ? ss.getItemCount() : 0;
+        if (itemCount === 0) {
             input.placeholder = 'No models found in this project';
         } else {
-            input.placeholder = '— select or type to search —';
             ss.setEnabled(true);
+            input.placeholder = '— select or type to search —';
         }
     } catch (e) {
         console.error(e);
