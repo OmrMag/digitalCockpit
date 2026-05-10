@@ -4333,7 +4333,25 @@ def _sweep_browse_rows(user: str):
         def _ensure_license_team(region: str, license_uuid: str, license_name: str, token: str):
             """Fetch /v5/license/{uuid}/team for this specific license once.
             Cached per (region, license_uuid). Always returns a dict (may
-            be empty). Logs the outcome on every branch."""
+            be empty). Logs the outcome on every branch.
+
+            Stored shape: {email_lower: {"label": <role label>,
+                                          "member_uuid": <uuid>,
+                                          "user_uuid": <uuid or "">,
+                                          "pending": <bool>,
+                                          "company": <str>,
+                                          "department": <str>,
+                                          "location": <str>,
+                                          "last_active": <str>}}
+            Used both for license-role enrichment of project-team rows
+            AND as a fallback source for pending users that may not yet
+            appear in /project/{uuid}/team. The license-team endpoint
+            shape is documented:
+              entity.uuid          → license-member UUID (== member_uuid)
+              entity.user.uuid     → user UUID (after acceptance)
+              entity.pending: bool → invited but not accepted
+            Note: this differs from project-team where the member uuid
+            lives at entity.member.uuid. Two API endpoints, two shapes."""
             cache_key = (region, license_uuid)
             if cache_key in license_team_index:
                 return license_team_index[cache_key]
@@ -4408,8 +4426,27 @@ def _sweep_browse_rows(user: str):
                             break
                     if tier is not None:
                         label = REVIZTO_LICENSE_ROLE_MAP.get(tier, "")
-                if label:
-                    index[ent_email] = label
+                # Capture the full set of fields needed to materialize a
+                # row when this user doesn't appear in /project/.../team
+                # (typical for pending invitees). Per docs:
+                #   entity.uuid      → license-member UUID (works for bulk-delete)
+                #   entity.user.uuid → user UUID (post-acceptance)
+                #   entity.pending   → bool
+                lic_member_uuid = (ent.get("uuid") or "") or ""
+                lic_user_obj    = ent.get("user") if isinstance(ent.get("user"), dict) else {}
+                lic_user_uuid   = (lic_user_obj.get("uuid") or "") or ""
+                index[ent_email] = {
+                    "label":       label,
+                    "member_uuid": lic_member_uuid,
+                    "user_uuid":   lic_user_uuid,
+                    "pending":     bool(ent.get("pending")),
+                    "company":     ent.get("company", "") or "",
+                    "department":  ent.get("department", "") or "",
+                    "location":    ent.get("location", "") or "",
+                    "last_active": ent.get("lastActive", "") or "",
+                    "fullname":    (lic_user_obj.get("fullname") or "").strip()
+                                   or f"{lic_user_obj.get('firstname','')} {lic_user_obj.get('lastname','')}".strip(),
+                }
             print(f"[browse-sweep] revizto {region} '{license_name}': license team raw={len(ents)} indexed={len(index)}")
             return index
 
@@ -4475,10 +4512,10 @@ def _sweep_browse_rows(user: str):
                 if not rec:
                     continue
                 # License-side enrichment from the per-license index.
-                # The index stores resolved labels (strings) directly —
-                # no further translation needed. Empty string means
-                # "not on this license" (or license-team fetch failed).
-                lic_role_label = license_index.get(em_lower, "")
+                # The index now stores per-email dicts (not bare strings).
+                # The label is what enriches the row's license_role display.
+                lic_entry      = license_index.get(em_lower) or {}
+                lic_role_label = lic_entry.get("label", "") if isinstance(lic_entry, dict) else ""
                 # Two distinct identifiers per entity:
                 #   - member_uuid: the membership record's UUID, present
                 #     even for invited-but-not-accepted users. Used for
@@ -4546,6 +4583,62 @@ def _sweep_browse_rows(user: str):
                     # by construction.
                     "on_project":   True,
                 }
+
+            # ── License-team fallback for pending invitees ──────────
+            # Pending users invited to (license + project) sometimes
+            # appear in /v5/license/{uuid}/team but NOT yet in
+            # /v5/project/{uuid}/team — Revizto only adds them to the
+            # project team list once they've accepted. To make the
+            # browse view reflect the Revizto admin view, walk the
+            # license index for this project's license and materialize
+            # rows for any email we didn't already see in the project
+            # team. We can ONLY do this when invitationsToProjects on
+            # the license-side included this project — otherwise we'd
+            # materialize every user on the license for every project
+            # they touched. We don't have that mapping cheaply, so we
+            # restrict to entries flagged pending: those are the
+            # actually-just-invited users, the false-positive risk is
+            # bounded, and if a user is genuinely on the license but
+            # not on this project they'll still get pruned on accept.
+            seen_emails = {(ent.get("email") or "").strip().lower()
+                           for ent in ents if isinstance(ent, dict)}
+            for lic_email, lic_data in license_index.items():
+                if not isinstance(lic_data, dict):
+                    continue
+                if lic_email in seen_emails:
+                    continue
+                if not lic_data.get("pending"):
+                    continue
+                # Only materialize for projects we know this user was
+                # invited to. Without invitationsToProjects metadata, we
+                # have to assume the project — admins typically invite
+                # to license + project together via our /browse flow, so
+                # any pending user on the license is almost certainly
+                # tied to this project. False positives are limited to
+                # cases where admin invited to license+other-project.
+                rec = upsert_row(lic_email, project_key, project_name,
+                                 name=lic_data.get("fullname") or lic_email)
+                if not rec:
+                    continue
+                # Don't overwrite if a previous project loop already
+                # materialized this row (defensive — shouldn't happen
+                # since project_key is part of the rec key).
+                if rec.get("revizto"):
+                    continue
+                rec["revizto"] = {
+                    "role":         "",
+                    "license_role": lic_data.get("label", ""),
+                    "company":      lic_data.get("company", ""),
+                    "department":   lic_data.get("department", ""),
+                    "location":     lic_data.get("location", ""),
+                    "last_active":  lic_data.get("last_active", ""),
+                    "user_uuid":    lic_data.get("user_uuid", ""),
+                    "member_uuid": lic_data.get("member_uuid", ""),
+                    "pending":      True,
+                    "on_license":   True,
+                    "on_project":   False,  # they're invited but not yet on /project/team
+                }
+                print(f"[browse-sweep] revizto materialized pending {lic_email} on {project_key} from license team")
     except Exception as e:
         # Top-level guard — should never fire because every inner branch
         # is now wrapped, but keep it as a safety net so a single Revizto
