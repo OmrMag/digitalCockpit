@@ -1454,15 +1454,20 @@ function renderTable(){
 
             if (bulkMode){
                 /* Bulk mode: stage the change in pendingToggles for every
-                   ticked row that has this platform. NO API call yet — the
-                   power-off click is the commit. Even-number flips of the
-                   same key are no-ops, so toggling row 5's Reviz off then
-                   on cancels itself out. */
+                   ticked row that has this platform OR has it deactivated.
+                   NO API call yet — the power-off click is the commit.
+                   Even-number flips of the same key are no-ops, so toggling
+                   row 5's Reviz off then on cancels itself out.
+                   Truly faded rows (never on platform) are skipped — bulk
+                   doesn't support invite, only deactivate/reactivate. */
                 const affected = Array.from(bulkSelected);
                 const rowByKey = new Map(lastRows.map(r => [rowKey(r), r]));
                 affected.forEach(k => {
                     const row = rowByKey.get(k);
                     if (!row) return;
+                    // Skip rows that are genuinely not on this platform.
+                    // Deactivated rows (sub-object truthy with _deactivated)
+                    // ARE valid bulk targets — they get reactivated.
                     if (row[plat] == null) return;
                     const tk = `${k}|${plat}`;
                     if (pendingToggles.has(tk)) pendingToggles.delete(tk);
@@ -1531,7 +1536,15 @@ function collectPendingBulkChanges(){
         const pl  = tk.slice(sep + 1);
         const row = rowByKey.get(rk);
         if (!row) continue;
-        const action = (row[pl] != null) ? 'deactivate' : 'reactivate';
+        // Direction: a row is "active on platform" only when the
+        // sub-object is truthy AND _deactivated is not set. That state
+        // gets deactivated; everything else (deactivated, faded) gets
+        // reactivated. The bulk click handler above already filtered
+        // out truly-faded rows, so reactivate here means "from
+        // _deactivated state."
+        const sub = row[pl];
+        const isActive = sub != null && sub?._deactivated !== true;
+        const action = isActive ? 'deactivate' : 'reactivate';
         changes.push({
             email:       row.email,
             platform:    pl,
@@ -1557,19 +1570,30 @@ async function fireToggleChanges(changes, fromBulk){
         const data = await r.json();
         const results = data.results || [];
 
-        // Apply each successful change to lastRows in place
+        // Apply each successful change to lastRows in place. Server-side
+        // we mark deactivated rows with _deactivated: true and keep the
+        // snapshot data for display (red toggle, populated cells). The
+        // loadCache() call at the end refreshes from cache anyway, but
+        // we update locally first so the UI reflects the new state
+        // immediately.
         const rowByKey = new Map(lastRows.map(r => [rowKey(r), r]));
         results.forEach(res => {
             if (!res.ok) return;
             const k = `${res.email.toLowerCase()}|${res.project_key}`;
             const row = rowByKey.get(k);
             if (!row) return;
-            if (res.action === 'deactivate'){
-                row[res.platform] = null;
+            if (res.action === 'deactivate' && row[res.platform]){
+                // Preserve the existing sub-object's data; just flip
+                // _deactivated. Mirrors the server-side mutation.
+                row[res.platform] = {...row[res.platform], _deactivated: true};
+            } else if (res.action === 'reactivate' && row[res.platform]){
+                // Strip _deactivated locally so the toggle flips green
+                // before loadCache() finishes. Server-side the row was
+                // restored from snapshot (which has no _deactivated), so
+                // they'll match after reload.
+                const {_deactivated, ...rest} = row[res.platform];
+                row[res.platform] = rest;
             }
-            // For reactivate, the server returns the restored sub-object
-            // implicitly — we re-fetch the cache after a delay to avoid a
-            // round-trip per row.
         });
 
         const failures = results.filter(x => !x.ok);

@@ -5432,10 +5432,23 @@ async def api_browse_toggle(request: Request, user: str = Depends(require_user))
 
         try:
             if action == "deactivate":
+                # Only act on truly-active rows. A row with _deactivated:true
+                # has already been removed from the platform; trying again
+                # would hit the platform's API with a stale ID and fail
+                # (Forma 404, Revizto code 1, etc.). Treat as no-op-ish:
+                # report success but don't re-fire the API call.
                 if not row or not row.get(platform):
                     results.append({"ok": False, "email": email, "platform": platform,
                                     "project_key": project_key,
                                     "error": "row or platform sub-object missing"})
+                    continue
+                if row[platform].get("_deactivated") is True:
+                    # Already deactivated — nothing to do. Don't error, don't
+                    # re-fire the API; just acknowledge so frontend visual
+                    # state can update without a misleading toast.
+                    results.append({"ok": True, "email": email, "platform": platform,
+                                    "project_key": project_key, "action": "deactivate",
+                                    "note": "already deactivated"})
                     continue
                 snap_data = dict(row[platform])
                 snap_data["_name"]    = row.get("name", "")
