@@ -308,6 +308,10 @@ select.bu-cell-input{padding:2px 4px;cursor:pointer}
    right (same as .on) since technically they're enrolled-pending. */
 .bu-toggle.pending{background:#d4a64a}
 .bu-toggle.pending::before{transform:translateX(13px)}
+/* Pending should remain visibly yellow even when locked or faded —
+   without these overrides, .locked's opacity .55 washes the colour
+   out enough to read as grey. */
+.bu-toggle.pending.locked{opacity:.85}
 .bu-toggle.faded{opacity:.28;cursor:not-allowed}
 .bu-toggle.locked{cursor:not-allowed;opacity:.55}
 .bu-toggle:not(.faded):not(.locked):hover{filter:brightness(.95)}
@@ -1012,43 +1016,41 @@ function renderToggle(row, plat, isUnlocked){
     const { currentlyOn, currentlyOff, faded, pendingReactivate, isDeactivated } = toggleState(row, plat);
     const cls = ['bu-toggle'];
     // Revizto-only: an existing user with pending=true (invited but not
-    // yet accepted) gets a yellow toggle. Overrides .on for the pending
-    // state since "active green" would lie about their status.
-    const isPending = plat === 'revizto' && row?.revizto?.pending === true;
-    if (isPending && !currentlyOff && !isDeactivated) {
+    // yet accepted) gets a yellow toggle. Yellow ALWAYS wins for pending
+    // rows — staging a withdrawal doesn't flip it to red, and there's no
+    // "reactivate" path because they're already invited.
+    const isPending = plat === 'revizto' && row?.revizto?.pending === true && !isDeactivated;
+    if (isPending) {
         cls.push('pending');
     } else if (currentlyOn || pendingReactivate) {
-        // pendingReactivate (faded or deactivated row with reactivate
-        // staged) renders as green "on" so the admin sees their intent.
         cls.push('on');
     } else if (currentlyOff) {
         cls.push('off');
     }
     if (faded)                  cls.push('faded');
     if (!isUnlocked && !faded)  cls.push('locked');
-    // Title reflects the action a click would perform. The pending-flip
-    // case lets admin know they're cancelling a staged change.
+    // Title reflects the action a click would perform.
     const tk = toggleKey(row, plat);
     const flipStaged = pendingToggles.has(tk);
     let title;
-    if (faded) {
+    if (isPending && flipStaged) {
+        title = 'Withdraw pending invite staged — click again to cancel, or lock to commit';
+    } else if (isPending) {
+        title = isUnlocked
+            ? 'Click to withdraw pending invite'
+            : 'Pending — invited but has not accepted yet. Unlock to withdraw.';
+    } else if (faded) {
         title = isUnlocked
             ? 'Click to invite or reactivate this user'
             : 'User is not on this platform — unlock to add';
     } else if (pendingReactivate) {
         title = 'Reactivate staged — click again to cancel, or lock to commit';
     } else if (flipStaged && currentlyOff && !isDeactivated) {
-        // Active row with deactivate staged. Distinct from
-        // pendingReactivate (which is for faded/deactivated rows).
         title = 'Deactivate staged — click again to cancel, or lock to commit';
     } else if (isDeactivated) {
         title = isUnlocked
             ? 'Click to reactivate this user'
             : 'User is deactivated — unlock to reactivate';
-    } else if (isPending) {
-        title = isUnlocked
-            ? 'Click to withdraw pending invite'
-            : 'Pending — user has been invited but has not accepted yet';
     } else if (isUnlocked) {
         title = currentlyOn ? 'Click to deactivate' : 'Click to reactivate';
     } else {
@@ -1483,11 +1485,19 @@ function renderTable(){
                 }
             } else {
                 // First click. Direction = opposite of CURRENT state.
-                // Currently active = exists AND not deactivated.
-                // Currently inactive (faded or red) = !exists OR _deactivated.
+                // Special case for Revizto pending invites: they're
+                // already in a "halfway invited" state, so the only
+                // sensible click is "withdraw" (deactivate). Never
+                // stage a reactivate on them — that would re-invite
+                // a user who's already been invited.
                 pendingToggles.add(tk);
-                const isCurrentlyActive = row[plat] != null && row[plat]?._deactivated !== true;
-                pe[plat]._toggle = !isCurrentlyActive;  // true = reactivate, false = deactivate
+                const isPendingRevizto = plat === 'revizto' && row.revizto?.pending === true && row.revizto?._deactivated !== true;
+                if (isPendingRevizto){
+                    pe[plat]._toggle = false;  // withdraw
+                } else {
+                    const isCurrentlyActive = row[plat] != null && row[plat]?._deactivated !== true;
+                    pe[plat]._toggle = !isCurrentlyActive;  // true = reactivate, false = deactivate
+                }
             }
             renderTable();
         });

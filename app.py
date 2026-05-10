@@ -4496,6 +4496,12 @@ def _sweep_browse_rows(user: str):
                 pending = bool(ent.get("pending")) or (
                     not user_uuid and bool(ent.get("invitedAt"))
                 )
+                # Diagnostic log for pending users where IDs come back
+                # empty — helps debug "missing on row" deactivate failures.
+                # Logs only when pending AND we couldn't extract any UUID,
+                # so production logs aren't flooded.
+                if pending and not member_uuid and not user_uuid:
+                    print(f"[browse-sweep] revizto pending user {em} on {project_key} has no member_uuid/user_uuid; entity keys={list(ent.keys())}")
                 rec["revizto"] = {
                     "role":         role,
                     "license_role": lic_role_label,
