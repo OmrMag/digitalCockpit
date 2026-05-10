@@ -1103,11 +1103,35 @@ function _addPromptLine() {
 }
 
 async function loadReviztoModelsFromExport() {
+    // The export file is the raw scenes-and-models response from Revizto:
+    // a top-level array of scene objects, each with a `models` array.
+    // Each model's "Original Name" lives inside its `properties` array,
+    // not as a flat field. We flatten here into the {sceneReviztoId,
+    // modelReviztoId, modelName} shape that populateReviztoModels expects.
     try {
-        const res  = await fetch('/api/exports/revizto_scenes_models.json');
+        const res    = await fetch('/api/exports/revizto_scenes_models.json');
         if (!res.ok) return;
-        const data = await res.json();
-        if (Array.isArray(data) && data.length) populateReviztoModels(data);
+        const scenes = await res.json();
+        if (!Array.isArray(scenes) || !scenes.length) return;
+
+        const rows = [];
+        for (const scene of scenes) {
+            const sceneId = scene.sceneReviztoId;
+            const sceneModels = Array.isArray(scene.models) ? scene.models : [];
+            for (const model of sceneModels) {
+                const props = Array.isArray(model.properties) ? model.properties : [];
+                const nameProp = props.find(p =>
+                    p.categoryDisplayName === 'Revizto' &&
+                    p.displayName === 'Original Name'
+                );
+                rows.push({
+                    sceneReviztoId: sceneId,
+                    modelReviztoId: model.modelReviztoId,
+                    modelName: (nameProp && nameProp.value) || `Model ${model.modelReviztoId}`,
+                });
+            }
+        }
+        if (rows.length) populateReviztoModels(rows);
     } catch(e) { console.warn('Could not load Revizto models from export', e); }
 }
 
