@@ -4697,6 +4697,69 @@ def _sweep_browse_rows(user: str):
             rec["last_active_ts"]   = best_str
             rec["last_active_days"] = max(0, (now_utc - best_dt).days)
 
+    # ── Restore deactivated rows from snapshots ─────────────────────
+    # Platform APIs only return ACTIVE members. If a user was deactivated,
+    # the sweep won't find them and would otherwise null out their sub-
+    # object. To keep deactivated rows visible (red toggles, snapshot
+    # data shown), we replay deactivation_snapshots.json: for every
+    # (email, platform, project_key) snapshot, if the row exists but
+    # the platform sub-object is missing, restore it from the snapshot
+    # with _deactivated: true.
+    #
+    # If the row itself is missing entirely (all three platforms inactive,
+    # so the sweep never saw the user), we materialize a row from the
+    # snapshot. This is what fixes the "user vanishes when all three are
+    # deactivated" bug.
+    try:
+        snapshots = load_deactivation_snapshots()
+    except Exception as e:
+        print(f"[browse-sweep] failed to load snapshots, skipping restore: {e}")
+        snapshots = {}
+
+    for snap_key, snap in snapshots.items():
+        # Snapshot keys are formatted as "email|platform|project_key" by
+        # _snapshot_key(). Parse it back out.
+        parts = snap_key.split("|", 2)
+        if len(parts) != 3:
+            continue
+        snap_email, snap_platform, snap_project_key = parts
+        if snap_platform not in ("revizto", "forma", "morta"):
+            continue
+        # Only restore for projects we actually swept this round; otherwise
+        # an admin's snapshot from another project would leak into the
+        # current admin's view.
+        if snap_project_key not in project_keys_swept:
+            continue
+
+        # Build the cache-row sub-object by stripping the metadata keys
+        # the snapshot saver added (_name, _email).
+        sub_data = {k: v for k, v in snap.items() if not k.startswith("_")}
+        sub_data["_deactivated"] = True
+
+        rec_key = (snap_email, snap_project_key)
+        rec = rows_by_key.get(rec_key)
+        if rec is None:
+            # Row didn't exist in the sweep result — user is fully off
+            # all three platforms. Materialize the row from the snapshot's
+            # metadata fields so it stays visible.
+            project_name = snap.get("_project_name") or snap_project_key
+            rec = {
+                "email":       snap_email,
+                "name":        snap.get("_name", "") or snap_email,
+                "project_key": snap_project_key,
+                "project_name": project_name,
+                "revizto":     None,
+                "forma":       None,
+                "morta":       None,
+            }
+            rows_by_key[rec_key] = rec
+            rows.append(rec)
+
+        # Only restore if the sweep didn't already find an active sub-object
+        # for this platform — we don't want to overwrite live data.
+        if rec.get(snap_platform) is None:
+            rec[snap_platform] = sub_data
+
     return rows, project_keys_swept
 
 
@@ -5100,9 +5163,10 @@ async def api_browse_toggle(request: Request, user: str = Depends(require_user))
                                     "error": "row or platform sub-object missing"})
                     continue
                 snap_data = dict(row[platform])
-                snap_data["_name"]  = row.get("name", "")
-                snap_data["_email"] = row.get("email", "")
-                snapshots[snap_k]   = snap_data
+                snap_data["_name"]    = row.get("name", "")
+                snap_data["_email"]   = row.get("email", "")
+                snap_data["_project_name"] = row.get("project_name", "")
+                snapshots[snap_k]     = snap_data
                 save_deactivation_snapshots(snapshots)
 
                 ok, detail = _do_deactivate(
@@ -5314,8 +5378,9 @@ async def api_browse_edit(request: Request, user: str = Depends(require_user)):
         # roll back the snapshot if the API delete fails so we don't end
         # up with a phantom snapshot for a still-active user.
         snap_data = dict(row["revizto"])
-        snap_data["_name"]  = row.get("name", "")
-        snap_data["_email"] = row.get("email", "")
+        snap_data["_name"]    = row.get("name", "")
+        snap_data["_email"]   = row.get("email", "")
+        snap_data["_project_name"] = row.get("project_name", "")
         snapshots[rev_snap_key] = snap_data
         save_deactivation_snapshots(snapshots)
 
@@ -5532,8 +5597,9 @@ async def api_browse_edit(request: Request, user: str = Depends(require_user)):
     fo_snap_key   = _snapshot_key(email, "forma", project_key)
     if fo_edits and fo_toggle_off and _is_active("forma"):
         snap_data = dict(row["forma"])
-        snap_data["_name"]  = row.get("name", "")
-        snap_data["_email"] = row.get("email", "")
+        snap_data["_name"]    = row.get("name", "")
+        snap_data["_email"]   = row.get("email", "")
+        snap_data["_project_name"] = row.get("project_name", "")
         snapshots[fo_snap_key] = snap_data
         save_deactivation_snapshots(snapshots)
 
@@ -5679,8 +5745,9 @@ async def api_browse_edit(request: Request, user: str = Depends(require_user)):
     mo_snap_key   = _snapshot_key(email, "morta", project_key)
     if mo_edits and mo_toggle_off and _is_active("morta"):
         snap_data = dict(row["morta"])
-        snap_data["_name"]  = row.get("name", "")
-        snap_data["_email"] = row.get("email", "")
+        snap_data["_name"]    = row.get("name", "")
+        snap_data["_email"]   = row.get("email", "")
+        snap_data["_project_name"] = row.get("project_name", "")
         snapshots[mo_snap_key] = snap_data
         save_deactivation_snapshots(snapshots)
 
