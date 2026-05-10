@@ -6535,6 +6535,14 @@ def build_script_config(user: str) -> dict:
         if ctx.get("revizto_project_uuid"):
             region = ctx.get("revizto_region", "dubai")
             config.setdefault(f"revizto_{region}", {})["project_uuid"] = ctx["revizto_project_uuid"]
+            # Mirror selected scene+model under the same regional block so
+            # scripts that read config["revizto_<region>"]["scene_id"] /
+            # ["model_id"] get the user's pick. Set when the extractions
+            # page Run sends them via /api/extract/stream.
+            if ctx.get("revizto_scene_id"):
+                config[f"revizto_{region}"]["scene_id"] = ctx["revizto_scene_id"]
+            if ctx.get("revizto_model_id"):
+                config[f"revizto_{region}"]["model_id"] = ctx["revizto_model_id"]
         if ctx.get("forma_project_id"):
             config.setdefault("forma", {})["project_id"] = ctx["forma_project_id"]
 
@@ -6934,6 +6942,13 @@ async def api_extract_stream(request: Request, user: str = Depends(require_user)
     body         = await request.json()
     script_name  = body.get("script", "")
     project_uuid = body.get("project_uuid")
+    # Scene + model IDs set when the user picks a Revizto model from the
+    # extractions Fetch Models dropdown. We persist these into the config
+    # the subprocess reads, so scripts that target a specific scene/model
+    # (e.g. Revizto_GET_Object_Tree_With_Properties) use the user's pick
+    # rather than falling back to "first model in project."
+    revizto_scene_id = body.get("revizto_scene_id")
+    revizto_model_id = body.get("revizto_model_id")
 
     # ── Validation (same checks as /api/extract; we just emit them as
     #    SSE events so the client renders them in the terminal). ────────
@@ -6984,6 +6999,20 @@ async def api_extract_stream(request: Request, user: str = Depends(require_user)
             config.setdefault("revizto", {})["project_uuid"] = project_uuid
         elif platform_key == "forma":
             config.setdefault("forma", {})["project_id"] = project_uuid
+        save_config(config, user)
+
+    # Persist Revizto scene+model IDs from the request into the user's
+    # config. The merged config that build_script_config() writes to disk
+    # will carry these under active_context. Scripts that target a
+    # specific scene/model read them from there; without this, they fall
+    # back to "first model in project" and silently ignore the user's pick.
+    if platform_key == "revizto" and (revizto_scene_id or revizto_model_id):
+        config = load_config(user)
+        ctx = config.setdefault("active_context", {})
+        if revizto_scene_id:
+            ctx["revizto_scene_id"] = revizto_scene_id
+        if revizto_model_id:
+            ctx["revizto_model_id"] = revizto_model_id
         save_config(config, user)
 
     # Same env contract as /api/extract, plus PYTHONUNBUFFERED so the

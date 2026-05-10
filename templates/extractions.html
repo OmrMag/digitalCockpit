@@ -977,6 +977,13 @@ async function runExtractor(btn) {
                 script,
                 project_uuid: activeCtx.revizto_project_uuid || activeCtx.forma_project_id || activeCtx.morta_hub_id || null,
                 project_name: activeCtx.revizto_project_name || activeCtx.forma_project_name || activeCtx.morta_hub_name || null,
+                // Pass the user's selected Revizto model when present.
+                // saveReviztoModel() stashes {sceneId, modelId} on
+                // activeCtx._revizto_model. Without these, the script
+                // falls back to 'first model in project' which silently
+                // ignores the user's pick.
+                revizto_scene_id: (activeCtx._revizto_model && activeCtx._revizto_model.sceneId) || null,
+                revizto_model_id: (activeCtx._revizto_model && activeCtx._revizto_model.modelId) || null,
             })
         });
 
