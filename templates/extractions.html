@@ -739,17 +739,44 @@ function populateReviztoModels(models) {
     document.getElementById('revizto-model-bar').style.display = 'flex';
 }
 
-function saveReviztoModel() {
+async function saveReviztoModel() {
     const sel = document.getElementById('reviztoModelSelect');
     const val = sel.value;
     const hasModel = !!val;
+    const name = sel.options[sel.selectedIndex]?.dataset.name || '';
     document.querySelectorAll('#tab-revizto .extractor-card[data-level="3"]').forEach(c => {
         c.classList.toggle('disabled', !hasModel);
     });
-    // Store selected scene/model IDs in activeCtx for runExtractor to pass along
+
+    // Store on activeCtx for any consumer that needs it client-side
+    // (e.g. forward-compatible L4 cards). The legacy select's value is
+    // a JSON-encoded {sceneId, modelId} pair we wrote in populateReviztoModels.
+    let sceneId = '', modelId = '';
     if (hasModel) {
-        try { activeCtx._revizto_model = JSON.parse(val); } catch {}
+        try {
+            const parsed = JSON.parse(val);
+            activeCtx._revizto_model = parsed;
+            sceneId = parsed.sceneId || '';
+            modelId = parsed.modelId || '';
+        } catch {}
+    } else {
+        delete activeCtx._revizto_model;
     }
+
+    // Persist to backend on pick — same pattern as saveModelToConfig
+    // (Forma). This writes scene_id + model_id under config["revizto"],
+    // which Revizto_Config reads when scripts spawn. Run-time POST body
+    // doesn't need to carry these; the config already has them.
+    try {
+        await fetch('/api/context/revizto-model', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ scene_id: sceneId, model_id: modelId, model_name: name }),
+        });
+    } catch (e) {
+        console.warn('Failed to persist revizto model selection:', e);
+    }
+
     // Notify L4 dependency-gating (forward-compatible — no Revizto L4
     // scripts today, but if one's added later it'll re-evaluate
     // automatically without further changes here).
@@ -977,13 +1004,6 @@ async function runExtractor(btn) {
                 script,
                 project_uuid: activeCtx.revizto_project_uuid || activeCtx.forma_project_id || activeCtx.morta_hub_id || null,
                 project_name: activeCtx.revizto_project_name || activeCtx.forma_project_name || activeCtx.morta_hub_name || null,
-                // Pass the user's selected Revizto model when present.
-                // saveReviztoModel() stashes {sceneId, modelId} on
-                // activeCtx._revizto_model. Without these, the script
-                // falls back to 'first model in project' which silently
-                // ignores the user's pick.
-                revizto_scene_id: (activeCtx._revizto_model && activeCtx._revizto_model.sceneId) || null,
-                revizto_model_id: (activeCtx._revizto_model && activeCtx._revizto_model.modelId) || null,
             })
         });
 

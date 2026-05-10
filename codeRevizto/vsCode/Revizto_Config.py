@@ -60,3 +60,30 @@ TOKENS_FILE = os.path.join(EXPORTS_DIR, f"revizto_tokens_{REGION}.json")
 # ── Active project (set by sidebar context selector) ──────────────────────
 PROJECT_UUID = _ctx.get("revizto_project_uuid", "")
 PROJECT_NAME = _ctx.get("revizto_project_name", "")
+
+# ── Active scene + model (set by /extractions Fetch Models dropdown) ──────
+# When the user picks a model from the cockpit's extractions page, the
+# /api/context/revizto-model endpoint persists the selection into
+# config["revizto"]["scene_id"] / ["model_id"] / ["model_name"].
+# This mirrors how Forma persists model_item_id under config["forma"].
+#
+# Scripts that target a specific scene/model (e.g. Object Tree) check
+# these and use them; if absent, they fall back to "first model" so the
+# standalone-from-VS-Code workflow still works.
+#
+# Stored as strings on the wire (JSON-stringified from JS), but Revizto's
+# scene/model IDs are large signed integers. Coerce here so consumers
+# always get an int — or None if not set.
+_revizto_block = _full_cfg.get("revizto", {})
+
+def _coerce_int(val):
+    if val in (None, "", 0):
+        return None
+    try:
+        return int(val)
+    except (TypeError, ValueError):
+        return None
+
+SCENE_ID   = _coerce_int(_revizto_block.get("scene_id"))
+MODEL_ID   = _coerce_int(_revizto_block.get("model_id"))
+MODEL_NAME = _revizto_block.get("model_name", "")
