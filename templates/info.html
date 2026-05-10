@@ -199,11 +199,11 @@
   <!-- CENTRE: FastAPI process -->
   <rect x="220" y="36" width="200" height="320" rx="6" fill="rgba(74,158,255,0.05)" stroke="rgba(74,158,255,0.25)" stroke-dasharray="3,3"/>
   <text x="320" y="52" font-size="9" fill="#4a9eff" font-weight="700" text-anchor="middle">FastAPI app.py</text>
-  <text x="320" y="64" font-size="6.5" fill="rgba(232,237,242,0.5)" text-anchor="middle">uvicorn · Python 3.11 · ~7,500 lines</text>
+  <text x="320" y="64" font-size="6.5" fill="rgba(232,237,242,0.5)" text-anchor="middle">uvicorn · Python 3.11 · ~10,300 lines</text>
 
   <rect x="232" y="78" width="176" height="40" rx="4" fill="rgba(74,158,255,0.13)" stroke="rgba(74,158,255,0.4)"/>
   <text x="320" y="91" font-size="7" fill="#4a9eff" font-weight="700" text-anchor="middle">HTTP / SSE Routes</text>
-  <text x="320" y="101" font-size="6" fill="rgba(232,237,242,0.5)" text-anchor="middle">90+ endpoints · session cookies</text>
+  <text x="320" y="101" font-size="6" fill="rgba(232,237,242,0.5)" text-anchor="middle">100+ endpoints · session cookies</text>
   <text x="320" y="111" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">@alec.ae enforced</text>
 
   <rect x="232" y="124" width="176" height="40" rx="4" fill="rgba(74,158,255,0.13)" stroke="rgba(74,158,255,0.4)"/>
@@ -230,7 +230,7 @@
 
   <rect x="232" y="316" width="176" height="32" rx="4" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.12)"/>
   <text x="320" y="330" font-size="7" fill="rgba(232,237,242,0.7)" font-weight="700" text-anchor="middle">Static Templates</text>
-  <text x="320" y="340" font-size="6" fill="rgba(232,237,242,0.45)" text-anchor="middle">13 Jinja2 pages · sticky sidebar</text>
+  <text x="320" y="340" font-size="6" fill="rgba(232,237,242,0.45)" text-anchor="middle">14 Jinja2 pages · sticky sidebar</text>
 
   <!-- RIGHT: external -->
   <rect x="440" y="36" width="180" height="320" rx="6" fill="rgba(232,237,242,0.04)" stroke="rgba(232,237,242,0.18)" stroke-dasharray="3,3"/>
@@ -280,9 +280,9 @@
 
 <h3>By the numbers</h3>
 <div style="margin:14px 0;">
-  <div class="doc-stat"><span class="num">7,500</span><span class="lbl">app.py lines</span></div>
-  <div class="doc-stat"><span class="num">90+</span><span class="lbl">HTTP routes</span></div>
-  <div class="doc-stat"><span class="num">13</span><span class="lbl">Jinja2 pages</span></div>
+  <div class="doc-stat"><span class="num">10,300</span><span class="lbl">app.py lines</span></div>
+  <div class="doc-stat"><span class="num">100</span><span class="lbl">HTTP routes</span></div>
+  <div class="doc-stat"><span class="num">14</span><span class="lbl">Jinja2 pages</span></div>
   <div class="doc-stat"><span class="num">28</span><span class="lbl">platform scripts</span></div>
   <div class="doc-stat"><span class="num">11</span><span class="lbl">schedulable scripts</span></div>
   <div class="doc-stat"><span class="num">3</span><span class="lbl">SaaS integrations</span></div>
@@ -311,7 +311,7 @@
 <h3>The invariant</h3>
 <p>The Cockpit's master invariant is <strong>process-restart-ability</strong>. At any instant, the process can be killed, redeployed, or moved to another region, and on next request a previously logged-in admin must see exactly what they saw before — same active project, same pending submissions, same scheduled shards, same recent runs. This is achievable only because no fact about the system lives in the process. The process is a stateless interpreter for a state machine whose only durable representation is a set of JSON blobs.</p>
 
-<p>The trade-off is explicit: every read costs a blob fetch. To keep this affordable on the B1 tier (single CPU, 1.75 GB RAM), the system uses a write-through in-process LRU cache via <code>codeShared/Blob_Client.py</code>. Reads hit memory after the first call; writes update both memory and blob synchronously. Cache invalidation is straightforward because there is no cross-process coordination — only one process exists.</p>
+<p>The trade-off is explicit: every read costs a blob fetch. To keep this affordable on the B1 tier (single CPU, 1.75 GB RAM), the system uses a 5-minute TTL cache (a module-level <code>_blob_cache</code> dict in <code>app.py</code>) with explicit invalidation on every write. Reads hit memory after the first call; writes update both memory and blob synchronously. Cache invalidation is straightforward because there is no cross-process coordination — only one process exists.</p>
 
 <h3>State map</h3>
 <p>The diagram below identifies every persistent blob the system writes, what feature owns it, and the access pattern. Read this as the <em>complete</em> set — there is no other persistent state.</p>
@@ -335,7 +335,7 @@
   <line x1="20" y1="28" x2="300" y2="28" stroke="rgba(255,255,255,0.15)"/>
 
   <rect x="20" y="36" width="130" height="40" rx="4" fill="rgba(52,211,153,0.1)" stroke="rgba(52,211,153,0.32)"/>
-  <text x="85" y="49" font-size="7" fill="#34d399" font-weight="700" text-anchor="middle">users.json</text>
+  <text x="85" y="49" font-size="7" fill="#34d399" font-weight="700" text-anchor="middle">admins.json</text>
   <text x="85" y="59" font-size="5.5" fill="rgba(232,237,242,0.5)" text-anchor="middle">admin accounts</text>
   <text x="85" y="68" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">bcrypt hashed passwords</text>
 
@@ -366,9 +366,9 @@
   <text x="415" y="99" font-size="5.5" fill="rgba(232,237,242,0.5)" text-anchor="middle">SHARED 2-legged</text>
   <text x="415" y="108" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">whole cockpit · ~1h ttl</text>
 
-  <rect x="490" y="76" width="130" height="40" rx="4" fill="rgba(251,191,36,0.1)" stroke="rgba(251,191,36,0.35)"/>
-  <text x="555" y="89" font-size="7" fill="#fbbf24" font-weight="700" text-anchor="middle">forma_3l_{safe_email}.json</text>
-  <text x="555" y="99" font-size="5.5" fill="rgba(232,237,242,0.5)" text-anchor="middle">per-admin 3-legged</text>
+  <rect x="490" y="76" width="130" height="40" rx="4" fill="rgba(251,191,36,0.07)" stroke="rgba(251,191,36,0.25)" stroke-dasharray="2,2"/>
+  <text x="555" y="89" font-size="7" fill="#fbbf24" font-weight="700" text-anchor="middle">forma 3l_session</text>
+  <text x="555" y="99" font-size="5.5" fill="rgba(232,237,242,0.5)" text-anchor="middle">embedded in user config</text>
   <text x="555" y="108" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">refresh + access tokens</text>
 
   <line x1="485" y1="116" x2="392" y2="170" stroke="rgba(74,158,255,0.5)" marker-end="url(#s2r)"/>
@@ -389,7 +389,7 @@
   <text x="155" y="308" font-size="5" fill="rgba(232,237,242,0.35)" text-anchor="middle">trigger + shard_ids</text>
 
   <rect x="206" y="276" width="85" height="40" rx="4" fill="rgba(122,167,224,0.13)" stroke="rgba(122,167,224,0.4)"/>
-  <text x="248" y="289" font-size="7" fill="#7aa7e0" font-weight="700" text-anchor="middle">runs.json</text>
+  <text x="248" y="289" font-size="7" fill="#7aa7e0" font-weight="700" text-anchor="middle">automation_runs.json</text>
   <text x="248" y="300" font-size="5" fill="rgba(232,237,242,0.45)" text-anchor="middle">execution history</text>
   <text x="248" y="308" font-size="5" fill="rgba(232,237,242,0.35)" text-anchor="middle">status + outputs</text>
 
@@ -415,7 +415,7 @@
   <text x="415" y="343" font-size="5.5" fill="rgba(232,237,242,0.5)" text-anchor="middle">pending submissions</text>
 
   <rect x="490" y="320" width="130" height="32" rx="4" fill="rgba(122,167,224,0.1)" stroke="rgba(122,167,224,0.32)"/>
-  <text x="555" y="333" font-size="7" fill="#7aa7e0" font-weight="700" text-anchor="middle">packages.json</text>
+  <text x="555" y="333" font-size="7" fill="#7aa7e0" font-weight="700" text-anchor="middle">packages_index.json</text>
   <text x="555" y="343" font-size="5.5" fill="rgba(232,237,242,0.5)" text-anchor="middle">bake snapshots</text>
 
   <rect x="350" y="356" width="270" height="32" rx="4" fill="rgba(122,167,224,0.07)" stroke="rgba(122,167,224,0.25)"/>
@@ -437,8 +437,8 @@
 <p>The B1 tier provides 1.75 GB RAM and a single CPU core. Naively reading every blob on every request would be unacceptable — the cockpit-data container holds dozens of files and a typical page load touches several. The mitigation is two-layered:</p>
 
 <ul style="font-size:11px;color:var(--text-dark);line-height:1.75;margin:8px 0 14px 16px;padding:0;">
-<li style="margin-bottom:6px"><strong>In-process LRU cache.</strong> <code>Blob_Client.py</code> exposes <code>load_json(key)</code> which checks a dict first, fetches from blob on miss, and stores the result with a short TTL (typically 60s, configurable per-call). Cache hits are zero-network and microsecond-fast.</li>
-<li style="margin-bottom:6px"><strong>Write-through invalidation.</strong> <code>save_json(key, data)</code> writes blob first, then updates the in-process cache with the new value. There is no cache-invalidation race because writes update both the source-of-truth and the cache in one synchronous step.</li>
+<li style="margin-bottom:6px"><strong>In-process TTL cache.</strong> A module-level <code>_blob_cache</code> dict in <code>app.py</code> holds <code>(expires_at, data)</code> pairs with a 5-minute TTL. Named loaders like <code>load_registry()</code>, <code>load_config(email)</code>, <code>load_admins()</code>, <code>load_invite_log()</code> wrap <code>_cache_get</code> → <code>blob_read</code> → <code>_cache_set</code>, so cache hits are zero-network and microsecond-fast.</li>
+<li style="margin-bottom:6px"><strong>Explicit invalidation on write.</strong> Every <code>save_*</code> function calls <code>_cache_invalidate(key)</code> after writing the blob, so the next read forces a fresh fetch. The 5-minute TTL only bounds staleness when files are edited out-of-band (e.g. directly in the Azure portal).</li>
 <li><strong>No cross-process coordination.</strong> Because exactly one process owns the cache, no Redis, no etcd, no distributed lock. If we ever scale to multiple workers, the cache becomes incorrect — that's a known constraint and one reason the system stays on B1's single instance.</li>
 </ul>
 
@@ -452,7 +452,7 @@
 </div>
 <div class="doc-card">
   <h4>Subprocess temp files</h4>
-  <p>Per-run merged configs and intermediate L3 outputs land in <code>/tmp/_scheduler/{run_id}/</code> on the App Service filesystem. Lost on restart by design — runs in flight die with the process.</p>
+  <p>Per-run merged configs and intermediate L3 outputs land in <code>{BASE_DIR}/temp/{safe_email}/</code> on the App Service filesystem (24h opportunistic cleanup). Lost on restart by design — runs in flight die with the process.</p>
 </div>
 <div class="doc-card">
   <h4>APScheduler in-memory state</h4>
@@ -462,7 +462,7 @@
 
 <div class="doc-note ok">
 <span class="doc-note-label ok">Operational consequence</span>
-<span>An admin pressing "Restart" in the Azure portal results in zero data loss. Active subprocess runs are killed (their <code>runs.json</code> entry remains in <code>running</code> status until manually pruned), but no shard, compiler, token, or config is ever damaged. Deployments are similarly safe — they're atomic from blob's perspective.</span>
+<span>An admin pressing "Restart" in the Azure portal results in zero data loss. Active subprocess runs are killed (their <code>automation_runs.json</code> entry remains in <code>running</code> status until manually pruned), but no shard, compiler, token, or config is ever damaged. Deployments are similarly safe — they're atomic from blob's perspective.</span>
 </div>
 
 </div>
@@ -486,7 +486,7 @@
 <h3>The contract: COCKPIT_CONFIG</h3>
 <p>Every platform script reads exactly one environment variable: <code>COCKPIT_CONFIG</code>, the path to a JSON file. That file holds, for the executing admin, all credentials and active context the script needs. The script does not know — and does not care — where those credentials came from, whether they're personal or fallback, or whether they had to be refreshed. The script's job is to read the config, call the platform API, and write outputs. The Cockpit's job is to make sure the config in that file is correct at the instant the subprocess starts.</p>
 
-<div class="doc-code"><pre><span class="dc-c">// /tmp/oawad_at_alec_ae/_cockpit_config.json — written by build_script_config()</span>
+<div class="doc-code"><pre><span class="dc-c">// {BASE_DIR}/temp/oawad_at_alec_ae/_cockpit_config.json — written by build_script_config()</span>
 <span class="dc-w">{</span>
   <span class="dc-g">"morta"</span>: <span class="dc-w">{</span> <span class="dc-g">"api_key"</span>: <span class="dc-d">"abc123..."</span> <span class="dc-w">}</span>,
   <span class="dc-g">"revizto"</span>: <span class="dc-w">{</span>
@@ -524,7 +524,7 @@
     <span class="dc-g">"active_context"</span>: user_cfg.active_context
 <span class="dc-w">}</span>
 
-<span class="dc-m">write_to_path</span>(merged, <span class="dc-d">f"/tmp/{safe_email}/_cockpit_config.json"</span>)
+<span class="dc-m">write_to_path</span>(merged, <span class="dc-d">f"{BASE_DIR}/temp/{safe_email}/_cockpit_config.json"</span>)
 subprocess_env[<span class="dc-d">"COCKPIT_CONFIG"</span>] = path</pre></div>
 
 <p>The asymmetry is intentional. Forma's 2-legged credentials are organisation-level, not personal — every admin uses the same client_id to invite users into the same Autodesk account. Putting that secret in every admin's personal config would be wasteful and a key-rotation nightmare. Instead, the owner's config holds the canonical Forma block, and the merger uses it as the fallback for any admin whose own config doesn't override. Revizto and Morta have no such fallback because their credentials are inherently personal — Revizto access codes are tied to specific user accounts, and Morta API keys grant the holder's individual permissions.</p>
@@ -541,7 +541,7 @@ subprocess_env[<span class="dc-d">"COCKPIT_CONFIG"</span>] = path</pre></div>
 <p>Used for: account-level operations, project lists, hub user listings, user invites, model-list walks. The owner's <code>forma</code> block holds <code>client_id</code> and <code>client_secret</code>. <code>get_2legged_token()</code> POSTs to <code>/authentication/v2/token</code> with <code>grant_type=client_credentials</code>, scopes <code>data:read account:read user-profile:read</code>, caches the result in <code>forma_tokens.json</code> (one file, shared across the whole Cockpit, no per-admin namespace). TTL ~1 hour. Refresh is automatic on next call after expiry.</p>
 
 <h4>Forma — 3-legged (per-admin)</h4>
-<p>Required for: anything that hits the Project Index API — model property extraction, in particular. Autodesk's Index API requires a user identity, not a service-account identity. The admin clicks "Connect to Forma" in Settings, gets redirected to Autodesk's authorize endpoint, grants consent, and lands back at <code>/auth/forma/callback</code> with an authorization_code. The Cockpit exchanges that for refresh + access tokens scoped <code>data:read viewables:read account:read user-profile:read</code>, and caches them in <code>forma_3l_{safe_email}.json</code>. The scheduler injects the path to this file into the subprocess via <code>COCKPIT_FORMA_3L_TOKEN_FILE</code> when running model-level scripts.</p>
+<p>Required for: anything that hits the Project Index API — model property extraction, in particular. Autodesk's Index API requires a user identity, not a service-account identity. The admin clicks "Connect to Forma" in Settings, gets redirected to Autodesk's authorize endpoint, grants consent, and lands back at <code>/auth/forma/callback</code> with an authorization_code. The Cockpit exchanges that for refresh + access tokens scoped <code>data:read viewables:read account:read user-profile:read</code>, and stores them in the admin’s <code>config_{safe_email}.json</code> under <code>forma["3l_session"]</code>. Before spawning a subprocess that needs Index API access, <code>prepare_forma_3l_token()</code> refreshes the session if expiring, writes a temporary <code>_forma_3l_token.json</code> into the per-run temp dir, and injects the path via <code>COCKPIT_FORMA_3L_TOKEN_FILE</code>. The persistent session never leaves blob; only the in-flight access token is staged on disk.</p>
 
 <h3>Credential resolution at a glance</h3>
 <div class="doc-table-wrap">
@@ -551,7 +551,7 @@ subprocess_env[<span class="dc-d">"COCKPIT_CONFIG"</span>] = path</pre></div>
 <tr><td><span class="pill r">Revizto</span></td><td>access code in user config</td><td>none — script blocked if missing</td><td><code>revizto_tokens_{region}_{safe_email}.json</code></td><td>auto on expiry; re-exchange on refresh-token expiry</td><td>all Revizto scripts + inline <code>revizto_invite()</code></td></tr>
 <tr><td><span class="pill b">Morta</span></td><td>personal api_key in user config</td><td>none — strictly personal</td><td>none — read directly per call</td><td>n/a</td><td>all Morta scripts + inline <code>morta_invite()</code></td></tr>
 <tr><td><span class="pill bl">Forma 2L</span></td><td>user's forma block, else owner's</td><td>owner's <code>config_oawad_at_alec_ae.json</code></td><td><code>forma_tokens.json</code> (shared)</td><td>auto on expiry</td><td>account, project, hub, invite, model-walk APIs</td></tr>
-<tr><td><span class="pill bl">Forma 3L</span></td><td>per-admin OAuth dance via <code>/auth/forma/start</code></td><td>none — per-admin only</td><td><code>forma_3l_{safe_email}.json</code></td><td>auto via refresh_token; re-OAuth if refresh expired</td><td>Index API: <code>Forma_GET_Model_Properties[_Raw]</code></td></tr>
+<tr><td><span class="pill bl">Forma 3L</span></td><td>per-admin OAuth dance via <code>/auth/forma/start</code></td><td>none — per-admin only</td><td>under <code>config_{safe_email}.json</code> · <code>forma["3l_session"]</code></td><td>auto via refresh_token; re-OAuth if refresh expired</td><td>Index API: <code>Forma_GET_Model_Properties[_Raw]</code></td></tr>
 </tbody>
 </table>
 </div>
@@ -561,7 +561,7 @@ subprocess_env[<span class="dc-d">"COCKPIT_CONFIG"</span>] = path</pre></div>
 
 <div class="doc-note crit">
 <span class="doc-note-label crit">Security invariant</span>
-<span>Scripts never see the owner's config directly. They only ever see the merged JSON written to their own <code>/tmp/{safe_email}/_cockpit_config.json</code>. Even if a script were compromised, it could not enumerate other admins' credentials — its config file contains only one identity's worth of secrets. The owner's config never leaves the FastAPI process boundary.</span>
+<span>Scripts never see the owner's config directly. They only ever see the merged JSON written to their own <code>{BASE_DIR}/temp/{safe_email}/_cockpit_config.json</code>. Even if a script were compromised, it could not enumerate other admins' credentials — its config file contains only one identity's worth of secrets. The owner's config never leaves the FastAPI process boundary.</span>
 </div>
 
 </div>
@@ -632,7 +632,7 @@ subprocess_env[<span class="dc-d">"COCKPIT_CONFIG"</span>] = path</pre></div>
   <!-- Step 3: prepare tokens -->
   <rect x="220" y="170" width="200" height="38" rx="4" fill="rgba(74,158,255,0.13)" stroke="rgba(74,158,255,0.4)"/>
   <text x="320" y="183" font-size="7" fill="#4a9eff" font-weight="700" text-anchor="middle">3. Stage token files for subprocess</text>
-  <text x="320" y="193" font-size="5.5" fill="rgba(232,237,242,0.5)" text-anchor="middle">copy revizto_tokens_*, forma_3l_* into per-run /tmp dir</text>
+  <text x="320" y="193" font-size="5.5" fill="rgba(232,237,242,0.5)" text-anchor="middle">stage revizto_tokens_*, _forma_3l_token.json into temp dir</text>
   <text x="320" y="201" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">subprocess can read but not write back</text>
 
   <line x1="320" y1="208" x2="320" y2="218" stroke="rgba(255,255,255,0.45)" marker-end="url(#x4d)"/>
@@ -674,7 +674,7 @@ subprocess_env[<span class="dc-d">"COCKPIT_CONFIG"</span>] = path</pre></div>
   <!-- Blob outputs -->
   <rect x="460" y="370" width="160" height="42" rx="4" fill="rgba(52,211,153,0.13)" stroke="rgba(52,211,153,0.4)"/>
   <text x="540" y="384" font-size="7" fill="#34d399" font-weight="700" text-anchor="middle">{platform}-exports/</text>
-  <text x="540" y="395" font-size="5.5" fill="rgba(232,237,242,0.5)" text-anchor="middle">runs.json updated · success</text>
+  <text x="540" y="395" font-size="5.5" fill="rgba(232,237,242,0.5)" text-anchor="middle">automation_runs.json updated</text>
   <text x="540" y="403" font-size="5.5" fill="rgba(232,237,242,0.4)" text-anchor="middle">15-day lifecycle policy</text>
 
   <!-- Notes panel -->
@@ -777,6 +777,11 @@ subprocess_env[<span class="dc-d">"COCKPIT_CONFIG"</span>] = path</pre></div>
 
 <h2>cockpitAgent — solving the firewall with claim-based delivery</h2>
 <div class="doc-tagline">A 250-line Python daemon that turns the Cockpit into a viable replacement for in-house file-server scripts, without touching the corporate network configuration.</div>
+
+<div class="doc-note warn">
+<span class="doc-note-label w">Design vs. implementation</span>
+<span>This chapter describes the target architecture. The current implementation is a simpler first-claim-wins variant: a single endpoint <code>POST /api/agent/runs/{run_id}/mark-delivered</code> sets <code>delivered_by</code> on the run record, and <code>GET /api/agent/runs/pending</code> filters out anything already claimed. The full two-step machine (separate claim and confirm transitions, 10-minute stale-claim recovery) is the planned evolution. Treat the state diagram below as the destination, not the present-tense behaviour.</span>
+</div>
 
 <h3>Why this exists</h3>
 <p>BIM coordinator workflows depend on outputs landing in specific local folders. A weekly model health report needs to appear in a Revit-readable directory by 9am Monday so the morning sync routine picks it up. A monthly clash export needs to land on a Power BI ingestion folder. Both targets sit on machines inside ALEC's corporate network, behind a firewall that has no inbound port forwarding for the App Service. The Cockpit cannot push.</p>
@@ -1028,19 +1033,21 @@ subprocess_env[<span class="dc-d">"COCKPIT_CONFIG"</span>] = path</pre></div>
 
 <div class="doc-code"><pre>digitalCockpit/                    <span class="dc-c"># GitHub repo root, deployed via git archive → zip → az webapp deploy</span>
 │
-├── app.py                         <span class="dc-c"># FastAPI server. ~7,500 lines. Owns: all HTTP routes,</span>
+├── app.py                         <span class="dc-c"># FastAPI server. ~10,300 lines. Owns: all HTTP routes,</span>
 │                                  <span class="dc-c">#   inline invite functions (forma/revizto/morta_invite),</span>
 │                                  <span class="dc-c">#   build_script_config, _ensure_l3_prerequisite,</span>
 │                                  <span class="dc-c">#   /api/agent/* token-auth endpoints, SSE streamer.</span>
 ├── requirements.txt               <span class="dc-c"># Pip dependencies. Installed by Azure Oryx on each deploy.</span>
 ├── startup.sh                     <span class="dc-c"># uvicorn app:app --host 0.0.0.0 --port 8000</span>
 │
-├── templates/                     <span class="dc-c"># Jinja2 — 13 pages, all extend base.html</span>
+├── templates/                     <span class="dc-c"># Jinja2 — 14 pages, all extend base.html</span>
 │   ├── base.html                  <span class="dc-c"># Sidebar, nav, sticky project selector, dispatches</span>
 │   │                              <span class="dc-c">#   cockpit:projectChanged event + POST /api/context</span>
 │   ├── home.html                  <span class="dc-c"># Dashboard — invite stats, live activity, member counts</span>
 │   ├── manage.html                <span class="dc-c"># User search, invite modal (21 cells), bulk CSV,</span>
 │   │                              <span class="dc-c">#   invite log, pending submissions panel</span>
+│   ├── browse.html                <span class="dc-c"># Multi-platform user browser with 4-state toggle</span>
+│   │                              <span class="dc-c">#   (active / pending / deactivated / faded)</span>
 │   ├── extractions.html           <span class="dc-c"># Script runner cards + SSE terminal + per-admin downloads</span>
 │   ├── scheduler.html             <span class="dc-c"># Shards / Compilers / Recent Runs tabs · shard builder</span>
 │   ├── agent_tokens.html          <span class="dc-c"># Issue and revoke per-machine cockpitAgent tokens</span>
@@ -1058,7 +1065,7 @@ subprocess_env[<span class="dc-d">"COCKPIT_CONFIG"</span>] = path</pre></div>
 │   └── utils.js                   <span class="dc-c"># Hacker-text scramble · localCache helpers · smartFetch</span>
 │
 ├── codeShared/                    <span class="dc-c"># Engine code shared by app.py and platform scripts</span>
-│   ├── Blob_Client.py             <span class="dc-c"># Azure Blob abstraction — load_json, save_json, LRU cache</span>
+│   ├── Blob_Client.py             <span class="dc-c"># Run-output upload, SAS URL gen, per-platform container routing</span>
 │   ├── Scheduler_Engine.py        <span class="dc-c"># APScheduler boot, cron registration, fire dispatch</span>
 │   └── Scheduler_Runner.py        <span class="dc-c"># Shared run path: build merged config, spawn subprocess,</span>
 │                                  <span class="dc-c">#   collect outputs, finalize record. Used by both</span>
@@ -1114,8 +1121,8 @@ subprocess_env[<span class="dc-d">"COCKPIT_CONFIG"</span>] = path</pre></div>
 
 <dl class="def-list">
 
-<dt>users.json</dt>
-<dd>Admin accounts. <code>{ users: [{ email, password_bcrypt, role, created_at }] }</code>. Role is <code>"owner"</code> or <code>"admin"</code>. Owner is hardcoded by email match in <code>OWNER_EMAIL</code> env var; the role here is informational.</dd>
+<dt>admins.json</dt>
+<dd>Admin accounts. <code>{ "{email}": { password_bcrypt, first_name, cockpit_id, created_at } }</code> — keyed by email at the top level (NOT a list). Owner is matched by email against the hardcoded <code>OWNER_EMAIL</code> constant in app.py. Migrated automatically from legacy <code>users.json</code> on startup; the legacy blob is left in place and can be deleted via the Azure portal once verified.</dd>
 
 <dt>projects_registry.json</dt>
 <dd>Master project list. <code>{ projects: { "{key}": { name, admins: [emails], revizto: {region, project_uuid}, morta: {hub_id, tags: [...]}, forma: {project_id, account_id, companies: [...], roles: [...]}, public_facing: bool } } }</code>. Owner-only writes via /api/registry/*. Admins read-only via /api/projects (filtered to their membership).</dd>
@@ -1132,11 +1139,20 @@ subprocess_env[<span class="dc-d">"COCKPIT_CONFIG"</span>] = path</pre></div>
 <dt>forma_tokens.json</dt>
 <dd>Single shared 2-legged Forma token. <code>{ access_token, expires_at, refreshed_at }</code>. ~1h TTL. NOT namespaced per admin — every admin uses the same cached token because 2-legged is application-level. Refreshed automatically on next call after expiry.</dd>
 
-<dt>forma_3l_{safe_email}.json</dt>
-<dd>Per-admin 3-legged Forma OAuth tokens. <code>{ access_token, refresh_token, expires_at, refreshed_at, scope }</code>. Acquired via /auth/forma/start → callback OAuth dance. Required for Index API calls (model properties). Auto-refreshes via refresh_token; if refresh expired, the admin must re-authorize via Settings.</dd>
+<dt>config_{safe_email}.json · forma["3l_session"]</dt>
+<dd>Per-admin 3-legged Forma OAuth state, stored INSIDE the admin’s config blob (NOT a separate file). Schema: <code>{ access_token, refresh_token, expires_at, scope }</code>. Acquired via /auth/forma/start → callback OAuth dance. Required for Index API calls (model properties). At subprocess spawn time, <code>prepare_forma_3l_token()</code> refreshes if needed and stages a temporary <code>_forma_3l_token.json</code> in the per-run temp dir, injected via <code>COCKPIT_FORMA_3L_TOKEN_FILE</code>. The persistent session never leaves blob.</dd>
 
 <dt>forma_models_cache.json</dt>
 <dd>Per-project Forma model lists. <code>{ "{project_id}": { models: [{id, name, path, parent_folder}], cached_at } }</code>. Populated by <code>POST /api/forma/models</code> which walks the project's folder structure. The "Shared" folder filter is enforced server-side. Force-refreshes on demand via the same endpoint with refresh=true.</dd>
+
+<dt>browse_users_cache.json</dt>
+<dd>Shared cross-platform user index that powers the Browse page. <code>{ rows: [...], updated_at, updated_by }</code>. Each row carries an email plus per-platform presence (Morta/Revizto/Forma) for every project the requesting admin has access to. Rebuilt by <code>POST /api/browse/refresh</code>, which sweeps the calling admin’s projects via live API calls and delete-and-replaces the rows scoped to those project keys. Reads cached via the standard 5-minute TTL.</dd>
+
+<dt>deactivation_snapshots.json</dt>
+<dd>Preserved-row store keyed by <code>{email}|{platform}|{project_key}</code>. When an admin deactivates a user via Browse, the live row sub-object is captured here so a faded/deactivated row remains visible (with grey/faded styling) instead of disappearing entirely. Lets the UI show all four states — active / pending / deactivated / faded — even after the user is gone from the platform.</dd>
+
+<dt>revizto_project_roles_by_project.json</dt>
+<dd>Per-project Revizto role catalogue. <code>{ "{project_key}": { project_uuid, region, roles: [{uuid, name, ...}], synced_at } }</code>. Populated by <code>POST /api/registry/project/{key}/sync</code>, which calls Revizto’s project-level roles endpoint and embeds a lightweight <code>[{uuid, name}]</code> list back into the registry for fast UI lookups. Distinct from the license-level <code>revizto_project_roles.json</code> produced by the extraction script.</dd>
 
 <dt>shards.json</dt>
 <dd>Scheduler shards. <code>{ shards: [{ id, name, owner_user, platform, script, context: {...}, output: {formats, prefix, naming, custom_name}, destination: {type, local_path?}, active, in_compiler, created_at, consecutive_failures, auto_disabled }] }</code>. Context snapshots project_id/model_id/project_name at save time so historical runs aren't affected by registry changes.</dd>
@@ -1144,7 +1160,7 @@ subprocess_env[<span class="dc-d">"COCKPIT_CONFIG"</span>] = path</pre></div>
 <dt>compilers.json</dt>
 <dd>Scheduler compilers. <code>{ compilers: [{ id, name, owner_user, schedule: {kind, cron|preset}, shard_ids: [], active, created_at }] }</code>. APScheduler reads this on startup and registers a CronTrigger per active compiler.</dd>
 
-<dt>runs.json</dt>
+<dt>automation_runs.json</dt>
 <dd>Run history. <code>{ runs: [{ id, kind: "shard"|"compiler", shard_id?, compiler_id?, parent_compiler_run_id?, owner_user, started_at, finished_at, status: "running"|"success"|"failed"|"partial", exit_code, stdout_tail: [], output_blobs: [{filename, size_bytes, blob_url}], destination: {...}, delivery_state: "pending"|"claimed_by:{tid}"|"delivered", claim_timestamp?, delivery_timestamp?, error? }] }</code>. Append-only with periodic prune (manual). Compiler runs are parent rows; child shard runs reference them via parent_compiler_run_id.</dd>
 
 <dt>agent_tokens.json</dt>
@@ -1156,7 +1172,7 @@ subprocess_env[<span class="dc-d">"COCKPIT_CONFIG"</span>] = path</pre></div>
 <dt>portal_requests.json</dt>
 <dd>Pending portal submissions. <code>{ "{project_key}": [{ submission_idx, submitted_at, contact: {name, email, company, dept}, requested_platforms: [], requested_role_revizto?, requested_tag_morta?, requested_company_forma?, requested_role_forma?, status: "pending"|"processed"|"rejected", processed_by?, processed_at? }] }</code>. Indexed by project key for fast scope filtering on Manage Users.</dd>
 
-<dt>packages.json</dt>
+<dt>packages_index.json</dt>
 <dd>Bake feature — saved snapshot manifests. <code>{ packages: [{ id, name, owner_user, created_at, files: [{filename, blob_url, size_bytes, run_id?}] }] }</code>. Orthogonal to the run lifecycle; admins explicitly bake a set of files into a named package for later retrieval.</dd>
 
 </dl>
@@ -1167,7 +1183,7 @@ subprocess_env[<span class="dc-d">"COCKPIT_CONFIG"</span>] = path</pre></div>
 
 <h3>7.3 · HTTP routes — every endpoint, grouped by concern</h3>
 
-<p>92 routes total. The auth column shows: <code>session</code> (cookie-based, requires logged-in admin), <code>token</code> (cockpitAgent bearer token), <code>public</code> (no auth, deliberately public). Owner-only routes additionally check OWNER_EMAIL match.</p>
+<p>100 routes total. The auth column shows: <code>session</code> (cookie-based, requires logged-in admin), <code>token</code> (cockpitAgent bearer token), <code>public</code> (no auth, deliberately public). Owner-only routes additionally check OWNER_EMAIL match.</p>
 
 <div class="doc-table-wrap">
 <table class="doc-table compact">
@@ -1185,14 +1201,15 @@ subprocess_env[<span class="dc-d">"COCKPIT_CONFIG"</span>] = path</pre></div>
 <tr><td rowspan="5"><strong>Forma OAuth (3-legged)</strong></td>
 <td><code>GET /auth/forma/start</code></td><td>session</td><td>Redirect to Autodesk authorize endpoint with state nonce</td></tr>
 <tr><td><code>GET /auth/forma/callback</code></td><td>session</td><td>Receive authorization_code, exchange for tokens, cache to blob</td></tr>
-<tr><td><code>POST /auth/forma/disconnect</code></td><td>session</td><td>Delete the admin's forma_3l_*.json</td></tr>
+<tr><td><code>POST /auth/forma/disconnect</code></td><td>session</td><td>Clear the admin’s <code>forma["3l_session"]</code> in their config</td></tr>
 <tr><td><code>GET /api/auth/forma/status</code></td><td>session</td><td>{ connected: bool, expires_at, scope } for Settings UI</td></tr>
 <tr><td><code>GET /api/l4/status</code></td><td>session</td><td>Returns L4 dependency stamps for Extractions UI gate</td></tr>
 
-<tr><td rowspan="3"><strong>Active context</strong></td>
+<tr><td rowspan="4"><strong>Active context</strong></td>
 <td><code>GET /api/context</code></td><td>session</td><td>Read active_context from user's config</td></tr>
 <tr><td><code>POST /api/context</code></td><td>session</td><td>Persist active project + IDs to user's config</td></tr>
-<tr><td><code>POST /api/context/model</code></td><td>session</td><td>Persist active model selection (extractions/scheduler)</td></tr>
+<tr><td><code>POST /api/context/model</code></td><td>session</td><td>Persist active Forma model selection</td></tr>
+<tr><td><code>POST /api/context/revizto-model</code></td><td>session</td><td>Persist active Revizto scene+model selection (writes <code>config["revizto"][“scene_id”/“model_id”/“model_name”]</code>)</td></tr>
 
 <tr><td rowspan="4"><strong>Projects · Registry</strong></td>
 <td><code>GET /api/projects</code></td><td>session</td><td>List projects this admin has access to (filtered by registry.admins[])</td></tr>
@@ -1225,6 +1242,12 @@ subprocess_env[<span class="dc-d">"COCKPIT_CONFIG"</span>] = path</pre></div>
 <tr><td rowspan="2"><strong>User search</strong></td>
 <td><code>GET /api/user/search</code></td><td>session</td><td>Cross-platform lookup by email</td></tr>
 <tr><td><code>GET /api/_diag/revizto/{project_key}</code><br><code>GET /api/debug/revizto[/projects]</code></td><td>session</td><td>Diagnostics — verify Revizto connectivity per project</td></tr>
+
+<tr><td rowspan="4"><strong>Browse</strong></td>
+<td><code>GET /api/browse/projects</code></td><td>session</td><td>Project list filtered to admin’s membership, with row counts</td></tr>
+<tr><td><code>GET /api/browse/users</code></td><td>session</td><td>Read shared cache; filter rows by selected project + 4-state toggle (active/pending/deactivated/faded)</td></tr>
+<tr><td><code>POST /api/browse/bootstrap</code></td><td>session</td><td>Initial cache fill if empty (lighter sweep than /refresh)</td></tr>
+<tr><td><code>POST /api/browse/refresh</code></td><td>session</td><td>Sweep all admin’s projects via live API calls; delete-and-replace rows scoped to swept project_keys</td></tr>
 
 <tr><td rowspan="6"><strong>Extractions</strong></td>
 <td><code>GET /api/scheduler/scripts</code></td><td>session</td><td>SCRIPT_CATALOG dump for UI</td></tr>
@@ -1266,11 +1289,12 @@ subprocess_env[<span class="dc-d">"COCKPIT_CONFIG"</span>] = path</pre></div>
 <td><code>GET /settings</code><br><code>POST /settings</code></td><td>session</td><td>Read + persist personal credentials</td></tr>
 <tr><td><code>GET /api/test-email</code></td><td>owner</td><td>Send a test email via Azure Communication Services</td></tr>
 
-<tr><td rowspan="11"><strong>Static pages (HTML)</strong></td>
+<tr><td rowspan="12"><strong>Static pages (HTML)</strong></td>
 <td><code>GET /home</code></td><td>session</td><td>Dashboard</td></tr>
 <tr><td><code>GET /manage</code></td><td>session</td><td>Manage Users</td></tr>
 <tr><td><code>GET /extractions</code></td><td>session</td><td>Extractions runner</td></tr>
 <tr><td><code>GET /scheduler</code></td><td>session</td><td>Scheduler tabs</td></tr>
+<tr><td><code>GET /browse</code></td><td>session</td><td>Cross-platform user browser · 4-state toggle UI</td></tr>
 <tr><td><code>GET /agent-tokens</code></td><td>session</td><td>cockpitAgent token mgmt</td></tr>
 <tr><td><code>GET /registry</code></td><td>owner</td><td>Project registry (read-only for non-owners)</td></tr>
 <tr><td><code>GET /packages</code></td><td>session</td><td>Bake / packages</td></tr>
@@ -1285,29 +1309,28 @@ subprocess_env[<span class="dc-d">"COCKPIT_CONFIG"</span>] = path</pre></div>
 
 <h3>7.4 · Environment variables</h3>
 
-<p>All set in Azure App Service → Configuration → Environment variables. Cockpit reads them at startup via <code>os.environ.get()</code>. There is no <code>.env</code> file in the repo and no fallback values for secrets.</p>
+<p>Set in Azure App Service → Configuration → Environment variables. There is no <code>.env</code> file in the repo. Two of the four secrets the cockpit needs (<code>SECRET_KEY</code> and <code>OWNER_EMAIL</code>) are currently hardcoded as constants in <code>app.py</code>; the rest come from environment.</p>
+
+<div class="doc-note warn">
+<span class="doc-note-label w">Hardcoded today</span>
+<span><code>SECRET_KEY</code> (cookie signer) and <code>OWNER_EMAIL</code> live as Python constants in <code>app.py</code>, not env vars. Rotating either currently means committing a code change. Moving them to environment is a small follow-up but not done yet.</span>
+</div>
 
 <dl class="def-list">
-<dt>SECRET_KEY</dt>
-<dd>Used to sign session cookies. Long random string. Rotating it logs everyone out. Must be the same across deploys to keep sessions valid.</dd>
-
-<dt>OWNER_EMAIL</dt>
-<dd>The email of the cockpit owner. Currently <code>oawad@alec.ae</code>. The admin matching this email gets owner privileges (registry CRUD, registry sync-all, test-email). Their config_*.json is also the source of Forma 2-legged fallback credentials.</dd>
-
 <dt>AZURE_STORAGE_CONNECTION_STRING</dt>
-<dd>Full connection string for the storage account. Includes the account key. Used by Blob_Client.py to connect.</dd>
+<dd>Full connection string for the <code>cockpitdatastorage</code> account, including the account key. Read once at startup and passed to <code>BlobServiceClient.from_connection_string()</code>. If unset, the app silently falls back to local-disk storage — useful for VS Code dev runs, dangerous in production.</dd>
 
-<dt>FORMA_REDIRECT_URI</dt>
-<dd>Must exactly match the redirect URI registered in the Autodesk app. Currently <code>https://digitalcockpit-alec.azurewebsites.net/auth/forma/callback</code>. Mismatched values silently break the OAuth callback.</dd>
-
-<dt>EMAIL_CONNECTION_STRING</dt>
-<dd>Azure Communication Services connection string. Used to send portal confirmation emails. Set blank to disable email sending (cockpit will log instead).</dd>
+<dt>AZURE_COMMUNICATION_CONNECTION_STRING</dt>
+<dd>Azure Communication Services connection string. Used to send portal confirmation emails. Set blank to disable email sending (the cockpit will log the would-have-sent payload to stdout instead).</dd>
 
 <dt>EMAIL_FROM</dt>
-<dd>The verified sender address registered with ACS. Currently <code>donotreply@cockpit.alec.ae</code>.</dd>
+<dd>The verified sender address registered with ACS. Defaults to <code>DoNotReply@azurecomm.net</code> if unset — fine for testing, should be replaced with the verified domain in production.</dd>
 
 <dt>WEBSITE_TIME_ZONE</dt>
-<dd>Set to <code>Asia/Dubai</code>. APScheduler uses this for cron evaluation. Without it cron schedules would be in UTC, which is unintuitive for ALEC's Dubai-based admins.</dd>
+<dd>Set to <code>Asia/Dubai</code>. APScheduler uses this for cron evaluation. Without it cron schedules would run in UTC, which is unintuitive for ALEC’s Dubai-based admins.</dd>
+
+<dt>FORMA_REDIRECT_URI <span style="font-weight:400;color:var(--text-dark-muted)">(computed, not env)</span></dt>
+<dd>Built dynamically from the inbound request scheme + host (<code>{scheme}://{host}/auth/forma/callback</code>). Currently resolves to <code>https://digitalcockpit-alec.azurewebsites.net/auth/forma/callback</code> in production. Whatever value is computed must exactly match the URI registered on the Autodesk app, or the OAuth callback breaks silently.</dd>
 </dl>
 
 <h3>7.5 · External APIs — endpoints, auth, quirks</h3>
@@ -1402,12 +1425,12 @@ subprocess_env[<span class="dc-d">"COCKPIT_CONFIG"</span>] = path</pre></div>
 
 <h3>7.6 · SCRIPT_CATALOG (canonical schedulable scripts)</h3>
 
-<p>Located in app.py around line 692. This dict is the source of truth for which scripts can be scheduled. Adding a new schedulable script requires adding an entry here AND ensuring the .py file exists in the platform directory.</p>
+<p>Located in app.py around line 741. This dict is the source of truth for which scripts can be scheduled. Adding a new schedulable script requires adding an entry here AND ensuring the .py file exists in the platform directory.</p>
 
 <div class="doc-code"><pre>SCRIPT_CATALOG = <span class="dc-w">{</span>
   <span class="dc-g">"Forma_GET_Models"</span>: {
     <span class="dc-g">"platform"</span>:         <span class="dc-d">"forma"</span>,
-    <span class="dc-g">"display_name"</span>:     <span class="dc-d">"Project Models"</span>,
+    <span class="dc-g">"display_name"</span>:     <span class="dc-d">"Models list"</span>,
     <span class="dc-g">"required_context"</span>: [<span class="dc-d">"project_id"</span>],
   },
   <span class="dc-g">"Forma_GET_Model_Properties"</span>: {
@@ -1437,7 +1460,7 @@ subprocess_env[<span class="dc-d">"COCKPIT_CONFIG"</span>] = path</pre></div>
 
 <h3>7.7 · L4_DEPENDENCIES</h3>
 
-<p>Dependency graph for scripts whose execution requires another script's output. Located in app.py near line 4486.</p>
+<p>Dependency graph for scripts whose execution requires another script’s output. Located in app.py near line 7304.</p>
 
 <div class="doc-code"><pre>L4_DEPENDENCIES = <span class="dc-w">{</span>
   <span class="dc-g">"Proccesed_Model_Properties"</span>: <span class="dc-w">{</span>
@@ -1453,9 +1476,11 @@ subprocess_env[<span class="dc-d">"COCKPIT_CONFIG"</span>] = path</pre></div>
 
 <h3>7.8 · FORMA_L1_SCRIPTS (bake-blocked list)</h3>
 
-<p>List of scripts whose outputs the bake feature refuses to snapshot. Located in app.py near line 4486. These scripts produce metadata-only outputs (e.g., 2L/3L token status checks) that aren't useful as historical artifacts.</p>
+<p>List of scripts whose outputs the bake feature refuses to snapshot. Located in app.py near line 7273. These scripts produce metadata-only outputs (e.g., 2L/3L token status checks) that aren't useful as historical artifacts.</p>
 
 <div class="doc-code"><pre>FORMA_L1_SCRIPTS = <span class="dc-w">{</span>
+  <span class="dc-d">"Forma_GET_Account_Projects"</span>,
+  <span class="dc-d">"Forma_GET_Hub_Users"</span>,
   <span class="dc-d">"Forma_GET_2L_Status"</span>,
   <span class="dc-d">"Forma_GET_3L_Status"</span>,
 <span class="dc-w">}</span></pre></div>
@@ -1556,7 +1581,7 @@ az webapp deploy \
 <dd>The full set of context the cockpit needs to act on the active project: project_key, plus the platform-specific IDs (revizto_project_uuid, morta_hub_id, forma_project_id) and any model selection. Persisted alongside the active project key.</dd>
 
 <dt>Admin (vs. owner)</dt>
-<dd>An admin is anyone with a session in users.json and an @alec.ae email. The owner is the single admin whose email matches OWNER_EMAIL — they additionally have registry write access and own the canonical Forma 2-legged credentials.</dd>
+<dd>An admin is anyone with an account in admins.json and an @alec.ae email. The owner is the single admin whose email matches OWNER_EMAIL — they additionally have registry write access and own the canonical Forma 2-legged credentials.</dd>
 
 <dt>L3 / L4</dt>
 <dd>Internal labels for Forma extraction layers. L3 = raw model property fetch from Autodesk's Index API. L4 = downstream report consuming L3's output. The dependency between them is encoded in <code>L4_DEPENDENCIES</code>.</dd>
