@@ -2078,11 +2078,30 @@ def forma_invite(email, config, project_id=None, company_id: str = None,
         user_entry["roleIds"] = role_ids
 
     payload  = {"users": [user_entry], "suppressAdministrativeEmails": False}
+
+    # Diagnostic logging — emitted to Azure Log Stream. Helps when Forma
+    # returns 403/404 with no detail. Token is fingerprinted (first 8 +
+    # last 4 chars) so logs aren't a credential leak risk.
+    _tok_fp = f"{token[:8]}...{token[-4:]}" if token and len(token) > 12 else "(short)"
+    print(f"[forma_invite] POST /admin/v2/projects/{pid}/users:import")
+    print(f"[forma_invite]   User-Id: {fc['admin_user_id']}")
+    print(f"[forma_invite]   account_id: {fc.get('account_id')}")
+    print(f"[forma_invite]   bearer_fp: {_tok_fp}")
+    print(f"[forma_invite]   payload: {json.dumps(payload)[:400]}")
+
     response = http_requests.post(
         f"https://developer.api.autodesk.com/construction/admin/v2/projects/{pid}/users:import",
         headers=headers, json=payload, timeout=30
     )
-    if response.status_code in (200, 202): return {"status": "success"}
+    if response.status_code in (200, 202):
+        print(f"[forma_invite]   -> {response.status_code} OK")
+        return {"status": "success"}
+
+    # On failure, log enough to disambiguate scope/role/account issues.
+    # Forma returns a request-id and sometimes scope details in the body.
+    print(f"[forma_invite]   -> {response.status_code} FAIL")
+    print(f"[forma_invite]   response headers: x-ads-request-id={response.headers.get('x-ads-request-id','')} content-type={response.headers.get('content-type','')}")
+    print(f"[forma_invite]   response body: {response.text[:500]}")
     return {"status": "error", "detail": f"{response.status_code}: {response.text[:200]}"}
 
 
@@ -5278,6 +5297,34 @@ def _trim_row_for_wire(row: dict) -> dict:
     return out
 
 
+def _dedupe_browse_rows(rows: list[dict]) -> list[dict]:
+    """Collapse duplicate (email, project_key) pairs to a single row.
+
+    The browse cache should hold one row per (email, project_key) but
+    historic writes can leak duplicates — e.g. when a project_key was
+    renamed in the registry and an old sweep wrote rows under the old
+    key while a new sweep adds rows under the new key. The delete-and-
+    replace logic in /api/browse/refresh keys by project_key alone, so
+    pairs that drift across project_key changes survive forever.
+
+    Strategy: iterate in order, keep the LAST occurrence per pair.
+    Sweeps append at the end (`merged = kept + rows_new`), so the latest
+    row wins. Email is lowercased for the comparison key only; the row's
+    stored email is preserved verbatim. Order otherwise preserved.
+
+    Cheap enough to call on every read (O(N) with N ~4-5k).
+    """
+    seen: dict = {}                       # (email_lower, project_key) -> last index
+    for i, r in enumerate(rows):
+        em = (r.get("email") or "").lower()
+        pk = r.get("project_key") or ""
+        if not em or not pk:
+            continue
+        seen[(em, pk)] = i
+    keep_idx = set(seen.values())
+    return [r for i, r in enumerate(rows) if i in keep_idx]
+
+
 @app.get("/api/browse/users")
 async def api_browse_users(user: str = Depends(require_user)):
     """Read-only cache reader. Returns rows the current admin has scope
@@ -5298,7 +5345,7 @@ async def api_browse_users(user: str = Depends(require_user)):
     """
     loop = asyncio.get_event_loop()
     cache = await loop.run_in_executor(None, load_browse_cache)
-    all_rows = cache.get("rows") or []
+    all_rows = _dedupe_browse_rows(cache.get("rows") or [])
 
     if is_owner(user):
         visible = all_rows
@@ -5360,7 +5407,7 @@ async def api_browse_bootstrap(user: str = Depends(require_user)):
         scoped_registry = {k: v for k, v in registry.items() if user in v.get("admins", [])}
 
     # Scope the cache rows the same way /api/browse/users does.
-    all_rows = cache.get("rows") or []
+    all_rows = _dedupe_browse_rows(cache.get("rows") or [])
     if is_owner(user):
         visible = all_rows
     else:
@@ -5400,7 +5447,7 @@ async def api_browse_refresh(user: str = Depends(require_user)):
     existing = cache.get("rows") or []
 
     kept = [r for r in existing if r.get("project_key") not in project_keys_swept]
-    merged = kept + rows_new
+    merged = _dedupe_browse_rows(kept + rows_new)
 
     cache["rows"]       = merged
     cache["updated_at"] = datetime.now(timezone.utc).isoformat()
