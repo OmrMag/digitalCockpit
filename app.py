@@ -3694,6 +3694,35 @@ async def api_registry_get(user: str = Depends(require_user)):
     user_registry = {k: v for k, v in registry.items() if user in v.get("admins", [])}
     return JSONResponse(user_registry)
 
+
+@app.get("/api/_diag/registry-dups")
+async def api_diag_registry_dups(user: str = Depends(require_owner)):
+    """Diagnostic: find projects whose display name appears more than once.
+    Helps detect cases where two registry entries share a name (different
+    project_keys, same human label) — which produces visible duplicate
+    rows on Browse.
+    """
+    registry = load_registry()
+    by_name: dict = {}
+    for k, v in registry.items():
+        name = (v.get("name") or "").strip()
+        by_name.setdefault(name.lower(), []).append({
+            "key":       k,
+            "name":      v.get("name", ""),
+            "admins":    v.get("admins", []),
+            "platforms": {
+                "revizto": (v.get("platforms", {}) or {}).get("revizto", {}).get("project_uuid", ""),
+                "forma":   (v.get("platforms", {}) or {}).get("forma", {}).get("project_id", ""),
+                "morta":   (v.get("platforms", {}) or {}).get("morta", {}).get("hub_id", ""),
+            },
+        })
+    dups = {name: entries for name, entries in by_name.items() if len(entries) > 1}
+    return JSONResponse({
+        "total_projects":         len(registry),
+        "duplicate_name_count":   len(dups),
+        "duplicates":             dups,
+    })
+
 @app.post("/api/registry/project")
 async def api_registry_create(request: Request, user: str = Depends(require_owner)):
     body = await request.json()
@@ -4330,10 +4359,20 @@ def _sweep_browse_rows(user: str):
     admin_projects = registry if is_owner(user) else {
         k: v for k, v in registry.items() if user in v.get("admins", [])
     }
+    # UUID-to-key lookups are built from the FULL registry, not the per-admin
+    # filtered subset. Reason: when a non-owner admin sweeps, they may have
+    # license-level access to projects they aren't a registered admin of —
+    # `fetch_revizto_projects()` still returns those projects from Revizto's
+    # API. Without the full-registry lookup, those projects fall through to
+    # a synthetic `revizto:{uuid}` key (the fallback at line ~4581) and end
+    # up as DUPLICATES of the same project's `rak-central`-style row written
+    # by another admin's sweep. The membership filter only determines what
+    # the admin sees on Browse — it should NOT determine what key a project's
+    # rows are stored under, which is a global concept.
     rev_uuid_to_key  = {}
     forma_id_to_key  = {}
     morta_hub_to_key = {}
-    for k, rp in admin_projects.items():
+    for k, rp in registry.items():
         plats = rp.get("platforms", {}) or {}
         rev   = plats.get("revizto", {}) or {}
         forma = plats.get("forma", {})   or {}
