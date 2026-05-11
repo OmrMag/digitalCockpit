@@ -1205,7 +1205,13 @@ def forma_get_token(config) -> str:
                     "grant_type":    "client_credentials",
                     "client_id":     client_id,
                     "client_secret": client_secret,
-                    "scope":         "account:read account:write data:read",
+                    # account:read/write — Account Admin v1 endpoints (companies, projects)
+                    # data:read         — Data Management API (folder walks, model lists)
+                    # user-profile:read — required for Project Admin v2 user-management
+                    #                     endpoints (:import, PATCH users). Without it,
+                    #                     POST .../users:import returns 403 Forbidden with
+                    #                     empty x-ads-request-id and a bare "Forbidden" body.
+                    "scope":         "account:read account:write data:read user-profile:read",
                 },
                 timeout=15,
             )
@@ -5210,10 +5216,29 @@ def _do_reactivate(user, config, email, platform, project_key, proj, snap):
         fpid = forma.get("project_id", "")
         if not fpid:
             return False, "Forma project_id not in registry"
+        # Build the products array from what the snapshot actually
+        # captured. A value of "none" or empty string means the user
+        # was NOT subscribed to that product — don't ask Forma to
+        # re-add it, or Forma returns 403 Forbidden (with empty
+        # x-ads-request-id) when the company/project hasn't licensed
+        # that product or when the value isn't allowed.
+        #
+        # Truthy values from the sweep are access levels like
+        # "administrator" or "member" — preserve "administrator" if
+        # that's what was saved, otherwise default to "member".
+        def _keep(val):
+            return bool(val) and val != "none"
+
+        def _access(val):
+            return val if val in ("administrator", "member") else "member"
+
         products = []
-        if snap.get("docs"):    products.append({"key": "docs",                "access": "member"})
-        if snap.get("design"):  products.append({"key": "designCollaboration", "access": "member"})
-        if snap.get("model"):   products.append({"key": "modelCoordination",   "access": "member"})
+        if _keep(snap.get("docs")):
+            products.append({"key": "docs",                "access": _access(snap.get("docs"))})
+        if _keep(snap.get("design")):
+            products.append({"key": "designCollaboration", "access": _access(snap.get("design"))})
+        if _keep(snap.get("model")):
+            products.append({"key": "modelCoordination",   "access": _access(snap.get("model"))})
         if not products:
             products = [{"key": "docs", "access": "member"}]
         result = forma_invite(
