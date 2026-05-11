@@ -3263,10 +3263,36 @@ async def portal_submit(
         if file.filename.endswith(".csv"):
             df = pd.read_csv(io.BytesIO(contents))
         else:
-            df = pd.read_excel(io.BytesIO(contents), header=1)
+            # Auto-detect the header row. Real-world submissions vary:
+            #   - some templates put the column headers in row 1
+            #   - some prefix a decorative title ("Project Access User
+            #     Directory") in row 1 and put headers in row 2
+            # Scan the first 5 rows; the header row is the first one
+            # that contains an "Email" cell (case-insensitive).
+            raw = pd.read_excel(io.BytesIO(contents), header=None, nrows=5)
+            header_row = 0
+            for i in range(len(raw)):
+                row_vals = [str(v).strip().lower() for v in raw.iloc[i].values if pd.notna(v)]
+                if "email" in row_vals:
+                    header_row = i
+                    break
+            df = pd.read_excel(io.BytesIO(contents), header=header_row)
         df.columns = df.columns.str.strip()
+        # Collapse internal double-spaces in headers ("Last  Name" -> "Last Name")
+        df.columns = df.columns.str.replace(r"\s+", " ", regex=True)
     except Exception as e:
         return JSONResponse({"status": "error", "detail": str(e)}, status_code=400)
+
+    # Truthy detector tolerant to YES/yes/Y/TRUE/True/1/X and the
+    # equivalent native boolean values openpyxl returns when the
+    # spreadsheet uses real checkbox cells.
+    def _is_yes(val):
+        if val is True:
+            return True
+        if val is False or val is None:
+            return False
+        s = str(val).strip().upper()
+        return s in ("YES", "Y", "TRUE", "1", "X", "✓")
 
     users = []
     for _, row in df.iterrows():
@@ -3276,15 +3302,19 @@ async def portal_submit(
         def clean(val):
             s = str(val).strip()
             return "" if s == "nan" else s
+        # Tolerate column-name variants seen in the wild:
+        #   - "Department" / "Despartment" (typo in original template)
+        #   - "Last Name" / "Last  Name" (now collapsed by regex above
+        #     but kept as defensive fallback)
         users.append({
             "email":               email,
             "first_name":          clean(row.get("First Name", "")),
-            "last_name":           clean(row.get("Last  Name", row.get("Last Name", ""))),
+            "last_name":           clean(row.get("Last Name", row.get("Last  Name", ""))),
             "company":             clean(row.get("Company", "")),
-            "department":          clean(row.get("Department", "")),
-            "morta":               clean(row.get("Morta Access",   "")).upper() == "YES",
-            "revizto":             clean(row.get("Revizto Access", "")).upper() == "YES",
-            "forma":               clean(row.get("ACC Access",     "")).upper() == "YES",
+            "department":          clean(row.get("Department", row.get("Despartment", ""))),
+            "morta":               _is_yes(row.get("Morta Access")),
+            "revizto":             _is_yes(row.get("Revizto Access")),
+            "forma":               _is_yes(row.get("ACC Access")),
             "project_id":          project_id,
             "project_name":        reg_name,
             "submitted_by_name":   submitter_name,
@@ -8987,8 +9017,20 @@ async def api_invite_preview(file: UploadFile = File(...), user: str = Depends(r
     if file.filename.endswith(".csv"):
         df = pd.read_csv(io.BytesIO(contents))
     else:
-        df = pd.read_excel(io.BytesIO(contents), header=1)
+        # Auto-detect the header row — same logic as portal_submit().
+        # Some templates put column headers in row 1, others have a
+        # decorative title in row 1 with headers in row 2.
+        raw = pd.read_excel(io.BytesIO(contents), header=None, nrows=5)
+        header_row = 0
+        for i in range(len(raw)):
+            row_vals = [str(v).strip().lower() for v in raw.iloc[i].values if pd.notna(v)]
+            if "email" in row_vals:
+                header_row = i
+                break
+        df = pd.read_excel(io.BytesIO(contents), header=header_row)
     df.columns = df.columns.str.strip()
+    # Collapse internal multi-spaces in headers ("Last  Name" -> "Last Name")
+    df.columns = df.columns.str.replace(r"\s+", " ", regex=True)
 
     # Resolve registry-backed lookups for the ACTIVE project so name -> id
     # mapping happens server-side. Same source the Single tab uses.
