@@ -2061,6 +2061,11 @@ def revizto_invite(email, first_name, last_name, company, department, config,
 
 def forma_invite(email, config, project_id=None, company_id: str = None,
                  role_ids: list = None, products: list = None):
+    # Entry print — proves the function was reached. Helps when a 403
+    # has been bubbling up and we can't tell whether forma_invite ran
+    # at all or some earlier guard returned first.
+    print(f"[forma_invite] CALLED email={email} pid={project_id}", flush=True)
+
     fc  = config["forma"]
     pid = project_id or fc.get("project_id", "")
 
@@ -2101,25 +2106,25 @@ def forma_invite(email, config, project_id=None, company_id: str = None,
     # returns 403/404 with no detail. Token is fingerprinted (first 8 +
     # last 4 chars) so logs aren't a credential leak risk.
     _tok_fp = f"{token[:8]}...{token[-4:]}" if token and len(token) > 12 else "(short)"
-    print(f"[forma_invite] POST /admin/v2/projects/{pid}/users:import")
-    print(f"[forma_invite]   User-Id: {fc['admin_user_id']}")
-    print(f"[forma_invite]   account_id: {fc.get('account_id')}")
-    print(f"[forma_invite]   bearer_fp: {_tok_fp}")
-    print(f"[forma_invite]   payload: {json.dumps(payload)[:400]}")
+    print(f"[forma_invite] POST /admin/v2/projects/{pid}/users:import", flush=True)
+    print(f"[forma_invite]   User-Id: {fc['admin_user_id']}", flush=True)
+    print(f"[forma_invite]   account_id: {fc.get('account_id')}", flush=True)
+    print(f"[forma_invite]   bearer_fp: {_tok_fp}", flush=True)
+    print(f"[forma_invite]   payload: {json.dumps(payload)[:400]}", flush=True)
 
     response = http_requests.post(
         f"https://developer.api.autodesk.com/construction/admin/v2/projects/{pid}/users:import",
         headers=headers, json=payload, timeout=30
     )
     if response.status_code in (200, 202):
-        print(f"[forma_invite]   -> {response.status_code} OK")
+        print(f"[forma_invite]   -> {response.status_code} OK", flush=True)
         return {"status": "success"}
 
     # On failure, log enough to disambiguate scope/role/account issues.
     # Forma returns a request-id and sometimes scope details in the body.
-    print(f"[forma_invite]   -> {response.status_code} FAIL")
-    print(f"[forma_invite]   response headers: x-ads-request-id={response.headers.get('x-ads-request-id','')} content-type={response.headers.get('content-type','')}")
-    print(f"[forma_invite]   response body: {response.text[:500]}")
+    print(f"[forma_invite]   -> {response.status_code} FAIL", flush=True)
+    print(f"[forma_invite]   response headers: x-ads-request-id={response.headers.get('x-ads-request-id','')} content-type={response.headers.get('content-type','')}", flush=True)
+    print(f"[forma_invite]   response body: {response.text[:500]}", flush=True)
     return {"status": "error", "detail": f"{response.status_code}: {response.text[:200]}"}
 
 
@@ -5117,12 +5122,24 @@ def _do_deactivate(user, config, email, platform, project_key, proj, row):
         headers = {"Authorization": f"Bearer {token}"}
         if admin_user_id:
             headers["User-Id"] = admin_user_id
+
+        # Diagnostic logging — emitted to Azure Log Stream.
+        _tok_fp = f"{token[:8]}...{token[-4:]}" if token and len(token) > 12 else "(short)"
+        print(f"[forma_deactivate] DELETE /admin/v1/projects/{clean_pid}/users/{user_id}", flush=True)
+        print(f"[forma_deactivate]   User-Id: {admin_user_id or '(none)'}", flush=True)
+        print(f"[forma_deactivate]   bearer_fp: {_tok_fp}", flush=True)
+
         try:
             r = http_requests.delete(url, headers=headers, timeout=20)
         except Exception as e:
+            print(f"[forma_deactivate]   -> raised: {type(e).__name__}: {e}", flush=True)
             return False, f"Forma request failed: {e}"
         if r.status_code in (200, 204):
+            print(f"[forma_deactivate]   -> {r.status_code} OK", flush=True)
             return True, ""
+        print(f"[forma_deactivate]   -> {r.status_code} FAIL", flush=True)
+        print(f"[forma_deactivate]   x-ads-request-id: {r.headers.get('x-ads-request-id','')}", flush=True)
+        print(f"[forma_deactivate]   body: {r.text[:500]}", flush=True)
         return False, f"Forma HTTP {r.status_code}: {r.text[:200]}"
 
     if platform == "morta":
