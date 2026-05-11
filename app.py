@@ -1489,7 +1489,13 @@ def get_revizto_project_names(config):
 
 def get_forma_project_names(config):
     fc = config["forma"]
-    if not fc["account_id"]:
+    account_id = fc.get("account_id", "")
+    # Fall back to owner's account_id when caller's config lacks it.
+    # Same pattern as api_forma_models() and forma_search_users().
+    if not account_id:
+        owner_fc   = load_config(OWNER_EMAIL).get("forma", {}) or {}
+        account_id = owner_fc.get("account_id", "")
+    if not account_id:
         return []
     token = forma_get_token(config)
     if not token:
@@ -1498,7 +1504,7 @@ def get_forma_project_names(config):
     all_projects = []
     for platform in ["acc", "bim360"]:
         response = http_requests.get(
-            f"https://developer.api.autodesk.com/construction/admin/v1/accounts/{fc['account_id']}/projects",
+            f"https://developer.api.autodesk.com/construction/admin/v1/accounts/{account_id}/projects",
             headers=headers,
             params={"limit": 200, "filter[status]": "active", "filter[platform]": platform},
             timeout=15,
@@ -1569,6 +1575,18 @@ async def api_forma_models(request: Request, user: str = Depends(require_user)):
 
     fc         = config.get("forma", {})
     account_id = fc.get("account_id", "")
+
+    # Fall back to owner's account_id when caller's config lacks it.
+    # Same pattern as forma_get_token() and forma_invite(): non-owner
+    # admins typically have no account_id in their own config (it's an
+    # owner-set field). Without this fallback the URL below becomes
+    # /hubs/b./projects/b.{pid}/topFolders and Forma 400s or 404s.
+    if not account_id:
+        owner_fc   = load_config(OWNER_EMAIL).get("forma", {}) or {}
+        account_id = owner_fc.get("account_id", "")
+    if not account_id:
+        return JSONResponse({"models": [], "error": "Forma account_id not configured (owner config missing)."})
+
     base_url   = "https://developer.api.autodesk.com"
     headers    = {"Authorization": f"Bearer {token}"}
 
