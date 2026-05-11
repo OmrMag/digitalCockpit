@@ -2045,8 +2045,24 @@ def forma_invite(email, config, project_id=None, company_id: str = None,
                  role_ids: list = None, products: list = None):
     fc  = config["forma"]
     pid = project_id or fc.get("project_id", "")
-    if not fc["account_id"] or not fc["admin_user_id"] or not pid:
-        return {"status": "error", "detail": "Forma not configured"}
+
+    # Owner-impersonation for Forma writes.
+    # Forma's admin endpoints require a User-Id header naming the admin
+    # performing the action — and that admin must have project-admin
+    # permission on the target project. Only the owner's Forma account
+    # is guaranteed to hold that permission across every ALEC project,
+    # so we always send the owner's admin_user_id regardless of who
+    # initiated the request in the cockpit. The cockpit's own invite_log
+    # still records the calling admin (`user` in the request handler) for
+    # audit; Forma's audit sees the owner.
+    owner_fc = load_config(OWNER_EMAIL).get("forma", {}) or {}
+    if owner_fc.get("admin_user_id"):
+        fc["admin_user_id"] = owner_fc["admin_user_id"]
+    if owner_fc.get("account_id") and not fc.get("account_id"):
+        fc["account_id"] = owner_fc["account_id"]
+
+    if not fc.get("account_id") or not fc.get("admin_user_id") or not pid:
+        return {"status": "error", "detail": "Forma not configured (owner config missing admin_user_id or account_id)"}
     token = forma_get_token(config)
     if not token: return {"status": "error", "detail": "Forma auth failed"}
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json", "User-Id": fc["admin_user_id"]}
@@ -2093,6 +2109,13 @@ def forma_update_user(user_id, config, project_id=None,
     """
     fc  = config["forma"]
     pid = project_id or fc.get("project_id", "")
+
+    # Owner-impersonation: always use owner's admin_user_id for Forma writes.
+    # See forma_invite() for rationale.
+    owner_admin_id = (load_config(OWNER_EMAIL).get("forma", {}) or {}).get("admin_user_id")
+    if owner_admin_id:
+        fc["admin_user_id"] = owner_admin_id
+
     if not fc.get("admin_user_id") or not pid or not user_id:
         return {"status": "error", "detail": "Forma update: missing admin_user_id, project_id, or user_id"}
     token = forma_get_token(config)
@@ -5002,9 +5025,17 @@ def _do_deactivate(user, config, email, platform, project_key, proj, row):
         # Autodesk admin endpoints require a User-Id impersonation header
         # so the API knows which admin is making the call. Without it,
         # the request returns 401 Unauthorized even with a valid token —
-        # same as forma_invite() at line ~1864. The admin_user_id comes
-        # from config.forma.admin_user_id (set in Settings).
-        admin_user_id = (config.get("forma", {}) or {}).get("admin_user_id", "")
+        # same as forma_invite() at line ~1864.
+        #
+        # We always use the owner's admin_user_id (regardless of who
+        # initiated the deactivate in the cockpit). The owner is the only
+        # ALEC admin guaranteed to hold project-admin permission across
+        # every project — a colleague's user might be a member of Wynn
+        # but not have user-management rights, and Forma returns 403
+        # silently in that case.
+        admin_user_id = (load_config(OWNER_EMAIL).get("forma", {}) or {}).get("admin_user_id", "")
+        if not admin_user_id:
+            admin_user_id = (config.get("forma", {}) or {}).get("admin_user_id", "")
         clean_pid = fpid.lstrip("b.") if fpid.startswith("b.") else fpid
         url = f"https://developer.api.autodesk.com/construction/admin/v1/projects/{clean_pid}/users/{user_id}"
         headers = {"Authorization": f"Bearer {token}"}
