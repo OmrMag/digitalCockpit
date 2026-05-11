@@ -204,6 +204,28 @@
       margin-bottom: 14px;
       line-height: 1.5;
     }
+    /* Template download hint shown above the bulk upload area. */
+    .template-hint {
+      font-size: 12px;
+      color: #5b6473;
+      margin: -4px 0 14px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .template-hint a {
+      color: #0b2545;
+      font-weight: 600;
+      text-decoration: none;
+      border-bottom: 1px solid rgba(11,37,69,0.25);
+      transition: border-color .12s;
+    }
+    .template-hint a:hover { border-bottom-color: #0b2545; }
+    .template-hint svg {
+      width: 14px; height: 14px;
+      stroke: #5b6473;
+      flex-shrink: 0;
+    }
     .upload-plus {
       font-size: 28px;
       font-weight: 300;
@@ -360,6 +382,10 @@
       <!-- ── BULK MODE ── -->
       <div id="bulkMode">
         <p class="fill-note">Fill in your details and upload your team's Excel file.</p>
+        <p class="template-hint">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Don't have a template? <a href="/static/Project_Access_User_Directory.xlsx" download>Download it here</a> to get started.
+        </p>
         <div class="form-row">
           <div class="portal-field">
             <input class="portal-input" type="text" id="submitter_name" placeholder="Your full name" autocomplete="name">
