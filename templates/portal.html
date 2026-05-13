@@ -430,9 +430,9 @@
         <div class="portal-field" style="margin-top:14px;padding-top:14px;border-top:1px solid rgba(11,37,69,0.08);">
           <label class="portal-label">Platforms Requested</label>
           <div style="display:flex;gap:16px;margin-top:6px;">
-            <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;"><input type="checkbox" id="s_morta" checked style="width:14px;height:14px;"> Morta</label>
-            <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;"><input type="checkbox" id="s_revizto" checked style="width:14px;height:14px;"> Revizto</label>
-            <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;"><input type="checkbox" id="s_forma" checked style="width:14px;height:14px;"> Forma / ACC</label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;"><input type="checkbox" id="s_morta" style="width:14px;height:14px;"> Morta</label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;"><input type="checkbox" id="s_revizto" style="width:14px;height:14px;"> Revizto</label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;"><input type="checkbox" id="s_forma" style="width:14px;height:14px;"> Forma / ACC</label>
           </div>
         </div>
         <button class="portal-btn" id="submitSingleBtn" onclick="submitSingle()">
@@ -581,6 +581,14 @@
 
     if (!email) {
       document.getElementById('alertErrorSub').textContent = 'Email is required.';
+      document.getElementById('alertError').style.display = 'block';
+      return;
+    }
+
+    if (!document.getElementById('s_morta').checked &&
+        !document.getElementById('s_revizto').checked &&
+        !document.getElementById('s_forma').checked) {
+      document.getElementById('alertErrorSub').textContent = 'Select at least one platform.';
       document.getElementById('alertError').style.display = 'block';
       return;
     }
